@@ -58,9 +58,10 @@ system, minimal color. Worth a proper design pass: consistent spacing,
 color palette (light/dark aware, matching the OS theme), better button/input
 styling, clearer visual hierarchy between the phase screens.
 
-Note: asked about using "Claude Design" for this - not aware of a specific
-product by that name. Most likely just means having Claude do the redesign
-pass directly (applying normal UI/UX design principles to the existing React
-components), which is straightforward whenever we pick this up - no special
-tooling needed. Worth double-checking what was meant before starting, in
-case a specific tool/reference was intended.
+Note: "Claude Design" (claude.ai/design, currently Beta) is a separate
+Anthropic web app for generating UI mockups, wireframes, and design systems
+visually - it's not something drivable from within Claude Code. The likely
+workflow: use Claude Design in the browser to mock up the app's screens
+(folder picker, preview table, resolution screen, results), then bring the
+resulting mockups/design system back here for Claude Code to implement in
+the actual React components/CSS.
