@@ -15,7 +15,7 @@ export interface RowDecision {
 
 export function MissingDateModal(): JSX.Element {
   const { needsResolutionRecords, organizeMode, setPhase } = useAppStore()
-  const showDestinationControl = organizeMode === 'moveToFolders'
+  const showDestinationControl = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
 
   const [decisions, setDecisions] = useState<Record<string, RowDecision>>(() =>
     Object.fromEntries(needsResolutionRecords.map((r) => [r.id, { dateSource: 'mtimeFallback' as const }]))

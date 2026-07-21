@@ -32,7 +32,7 @@ export function cancelScan(): void {
  */
 export async function startScan(req: ScanStartRequest): Promise<void> {
   cancelled = false
-  resetRunState(req.sourceDir, req.destDir)
+  resetRunState(req.sourceDir, req.destDir, req.organizeMode)
 
   try {
     await runScan(req)

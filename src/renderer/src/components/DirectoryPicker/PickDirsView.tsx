@@ -40,7 +40,7 @@ export function PickDirsView(): JSX.Element {
     if (dir) setDestDir(dir)
   }
 
-  const needsDestDir = organizeMode === 'moveToFolders'
+  const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
   const hasMediaTypeSelected = includePhotos || includeVideos
   const canScan = !!sourceDir && (!needsDestDir || !!destDir) && hasMediaTypeSelected
 
@@ -123,13 +123,21 @@ export function PickDirsView(): JSX.Element {
           />{' '}
           Rename and move into Year/Month folders in a destination
         </label>
-        <label style={{ display: 'block' }}>
+        <label style={{ display: 'block', marginBottom: 4 }}>
           <input
             type="radio"
             checked={organizeMode === 'renameInPlace'}
             onChange={() => setOrganizeMode('renameInPlace')}
           />{' '}
           Rename only, keep files in their current folder
+        </label>
+        <label style={{ display: 'block' }}>
+          <input
+            type="radio"
+            checked={organizeMode === 'copyToFolders'}
+            onChange={() => setOrganizeMode('copyToFolders')}
+          />{' '}
+          Rename and copy into Year/Month folders in a destination, keeping the originals in place
         </label>
       </div>
 

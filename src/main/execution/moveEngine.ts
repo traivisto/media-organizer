@@ -29,6 +29,14 @@ async function resolveCollision(destPath: string): Promise<string> {
   }
 }
 
+async function copyAndVerify(originalPath: string, destPath: string): Promise<void> {
+  await fs.copyFile(originalPath, destPath)
+  const [srcStat, destStat] = await Promise.all([fs.stat(originalPath), fs.stat(destPath)])
+  if (srcStat.size !== destStat.size) {
+    throw new Error(`Copy verification failed: size mismatch (${srcStat.size} vs ${destStat.size})`)
+  }
+}
+
 async function moveWithExdevFallback(originalPath: string, destPath: string): Promise<void> {
   try {
     await fs.rename(originalPath, destPath)
@@ -37,16 +45,15 @@ async function moveWithExdevFallback(originalPath: string, destPath: string): Pr
 
     // Cross-volume move: copy, verify size, then delete the source. Never delete
     // before the copy is confirmed on disk.
-    await fs.copyFile(originalPath, destPath)
-    const [srcStat, destStat] = await Promise.all([fs.stat(originalPath), fs.stat(destPath)])
-    if (srcStat.size !== destStat.size) {
-      throw new Error(`Copy verification failed: size mismatch (${srcStat.size} vs ${destStat.size})`)
-    }
+    await copyAndVerify(originalPath, destPath)
     await fs.unlink(originalPath)
   }
 }
 
+export type ExecutionMode = 'move' | 'copy'
+
 export interface MoveEngineOptions {
+  mode?: ExecutionMode
   onProgress?: (processed: number, total: number, currentPath: string) => void
   onResult?: (result: MoveResult) => void
   isCancelled?: () => boolean
@@ -56,6 +63,8 @@ export async function executeMoves(
   records: ScanRecord[],
   options: MoveEngineOptions = {}
 ): Promise<MoveResult[]> {
+  const mode = options.mode ?? 'move'
+  const doneStatus = mode === 'copy' ? 'copied' : 'moved'
   const results: MoveResult[] = []
 
   for (let i = 0; i < records.length; i++) {
@@ -84,7 +93,7 @@ export async function executeMoves(
         id: record.id,
         originalPath: record.originalPath,
         finalDestPath: record.finalDestPath,
-        status: 'moved'
+        status: doneStatus
       }
       results.push(result)
       options.onResult?.(result)
@@ -94,13 +103,17 @@ export async function executeMoves(
     try {
       await fs.mkdir(dirname(record.finalDestPath), { recursive: true })
       const destPath = await resolveCollision(record.finalDestPath)
-      await moveWithExdevFallback(record.originalPath, destPath)
+      if (mode === 'copy') {
+        await copyAndVerify(record.originalPath, destPath)
+      } else {
+        await moveWithExdevFallback(record.originalPath, destPath)
+      }
 
       const result: MoveResult = {
         id: record.id,
         originalPath: record.originalPath,
         finalDestPath: destPath,
-        status: 'moved'
+        status: doneStatus
       }
       results.push(result)
       options.onResult?.(result)

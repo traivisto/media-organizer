@@ -1,8 +1,10 @@
 import type { ScanRecord } from '../../shared/types/ScanRecord'
+import type { OrganizeMode } from '../../shared/types/IpcContracts'
 
 interface RunState {
   sourceDir?: string
   destDir?: string
+  organizeMode?: OrganizeMode
   records: ScanRecord[]
   skippedNonMedia: number
 }
@@ -12,9 +14,14 @@ const state: RunState = {
   skippedNonMedia: 0
 }
 
-export function resetRunState(sourceDir: string, destDir: string | undefined): void {
+export function resetRunState(
+  sourceDir: string,
+  destDir: string | undefined,
+  organizeMode: OrganizeMode
+): void {
   state.sourceDir = sourceDir
   state.destDir = destDir
+  state.organizeMode = organizeMode
   state.records = []
   state.skippedNonMedia = 0
 }

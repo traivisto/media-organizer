@@ -11,10 +11,11 @@ let cancelled = false
 export function registerExecuteChannels(): void {
   ipcMain.handle(IpcChannels.executeStart, async () => {
     cancelled = false
-    const { records } = getRunState()
+    const { records, organizeMode } = getRunState()
     await startNewLog()
 
     const results = await executeMoves(records, {
+      mode: organizeMode === 'copyToFolders' ? 'copy' : 'move',
       isCancelled: () => cancelled,
       onProgress: (processed, total, currentPath) => {
         const progress: ExecuteProgressEvent = { processed, total, currentPath }
@@ -38,6 +39,7 @@ export function registerExecuteChannels(): void {
     const doneEvent: ExecuteDoneEvent = {
       results,
       movedCount: results.filter((r) => r.status === 'moved').length,
+      copiedCount: results.filter((r) => r.status === 'copied').length,
       failedCount: results.filter((r) => r.status === 'failed').length,
       skippedCount: results.filter((r) => r.status === 'skipped').length,
       operationsLogPath: getCurrentLogPath() ?? ''
