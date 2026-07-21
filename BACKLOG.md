@@ -65,3 +65,49 @@ workflow: use Claude Design in the browser to mock up the app's screens
 (folder picker, preview table, resolution screen, results), then bring the
 resulting mockups/design system back here for Claude Code to implement in
 the actual React components/CSS.
+
+## Unclear to the user what "move" deletes from when the source is an iCloud sync
+
+`PickDirsView.tsx`'s organizeMode labels ("Rename and move...", "Rename only,
+keep files...", "Rename and copy...") describe what happens to *the source
+folder*, worded as if source is always a folder the user picked by hand. When
+the source is instead an iCloud-synced local cache folder
+(`icloud-photos-cache` under userData, from `icloudSyncEngine.ts`), it's not
+obvious from the UI that "move" only ever moves the local downloaded copy -
+iCloud itself is never touched by the current implementation, regardless of
+organizeMode. A user could reasonably read "move" as "move out of iCloud."
+
+Also: the user may later actually want that - a real "delete/move out of
+iCloud" after a successful download+organize, freeing up iCloud storage.
+icloudpd already supports this (`--delete-after-download`,
+`--keep-icloud-recent-days`, see `icloudSyncEngine.ts`'s `buildArgs`), but
+it's deliberately not wired up since deleting from iCloud is a genuinely
+destructive, hard-to-reverse action that shouldn't ride along silently on the
+existing organizeMode choice.
+
+Not designed yet - options to weigh later:
+- Add UI copy clarifying, whenever the source came from an iCloud sync, that
+  organizing only ever affects the local downloaded copy.
+- Add a separate, explicitly-labeled, opt-in step/checkbox for "also delete
+  from iCloud after this completes" - kept clearly distinct from the
+  organizeMode radios so it can't be picked by accident, since it's a
+  fundamentally different (and riskier) action than local move/copy/rename.
+
+## "Sync from iCloud" conflates picking a source with starting work
+
+Everywhere else in `PickDirsView.tsx`, picking a source is instant and inert:
+"Choose source folder" just opens a dialog and sets `sourceDir` - nothing
+happens until the user separately presses "Scan". "Sync from iCloud" breaks
+that pattern: one click both selects iCloud as the source *and* immediately
+kicks off the real work (spawns icloudpd, opens a sign-in page in the
+browser, starts downloading). A user clicking it expecting the same inert
+"just picking a source" behavior as the folder button gets an unexpected,
+harder-to-back-out-of action instead.
+
+Not designed yet - the likely fix: stop treating "Sync from iCloud" as its
+own immediate-action button. Instead make it just *select* iCloud as the
+source type (e.g. alongside "Choose source folder", not a separate flow), and
+have the existing "Scan" button be the single, consistent place all real work
+starts - it would run the iCloud sync first (if that's the selected source
+type) and then proceed into the normal scan, same as it does today for a
+locally-picked folder.
