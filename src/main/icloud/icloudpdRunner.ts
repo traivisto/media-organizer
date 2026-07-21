@@ -1,6 +1,7 @@
 import { createRequire } from 'module'
 import { spawn } from 'child_process'
 import { platform, arch } from 'os'
+import { sep } from 'path'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -13,7 +14,13 @@ export function resolveIcloudpdBinary(): string {
   if (platform() !== 'win32' || arch() !== 'x64') {
     throw new Error('iCloud sync is only supported on 64-bit Windows in this build.')
   }
-  return nodeRequire.resolve('@icloudpd/win32-x64/bin/icloudpd.exe')
+  const resolved = nodeRequire.resolve('@icloudpd/win32-x64/bin/icloudpd.exe')
+  // In a packaged build, require.resolve() returns a path *inside* app.asar - fine for
+  // require()'d JS, but child_process.spawn() can't execute a binary from inside the asar
+  // archive. electron-builder unpacks binaries like this one into an app.asar.unpacked
+  // mirror alongside it; redirect there, the same fix exiftool-vendored's own resolver
+  // applies for its bundled binary.
+  return resolved.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`)
 }
 
 export interface IcloudpdRunHandle {
