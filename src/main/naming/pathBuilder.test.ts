@@ -38,6 +38,14 @@ describe('buildDestPath (moveToFolders)', () => {
   })
 })
 
+describe('buildDestPath (copyToFolders)', () => {
+  it('builds the same dest/YYYY/"YYYY MM"/filename layout as moveToFolders', () => {
+    const record = baseRecord()
+    const result = buildDestPath(record, 'D:\\Photos', '20260305@100000-01.jpg', 'copyToFolders')
+    expect(result).toBe(['D:\\Photos', '2026', '2026 03', '20260305@100000-01.jpg'].join(sep))
+  })
+})
+
 describe('buildDestPath (renameInPlace)', () => {
   it('keeps the file in its original folder, ignoring destDir and destinationOverride', () => {
     const record = baseRecord({

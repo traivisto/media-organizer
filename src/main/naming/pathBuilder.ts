@@ -5,9 +5,10 @@ import type { OrganizeMode } from '../../shared/types/IpcContracts'
 /**
  * Computes the destination path for a record.
  * - renameInPlace: the file stays in its original folder, only the name changes.
- * - moveToFolders: dest/YYYY/YYYY MM (month folder self-labeled with the year so it
- *   reads sensibly on its own, e.g. "2007 05"), or dest/Unsorted when the record was
- *   explicitly routed there during missing-date resolution.
+ * - moveToFolders / copyToFolders: dest/YYYY/YYYY MM (month folder self-labeled with the
+ *   year so it reads sensibly on its own, e.g. "2007 05"), or dest/Unsorted when the
+ *   record was explicitly routed there during missing-date resolution. The two modes
+ *   share the same path logic - they only differ in whether execution deletes the source.
  */
 export function buildDestPath(
   record: ScanRecord,

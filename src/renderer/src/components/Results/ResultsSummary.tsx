@@ -10,7 +10,16 @@ export function ResultsSummary(): JSX.Element {
     <div>
       <h1>Done</h1>
       <p>
-        <strong>{executeResult.movedCount}</strong> moved &middot;{' '}
+        {executeResult.movedCount > 0 && (
+          <>
+            <strong>{executeResult.movedCount}</strong> moved &middot;{' '}
+          </>
+        )}
+        {executeResult.copiedCount > 0 && (
+          <>
+            <strong>{executeResult.copiedCount}</strong> copied &middot;{' '}
+          </>
+        )}
         <strong>{executeResult.failedCount}</strong> failed &middot;{' '}
         <strong>{executeResult.skippedCount}</strong> skipped
       </p>

@@ -54,6 +54,6 @@ export interface MoveResult {
   id: string
   originalPath: string
   finalDestPath?: string
-  status: 'moved' | 'failed' | 'skipped'
+  status: 'moved' | 'copied' | 'failed' | 'skipped'
   error?: string
 }

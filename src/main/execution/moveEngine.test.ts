@@ -123,6 +123,50 @@ describe('executeMoves', () => {
     }
   })
 
+  it('copies a file and leaves the source untouched when mode is "copy"', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
+    try {
+      const src = join(dir, 'source', 'photo.jpg')
+      await fs.mkdir(join(dir, 'source'), { recursive: true })
+      await writeFile(src, 'hello')
+      const dest = join(dir, 'dest', '2026', '01', 'photo.jpg')
+
+      const results = await executeMoves([baseRecord({ originalPath: src, finalDestPath: dest })], {
+        mode: 'copy'
+      })
+
+      expect(results[0].status).toBe('copied')
+      expect(results[0].finalDestPath).toBe(dest)
+      expect(await readFile(dest, 'utf-8')).toBe('hello')
+      expect(await readFile(src, 'utf-8')).toBe('hello')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('suffixes with -dupN instead of overwriting in copy mode too', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
+    try {
+      const src = join(dir, 'photo.jpg')
+      await writeFile(src, 'new content')
+      const dest = join(dir, 'dest', 'photo.jpg')
+      await fs.mkdir(join(dir, 'dest'), { recursive: true })
+      await writeFile(dest, 'existing content - must not be overwritten')
+
+      const results = await executeMoves([baseRecord({ originalPath: src, finalDestPath: dest })], {
+        mode: 'copy'
+      })
+
+      expect(results[0].status).toBe('copied')
+      expect(results[0].finalDestPath).toBe(join(dir, 'dest', 'photo-dup1.jpg'))
+      expect(await readFile(dest, 'utf-8')).toBe('existing content - must not be overwritten')
+      expect(await readFile(join(dir, 'dest', 'photo-dup1.jpg'), 'utf-8')).toBe('new content')
+      expect(await readFile(src, 'utf-8')).toBe('new content')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('stops processing further files once cancelled', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
     try {

@@ -32,7 +32,7 @@ export interface AppConfig {
   windowsTimePattern?: string
 }
 
-export type OrganizeMode = 'moveToFolders' | 'renameInPlace'
+export type OrganizeMode = 'moveToFolders' | 'renameInPlace' | 'copyToFolders'
 
 export interface ScanStartRequest {
   sourceDir: string
@@ -89,6 +89,7 @@ export interface ExecuteProgressEvent {
 export interface ExecuteDoneEvent {
   results: MoveResult[]
   movedCount: number
+  copiedCount: number
   failedCount: number
   skippedCount: number
   operationsLogPath: string
