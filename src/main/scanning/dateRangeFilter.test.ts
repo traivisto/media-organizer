@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { isWithinDateRange } from './dateRangeFilter'
+import { isWithinDateRange, isWalkedFileWithinDateRange } from './dateRangeFilter'
 import type { ScanRecord } from '../../shared/types/ScanRecord'
+import type { WalkedFile } from './fileWalker'
 
 function baseRecord(overrides: Partial<ScanRecord> = {}): ScanRecord {
   return {
@@ -44,5 +45,37 @@ describe('isWithinDateRange', () => {
   it('falls back to mtime when exifCapturedAt is absent', () => {
     const record = baseRecord({ mtime: '2026-01-01T10:00:00' })
     expect(isWithinDateRange(record, '2026-02-01')).toBe(false)
+  })
+})
+
+function baseWalkedFile(overrides: Partial<WalkedFile> = {}): WalkedFile {
+  return {
+    path: 'a.jpg',
+    extension: '.jpg',
+    mediaKind: 'photo',
+    size: 10,
+    mtime: new Date('2026-06-15T10:00:00'),
+    ...overrides
+  }
+}
+
+describe('isWalkedFileWithinDateRange', () => {
+  it('includes everything when no bounds are given', () => {
+    expect(isWalkedFileWithinDateRange(baseWalkedFile())).toBe(true)
+  })
+
+  it('excludes a file whose mtime falls before the start bound', () => {
+    const file = baseWalkedFile({ mtime: new Date('2026-01-01T10:00:00') })
+    expect(isWalkedFileWithinDateRange(file, '2026-02-01')).toBe(false)
+  })
+
+  it('excludes a file whose mtime falls after the end bound', () => {
+    const file = baseWalkedFile({ mtime: new Date('2026-12-31T10:00:00') })
+    expect(isWalkedFileWithinDateRange(file, undefined, '2026-06-30')).toBe(false)
+  })
+
+  it('includes a file whose mtime falls within both bounds', () => {
+    const file = baseWalkedFile({ mtime: new Date('2026-03-15T10:00:00') })
+    expect(isWalkedFileWithinDateRange(file, '2026-01-01', '2026-06-30')).toBe(true)
   })
 })

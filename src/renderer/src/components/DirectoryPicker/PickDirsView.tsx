@@ -18,6 +18,7 @@ export function PickDirsView(): JSX.Element {
   const [includeVideos, setIncludeVideos] = useState(true)
   const [dateRangeStart, setDateRangeStart] = useState('')
   const [dateRangeEnd, setDateRangeEnd] = useState('')
+  const [appleId, setAppleId] = useState('')
 
   useEffect(() => {
     api()
@@ -25,6 +26,7 @@ export function PickDirsView(): JSX.Element {
       .then((config) => {
         if (config.lastSourceDir) setSourceDir(config.lastSourceDir)
         if (config.lastDestDir) setDestDir(config.lastDestDir)
+        if (config.lastAppleId) setAppleId(config.lastAppleId)
         setWindowsDateTimeFormat(config.windowsDatePattern, config.windowsTimePattern)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,6 +40,18 @@ export function PickDirsView(): JSX.Element {
   async function pickDest(): Promise<void> {
     const dir = await api().pickDestDir()
     if (dir) setDestDir(dir)
+  }
+
+  async function syncFromIcloud(): Promise<void> {
+    if (!appleId.trim() || !hasMediaTypeSelected) return
+    setPhase('icloudSync')
+    await api().icloudSyncStart({
+      appleId: appleId.trim(),
+      includePhotos,
+      includeVideos,
+      dateRangeStart: dateRangeStart || undefined,
+      dateRangeEnd: dateRangeEnd || undefined
+    })
   }
 
   const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
@@ -83,6 +97,29 @@ export function PickDirsView(): JSX.Element {
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ marginBottom: 8 }}>
+          <strong>Or, sync directly from iCloud</strong>{' '}
+          <span style={{ fontSize: 12, opacity: 0.7 }}>
+            (downloads into a local folder, which becomes the source above)
+          </span>
+        </div>
+        <input
+          type="email"
+          placeholder="Apple ID email"
+          value={appleId}
+          onChange={(e) => setAppleId(e.target.value)}
+          style={{ marginRight: 8 }}
+        />
+        <button disabled={!appleId.trim() || !hasMediaTypeSelected} onClick={syncFromIcloud}>
+          Sync from iCloud
+        </button>
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+          Uses the Photos/Videos and date-range filters below. Your Apple ID password and 2FA code are
+          entered on icloudpd&apos;s own sign-in page in your browser - this app never sees them.
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 8 }}>
           <strong>Filters</strong> <span style={{ fontSize: 12, opacity: 0.7 }}>(optional - default is all files)</span>
         </div>
         <div style={{ marginBottom: 8 }}>
@@ -108,6 +145,12 @@ export function PickDirsView(): JSX.Element {
           <label>
             To <input type="date" value={dateRangeEnd} onChange={(e) => setDateRangeEnd(e.target.value)} />
           </label>
+          {(dateRangeStart || dateRangeEnd) && (
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+              Files are pre-filtered by their file-system date before their full metadata is read, so a
+              narrow range scans much faster in large folders.
+            </div>
+          )}
         </div>
       </div>
 

@@ -20,6 +20,7 @@ export async function getConfig(): Promise<AppConfig> {
     lastSourceDir: store.get('lastSourceDir'),
     lastDestDir: store.get('lastDestDir'),
     nominatimContact: store.get('nominatimContact'),
+    lastAppleId: store.get('lastAppleId'),
     windowsDatePattern: windowsFormat?.datePattern,
     windowsTimePattern: windowsFormat?.timePattern
   }
@@ -43,4 +44,8 @@ export function setLastDestDir(dir: string): void {
 
 export function getNominatimContact(): string | undefined {
   return store.get('nominatimContact')
+}
+
+export function setLastAppleId(appleId: string): void {
+  store.set('lastAppleId', appleId)
 }
