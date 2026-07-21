@@ -49,3 +49,18 @@ Not designed yet - options to weigh later:
 
 Revisit once there's a concrete batch of mixed-camera photos to design
 against.
+
+## Visual polish
+
+Current UI (`styles.css` + inline styles throughout the components) is
+functional but plain - default form controls, no real layout/typography
+system, minimal color. Worth a proper design pass: consistent spacing,
+color palette (light/dark aware, matching the OS theme), better button/input
+styling, clearer visual hierarchy between the phase screens.
+
+Note: asked about using "Claude Design" for this - not aware of a specific
+product by that name. Most likely just means having Claude do the redesign
+pass directly (applying normal UI/UX design principles to the existing React
+components), which is straightforward whenever we pick this up - no special
+tooling needed. Worth double-checking what was meant before starting, in
+case a specific tool/reference was intended.
