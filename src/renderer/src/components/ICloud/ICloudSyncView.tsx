@@ -49,9 +49,26 @@ export function ICloudSyncView(): JSX.Element {
       )}
 
       {phase === 'error' && (
-        <p style={{ color: '#c33' }}>
-          Something went wrong: {icloudSyncStatus?.error ?? 'unknown error'}
-        </p>
+        <>
+          <p style={{ color: '#c33' }}>Something went wrong. Last output before it stopped:</p>
+          <pre
+            style={{
+              fontSize: 11,
+              opacity: 0.8,
+              whiteSpace: 'pre-wrap',
+              background: 'rgba(128,128,128,0.1)',
+              padding: 8,
+              maxHeight: 200,
+              overflow: 'auto'
+            }}
+          >
+            {(icloudSyncStatus?.error ?? 'unknown error').split(' | ').join('\n')}
+          </pre>
+        </>
+      )}
+
+      {icloudSyncStatus?.logPath && (
+        <p style={{ fontSize: 12, opacity: 0.6 }}>Full log: {icloudSyncStatus.logPath}</p>
       )}
 
       {icloudSyncStatus?.message && phase !== 'error' && (

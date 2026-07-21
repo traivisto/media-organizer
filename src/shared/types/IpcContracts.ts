@@ -65,6 +65,9 @@ export interface IcloudSyncStatusEvent {
    *  used as the scan's sourceDir. */
   syncDir?: string
   error?: string
+  /** Full raw icloudpd output for this run, persisted to disk - useful for diagnosing a
+   *  silent hang/crash that doesn't produce a clear error line. */
+  logPath?: string
 }
 
 export type OrganizeMode = 'moveToFolders' | 'renameInPlace' | 'copyToFolders'

@@ -53,7 +53,22 @@ describe('buildArgs', () => {
       false
     )
     expect(args).toEqual(
-      expect.arrayContaining(['--skip-created-before', '2026-01-01', '--skip-created-after', '2026-06-30'])
+      expect.arrayContaining(['--skip-created-before', '2026-01-01', '--skip-created-after', '2026-07-01'])
+    )
+  })
+
+  it('pushes --skip-created-after one day forward so the end date is inclusive', () => {
+    // icloudpd treats a bare date as that day's midnight and excludes everything after it,
+    // so the raw end date would silently drop the whole last day - confirmed against a real
+    // sync run's debug log where "--skip-created-after 2024-09-01" logged assets as skipped
+    // "after 2024-09-01 00:00:00", which would exclude all of 2024-08-31 if passed as-is.
+    const args = buildArgs(baseRequest({ dateRangeEnd: '2024-08-31' }), 'c', 't', false)
+    expect(args).toEqual(expect.arrayContaining(['--skip-created-after', '2024-09-01']))
+  })
+
+  it('rolls over the month/year when the end date is the last day of one', () => {
+    expect(buildArgs(baseRequest({ dateRangeEnd: '2026-12-31' }), 'c', 't', false)).toEqual(
+      expect.arrayContaining(['--skip-created-after', '2027-01-01'])
     )
   })
 

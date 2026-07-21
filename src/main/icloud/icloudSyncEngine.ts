@@ -1,7 +1,10 @@
 import { app, shell } from 'electron'
 import { mkdir, readdir } from 'fs/promises'
 import { join } from 'path'
+import { addDays, format } from 'date-fns'
 import { runIcloudpd, type IcloudpdRunHandle } from './icloudpdRunner'
+import { startNewIcloudLog, appendIcloudLogLine, getCurrentIcloudLogPath } from './icloudSyncLog'
+import { setLastSourceDir } from '../config/appConfig'
 import type { IcloudSyncStartRequest, IcloudSyncStatusEvent } from '../../shared/types/IpcContracts'
 
 const WEBUI_URL = 'http://127.0.0.1:8080'
@@ -36,15 +39,25 @@ export function buildArgs(
     '--folder-structure',
     'none',
     '--log-level',
-    'info',
+    'debug',
     '--no-progress-bar'
   ]
   if (!req.includePhotos) args.push('--skip-photos')
   if (!req.includeVideos) args.push('--skip-videos')
   if (req.dateRangeStart) args.push('--skip-created-before', req.dateRangeStart)
-  if (req.dateRangeEnd) args.push('--skip-created-after', req.dateRangeEnd)
+  if (req.dateRangeEnd) args.push('--skip-created-after', nextDay(req.dateRangeEnd))
   if (authOnly) args.push('--auth-only')
   return args
+}
+
+/**
+ * icloudpd's --skip-created-after treats a bare date as that day's midnight and excludes
+ * everything after it - so passing the end date as-is silently drops every asset from that
+ * whole last day. Push it one day forward so the end date behaves inclusively, matching
+ * dateRangeFilter.ts's `date > end-of-day` semantics for the local scan's own date range.
+ */
+function nextDay(dateStr: string): string {
+  return format(addDays(new Date(`${dateStr}T00:00:00`), 1), 'yyyy-MM-dd')
 }
 
 let activeHandle: IcloudpdRunHandle | undefined
@@ -57,6 +70,8 @@ export function cancelSync(): void {
  * Runs one icloudpd invocation to completion, forwarding status updates as it goes.
  * Returns true if the process exited cleanly (code 0) and wasn't cancelled.
  */
+const RECENT_LINES_BUFFER_SIZE = 15
+
 async function runPhase(
   args: string[],
   phase: 'starting' | 'syncing',
@@ -64,9 +79,13 @@ async function runPhase(
   downloadedCountRef: { count: number }
 ): Promise<'ok' | 'cancelled' | 'error'> {
   let sawWebuiPrompt = false
-  let lastErrorLine: string | undefined
+  const recentLines: string[] = []
 
   const handle = runIcloudpd(args, (line) => {
+    void appendIcloudLogLine(line)
+    recentLines.push(line)
+    if (recentLines.length > RECENT_LINES_BUFFER_SIZE) recentLines.shift()
+
     if (line.includes(AWAITING_AUTH_LOG_LINE)) {
       sawWebuiPrompt = true
       shell.openExternal(WEBUI_URL)
@@ -78,10 +97,6 @@ async function runPhase(
       downloadedCountRef.count += 1
       onStatus({ phase: 'syncing', downloadedCount: downloadedCountRef.count })
       return
-    }
-
-    if (/\bERROR\b/.test(line)) {
-      lastErrorLine = line
     }
 
     // Best-effort visibility into what icloudpd is doing right now (including Apple-side
@@ -96,7 +111,15 @@ async function runPhase(
 
   if (cancelled) return 'cancelled'
   if (code === 0) return 'ok'
-  onStatus({ phase: 'error', error: lastErrorLine ?? `icloudpd exited with code ${code}` })
+  // A hang/crash often prints nothing containing the literal word "ERROR" before the
+  // process just stops - the last several lines of context are more useful here than
+  // trying to pattern-match a single "the" error line.
+  const context = recentLines.length > 0 ? recentLines.join(' | ') : undefined
+  onStatus({
+    phase: 'error',
+    error: context ?? `icloudpd exited with code ${code}`,
+    logPath: getCurrentIcloudLogPath()
+  })
   return 'error'
 }
 
@@ -108,8 +131,9 @@ export async function runSync(
   const targetDir = getSyncCacheDir()
   await mkdir(cookieDir, { recursive: true })
   await mkdir(targetDir, { recursive: true })
+  const logPath = await startNewIcloudLog()
 
-  onStatus({ phase: 'starting' })
+  onStatus({ phase: 'starting', logPath })
 
   // Phase 1 (--auth-only): establishes/refreshes the session. Only opens the sign-in
   // page if the session cached in cookieDir from a previous run has expired or doesn't
@@ -141,5 +165,9 @@ export async function runSync(
   }
 
   const finalCount = (await readdir(targetDir)).length
-  onStatus({ phase: 'done', downloadedCount: finalCount, syncDir: targetDir })
+  // Without this, PickDirsView's config-hydration effect (which re-reads lastSourceDir on
+  // every mount) clobbers the sourceDir this sync just set with whatever stale folder was
+  // persisted from an earlier session, the moment the renderer navigates back to pickDirs.
+  setLastSourceDir(targetDir)
+  onStatus({ phase: 'done', downloadedCount: finalCount, syncDir: targetDir, logPath })
 }
