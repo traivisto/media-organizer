@@ -2,13 +2,21 @@ import { create } from 'zustand'
 import type {
   ExecuteDoneEvent,
   ExecuteProgressEvent,
+  IcloudSyncStatusEvent,
   OrganizeMode,
   ScanProgressEvent,
   ScanReadyForPreviewEvent
 } from '../../../shared/types/IpcContracts'
 import type { ScanRecord } from '../../../shared/types/ScanRecord'
 
-export type Phase = 'pickDirs' | 'scanning' | 'resolution' | 'preview' | 'executing' | 'results'
+export type Phase =
+  | 'pickDirs'
+  | 'icloudSync'
+  | 'scanning'
+  | 'resolution'
+  | 'preview'
+  | 'executing'
+  | 'results'
 
 interface AppState {
   phase: Phase
@@ -26,6 +34,7 @@ interface AppState {
   excludedManually: number
   executeProgress?: ExecuteProgressEvent
   executeResult?: ExecuteDoneEvent
+  icloudSyncStatus?: IcloudSyncStatusEvent
 
   setSourceDir: (dir?: string) => void
   setDestDir: (dir?: string) => void
@@ -37,6 +46,7 @@ interface AppState {
   setPreviewSummary: (summary: ScanReadyForPreviewEvent) => void
   setExecuteProgress: (progress: ExecuteProgressEvent) => void
   setExecuteResult: (result: ExecuteDoneEvent) => void
+  setIcloudSyncStatus: (status?: IcloudSyncStatusEvent) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -66,5 +76,6 @@ export const useAppStore = create<AppState>((set) => ({
       excludedManually: summary.excludedManually
     }),
   setExecuteProgress: (progress) => set({ executeProgress: progress }),
-  setExecuteResult: (result) => set({ executeResult: result })
+  setExecuteResult: (result) => set({ executeResult: result }),
+  setIcloudSyncStatus: (status) => set({ icloudSyncStatus: status })
 }))

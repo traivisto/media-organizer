@@ -4,6 +4,8 @@ import type {
   AppConfig,
   ExecuteDoneEvent,
   ExecuteProgressEvent,
+  IcloudSyncStartRequest,
+  IcloudSyncStatusEvent,
   PreviewGetRequest,
   PreviewGetResponse,
   ResolutionSubmitRequest,
@@ -42,7 +44,12 @@ const api = {
   executeStart: (): Promise<void> => ipcRenderer.invoke(IpcChannels.executeStart),
   executeCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.executeCancel),
   onExecuteProgress: (cb: (e: ExecuteProgressEvent) => void) => on(IpcChannels.executeProgress, cb),
-  onExecuteDone: (cb: (e: ExecuteDoneEvent) => void) => on(IpcChannels.executeDone, cb)
+  onExecuteDone: (cb: (e: ExecuteDoneEvent) => void) => on(IpcChannels.executeDone, cb),
+
+  icloudSyncStart: (req: IcloudSyncStartRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.icloudSyncStart, req),
+  icloudSyncCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.icloudSyncCancel),
+  onIcloudSyncStatus: (cb: (e: IcloudSyncStatusEvent) => void) => on(IpcChannels.icloudSyncStatus, cb)
 }
 
 export type Api = typeof api

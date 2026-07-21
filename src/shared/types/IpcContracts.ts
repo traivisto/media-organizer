@@ -19,17 +19,52 @@ export const IpcChannels = {
   executeStart: 'execute:start',
   executeCancel: 'execute:cancel',
   executeProgress: 'execute:progress',
-  executeDone: 'execute:done'
+  executeDone: 'execute:done',
+
+  icloudSyncStart: 'icloud:syncStart',
+  icloudSyncCancel: 'icloud:syncCancel',
+  icloudSyncStatus: 'icloud:syncStatus'
 } as const
 
 export interface AppConfig {
   lastSourceDir?: string
   lastDestDir?: string
   nominatimContact?: string
+  /** Apple ID email used for the last iCloud sync - never the password, which is
+   *  entered directly into icloudpd's own sign-in page and never touches this app. */
+  lastAppleId?: string
   /** date-fns-compatible short-date pattern read from this Windows PC's regional settings. */
   windowsDatePattern?: string
   /** date-fns-compatible short-time pattern read from this Windows PC's regional settings. */
   windowsTimePattern?: string
+}
+
+export interface IcloudSyncStartRequest {
+  appleId: string
+  includePhotos: boolean
+  includeVideos: boolean
+  /** Inclusive ISO date bounds (yyyy-MM-dd) - same fields as the scan's own date range filter. */
+  dateRangeStart?: string
+  dateRangeEnd?: string
+}
+
+export type IcloudSyncPhase =
+  | 'starting'
+  | 'awaitingAuth'
+  | 'authenticated'
+  | 'syncing'
+  | 'done'
+  | 'error'
+  | 'cancelled'
+
+export interface IcloudSyncStatusEvent {
+  phase: IcloudSyncPhase
+  message?: string
+  downloadedCount?: number
+  /** Populated once phase is 'done' - the local folder the synced files landed in, ready to be
+   *  used as the scan's sourceDir. */
+  syncDir?: string
+  error?: string
 }
 
 export type OrganizeMode = 'moveToFolders' | 'renameInPlace' | 'copyToFolders'

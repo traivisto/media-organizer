@@ -1,5 +1,6 @@
 import { useAppStore } from './state/appStore'
 import { PickDirsView } from './components/DirectoryPicker/PickDirsView'
+import { ICloudSyncView } from './components/ICloud/ICloudSyncView'
 import { ScanProgressView } from './components/Scanning/ScanProgressView'
 import { MissingDateModal } from './components/Resolution/MissingDateModal'
 import { PreviewSummaryBar } from './components/Preview/PreviewSummaryBar'
@@ -15,6 +16,12 @@ function App(): JSX.Element {
       return (
         <div className="narrow-page">
           <PickDirsView />
+        </div>
+      )
+    case 'icloudSync':
+      return (
+        <div className="narrow-page">
+          <ICloudSyncView />
         </div>
       )
     case 'scanning':
