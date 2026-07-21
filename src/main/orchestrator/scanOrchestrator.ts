@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { walkDirectory } from '../scanning/fileWalker'
-import { isWithinDateRange } from '../scanning/dateRangeFilter'
+import { isWithinDateRange, isWalkedFileWithinDateRange } from '../scanning/dateRangeFilter'
 import { readTags } from '../metadata/exiftoolClient'
 import { normalizeMetadata } from '../metadata/metadataNormalizer'
 import { geocodeCoords } from '../geocoding/geocodeService'
@@ -48,11 +48,17 @@ export async function startScan(req: ScanStartRequest): Promise<void> {
 }
 
 async function runScan(req: ScanStartRequest): Promise<void> {
-  const { files, skippedNonMedia } = await walkDirectory(req.sourceDir, req.includeSubfolders, {
+  const { files: walkedFiles, skippedNonMedia } = await walkDirectory(req.sourceDir, req.includeSubfolders, {
     includePhotos: req.includePhotos,
     includeVideos: req.includeVideos
   })
   setSkippedNonMedia(skippedNonMedia)
+
+  // Cheap pre-filter on filesystem mtime (already known from the walk, no exiftool needed)
+  // so a narrow date range skips metadata extraction for files nowhere near it, instead of
+  // extracting every file's EXIF data before filtering.
+  const files = walkedFiles.filter((f) => isWalkedFileWithinDateRange(f, req.dateRangeStart, req.dateRangeEnd))
+  const excludedByMtimePrefilter = walkedFiles.length - files.length
 
   const total = files.length
   const extracted: ScanRecord[] = []
@@ -76,7 +82,7 @@ async function runScan(req: ScanStartRequest): Promise<void> {
   if (cancelled) return
 
   const records = extracted.filter((r) => isWithinDateRange(r, req.dateRangeStart, req.dateRangeEnd))
-  const excludedByDateRange = extracted.length - records.length
+  const excludedByDateRange = excludedByMtimePrefilter + (extracted.length - records.length)
 
   const withGps = records.filter((r) => r.gps)
   for (let i = 0; i < withGps.length; i++) {

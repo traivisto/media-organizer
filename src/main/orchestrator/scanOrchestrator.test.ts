@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'fs/promises'
+import { mkdtemp, rm, utimes } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { ExifTool } from 'exiftool-vendored'
@@ -253,6 +253,37 @@ describe('scanOrchestrator date range filter', () => {
 
       const all = getAllRecords()
       expect(all.map((r) => r.originalPath.split(/[\\/]/).pop())).toEqual(['in-range.jpg'])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('excludes files by mtime before ever reading their metadata, so they cannot trigger a resolution pause', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-orch-mtimeprefilter-'))
+    const destDir = join(dir, '__dest__')
+    try {
+      // No EXIF date at all - if this file's metadata were ever extracted, the missing
+      // date would flag it for the needsResolution pause. Its mtime is set far outside
+      // the requested range, so the pre-filter should drop it before extraction runs.
+      const oldFile = join(dir, 'old-no-exif.jpg')
+      await writeMinimalJpeg(oldFile)
+      await utimes(oldFile, new Date('2020-01-01'), new Date('2020-01-01'))
+
+      await startScan({
+        sourceDir: dir,
+        destDir,
+        includeSubfolders: false,
+        organizeMode: 'moveToFolders',
+        includePhotos: true,
+        includeVideos: true,
+        dateRangeStart: '2026-01-01',
+        dateRangeEnd: '2026-12-31'
+      })
+
+      expect(eventsOf(IpcChannels.scanNeedsResolution)).toHaveLength(0)
+      const readyEvents = eventsOf<ScanReadyForPreviewEvent>(IpcChannels.scanReadyForPreview)
+      expect(readyEvents[0].totalCount).toBe(0)
+      expect(readyEvents[0].excludedByDateRange).toBe(1)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
