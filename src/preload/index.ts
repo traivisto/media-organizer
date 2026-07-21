@@ -1,0 +1,50 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import { IpcChannels } from '../shared/types/IpcContracts'
+import type {
+  AppConfig,
+  ExecuteDoneEvent,
+  ExecuteProgressEvent,
+  PreviewGetRequest,
+  PreviewGetResponse,
+  ResolutionSubmitRequest,
+  ScanNeedsResolutionEvent,
+  ScanProgressEvent,
+  ScanReadyForPreviewEvent,
+  ScanStartRequest
+} from '../shared/types/IpcContracts'
+
+function on<T>(channel: string, callback: (payload: T) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T): void => callback(payload)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
+const api = {
+  pickSourceDir: (): Promise<string | undefined> => ipcRenderer.invoke(IpcChannels.pickSourceDir),
+  pickDestDir: (): Promise<string | undefined> => ipcRenderer.invoke(IpcChannels.pickDestDir),
+  getConfig: (): Promise<AppConfig> => ipcRenderer.invoke(IpcChannels.getConfig),
+
+  scanStart: (req: ScanStartRequest): Promise<void> => ipcRenderer.invoke(IpcChannels.scanStart, req),
+  scanCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.scanCancel),
+  onScanCancelled: (cb: (e: undefined) => void) => on(IpcChannels.scanCancelled, cb),
+  onScanProgress: (cb: (e: ScanProgressEvent) => void) => on(IpcChannels.scanProgress, cb),
+  onScanNeedsResolution: (cb: (e: ScanNeedsResolutionEvent) => void) =>
+    on(IpcChannels.scanNeedsResolution, cb),
+  onScanReadyForPreview: (cb: (e: ScanReadyForPreviewEvent) => void) =>
+    on(IpcChannels.scanReadyForPreview, cb),
+
+  resolutionSubmit: (req: ResolutionSubmitRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.resolutionSubmit, req),
+
+  previewGet: (req: PreviewGetRequest): Promise<PreviewGetResponse> =>
+    ipcRenderer.invoke(IpcChannels.previewGet, req),
+
+  executeStart: (): Promise<void> => ipcRenderer.invoke(IpcChannels.executeStart),
+  executeCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.executeCancel),
+  onExecuteProgress: (cb: (e: ExecuteProgressEvent) => void) => on(IpcChannels.executeProgress, cb),
+  onExecuteDone: (cb: (e: ExecuteDoneEvent) => void) => on(IpcChannels.executeDone, cb)
+}
+
+export type Api = typeof api
+
+contextBridge.exposeInMainWorld('api', api)

@@ -1,0 +1,18 @@
+appId: com.traivisto.media-organizer
+productName: Media Organizer
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**/*
+  - '!**/*.ts'
+asarUnpack:
+  - resources/**
+win:
+  target:
+    - target: nsis
+    - target: portable
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
