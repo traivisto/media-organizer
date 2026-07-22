@@ -49,7 +49,10 @@ const api = {
   icloudSyncStart: (req: IcloudSyncStartRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.icloudSyncStart, req),
   icloudSyncCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.icloudSyncCancel),
-  onIcloudSyncStatus: (cb: (e: IcloudSyncStatusEvent) => void) => on(IpcChannels.icloudSyncStatus, cb)
+  onIcloudSyncStatus: (cb: (e: IcloudSyncStatusEvent) => void) => on(IpcChannels.icloudSyncStatus, cb),
+
+  setPreviewColumnWidths: (widths: number[]): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.setPreviewColumnWidths, widths)
 }
 
 export type Api = typeof api

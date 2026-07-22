@@ -1,5 +1,5 @@
 import Store from 'electron-store'
-import type { AppConfig } from '../../shared/types/IpcContracts'
+import type { AppConfig, SourceType, WindowBounds } from '../../shared/types/IpcContracts'
 import { getWindowsDateTimeFormat } from './windowsRegionalFormat'
 
 // Nominatim's usage policy requires requests to identify the application (and ideally
@@ -21,8 +21,11 @@ export async function getConfig(): Promise<AppConfig> {
     lastDestDir: store.get('lastDestDir'),
     nominatimContact: store.get('nominatimContact'),
     lastAppleId: store.get('lastAppleId'),
+    lastSourceType: store.get('lastSourceType'),
     windowsDatePattern: windowsFormat?.datePattern,
-    windowsTimePattern: windowsFormat?.timePattern
+    windowsTimePattern: windowsFormat?.timePattern,
+    lastWindowBounds: store.get('lastWindowBounds'),
+    lastPreviewColumnWidths: store.get('lastPreviewColumnWidths')
   }
 }
 
@@ -48,4 +51,20 @@ export function getNominatimContact(): string | undefined {
 
 export function setLastAppleId(appleId: string): void {
   store.set('lastAppleId', appleId)
+}
+
+export function setLastSourceType(type: SourceType): void {
+  store.set('lastSourceType', type)
+}
+
+export function getLastWindowBounds(): WindowBounds | undefined {
+  return store.get('lastWindowBounds')
+}
+
+export function setLastWindowBounds(bounds: WindowBounds): void {
+  store.set('lastWindowBounds', bounds)
+}
+
+export function setLastPreviewColumnWidths(widths: number[]): void {
+  store.set('lastPreviewColumnWidths', widths)
 }

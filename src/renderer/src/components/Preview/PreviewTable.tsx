@@ -74,15 +74,36 @@ export function PreviewTable(): JSX.Element {
     }
   }, [])
 
-  // Size columns to fill the available width once, on first mount.
+  const colWidthsRef = useRef(colWidths)
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const available = container.clientWidth - 16 // vertical scrollbar allowance
-    const totalWeight = COLUMN_WEIGHTS.reduce((a, b) => a + b, 0)
-    setColWidths(
-      COLUMN_WEIGHTS.map((w) => Math.max(MIN_COLUMN_WIDTH, Math.floor((w / totalWeight) * available)))
-    )
+    colWidthsRef.current = colWidths
+  }, [colWidths])
+
+  // Restore previously saved column widths, or size them to fill the available width
+  // once, on first mount.
+  useEffect(() => {
+    let cancelled = false
+
+    async function init(): Promise<void> {
+      const config = await api().getConfig()
+      if (cancelled) return
+      if (config.lastPreviewColumnWidths?.length === COLUMN_LABELS.length) {
+        setColWidths(config.lastPreviewColumnWidths)
+        return
+      }
+      const container = containerRef.current
+      if (!container) return
+      const available = container.clientWidth - 16 // vertical scrollbar allowance
+      const totalWeight = COLUMN_WEIGHTS.reduce((a, b) => a + b, 0)
+      setColWidths(
+        COLUMN_WEIGHTS.map((w) => Math.max(MIN_COLUMN_WIDTH, Math.floor((w / totalWeight) * available)))
+      )
+    }
+
+    void init()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -104,6 +125,7 @@ export function PreviewTable(): JSX.Element {
       dragRef.current = null
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      void api().setPreviewColumnWidths(colWidthsRef.current)
     }
 
     window.addEventListener('mousemove', onMouseMove)

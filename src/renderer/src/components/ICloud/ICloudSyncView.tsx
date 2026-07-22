@@ -2,13 +2,42 @@ import { api, useIpcEvent } from '../../hooks/useIpc'
 import { useAppStore } from '../../state/appStore'
 
 export function ICloudSyncView(): JSX.Element {
-  const { icloudSyncStatus, setIcloudSyncStatus, setSourceDir, setPhase } = useAppStore()
+  const {
+    icloudSyncStatus,
+    setIcloudSyncStatus,
+    setSourceDir,
+    setPhase,
+    destDir,
+    organizeMode,
+    includePhotos,
+    includeVideos,
+    dateRangeStart,
+    dateRangeEnd
+  } = useAppStore()
+
+  const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
+
+  async function startScanAfterSync(syncDir: string): Promise<void> {
+    setPhase('scanning')
+    await api().scanStart({
+      sourceDir: syncDir,
+      destDir: needsDestDir ? destDir : undefined,
+      // icloudpd always downloads flat (--folder-structure none), so subfolder
+      // recursion doesn't apply here the way it does for a hand-picked local folder.
+      includeSubfolders: true,
+      organizeMode,
+      includePhotos,
+      includeVideos,
+      dateRangeStart: dateRangeStart || undefined,
+      dateRangeEnd: dateRangeEnd || undefined
+    })
+  }
 
   useIpcEvent(api().onIcloudSyncStatus, (status) => {
     setIcloudSyncStatus(status)
     if (status.phase === 'done' && status.syncDir) {
       setSourceDir(status.syncDir)
-      setPhase('pickDirs')
+      void startScanAfterSync(status.syncDir)
     }
     if (status.phase === 'cancelled') {
       setPhase('pickDirs')
