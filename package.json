@@ -1,6 +1,6 @@
 {
   "name": "media-organizer",
-  "version": "0.95.0",
+  "version": "1.0.0",
   "description": "Rename and sort photos/videos into year/month folders based on embedded metadata",
   "main": "./out/main/index.js",
   "author": "traivisto",

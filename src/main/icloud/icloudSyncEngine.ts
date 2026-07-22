@@ -76,7 +76,8 @@ async function runPhase(
   args: string[],
   phase: 'starting' | 'syncing',
   onStatus: (status: IcloudSyncStatusEvent) => void,
-  downloadedCountRef: { count: number }
+  downloadedCountRef: { count: number },
+  browserOpenedRef: { opened: boolean }
 ): Promise<'ok' | 'cancelled' | 'error'> {
   let sawWebuiPrompt = false
   const recentLines: string[] = []
@@ -88,7 +89,14 @@ async function runPhase(
 
     if (line.includes(AWAITING_AUTH_LOG_LINE)) {
       sawWebuiPrompt = true
-      shell.openExternal(WEBUI_URL)
+      // icloudpd prints this line at the start of every invocation, including when a still-
+      // valid cached cookie lets it authenticate silently a moment later - runSync makes two
+      // separate icloudpd invocations (auth-only, then the real sync), so without this guard
+      // the browser pops open a second, redundant tab for the second invocation every time.
+      if (!browserOpenedRef.opened) {
+        browserOpenedRef.opened = true
+        shell.openExternal(WEBUI_URL)
+      }
       onStatus({ phase: 'awaitingAuth', message: 'Sign-in page opened in your browser.' })
       return
     }
@@ -135,14 +143,19 @@ export async function runSync(
 
   onStatus({ phase: 'starting', logPath })
 
-  // Phase 1 (--auth-only): establishes/refreshes the session. Only opens the sign-in
-  // page if the session cached in cookieDir from a previous run has expired or doesn't
-  // exist yet - if it's still valid, this phase completes silently with no browser popup.
+  // Shared across both phases below so the sign-in tab opens at most once per sync run -
+  // icloudpd logs the same "starting web server" line on every invocation, including when
+  // a still-valid cached cookie lets it authenticate silently a moment later, so without
+  // this the browser would open a second tab for phase 2 even when nothing needed signing in.
+  const browserOpenedRef = { opened: false }
+
+  // Phase 1 (--auth-only): establishes/refreshes the session.
   const authResult = await runPhase(
     buildArgs(req, cookieDir, targetDir, true),
     'starting',
     onStatus,
-    { count: 0 }
+    { count: 0 },
+    browserOpenedRef
   )
   if (authResult !== 'ok') {
     if (authResult === 'cancelled') onStatus({ phase: 'cancelled' })
@@ -157,7 +170,8 @@ export async function runSync(
     buildArgs(req, cookieDir, targetDir, false),
     'syncing',
     onStatus,
-    downloadedCountRef
+    downloadedCountRef,
+    browserOpenedRef
   )
   if (syncResult !== 'ok') {
     if (syncResult === 'cancelled') onStatus({ phase: 'cancelled' })

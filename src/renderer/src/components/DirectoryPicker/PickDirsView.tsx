@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { api } from '../../hooks/useIpc'
 import { useAppStore } from '../../state/appStore'
 
@@ -7,18 +7,26 @@ export function PickDirsView(): JSX.Element {
     sourceDir,
     destDir,
     organizeMode,
+    sourceType,
+    includeSubfolders,
+    includePhotos,
+    includeVideos,
+    dateRangeStart,
+    dateRangeEnd,
+    appleId,
     setSourceDir,
     setDestDir,
     setOrganizeMode,
     setWindowsDateTimeFormat,
-    setPhase
+    setPhase,
+    setSourceType,
+    setIncludeSubfolders,
+    setIncludePhotos,
+    setIncludeVideos,
+    setDateRangeStart,
+    setDateRangeEnd,
+    setAppleId
   } = useAppStore()
-  const [includeSubfolders, setIncludeSubfolders] = useState(true)
-  const [includePhotos, setIncludePhotos] = useState(true)
-  const [includeVideos, setIncludeVideos] = useState(true)
-  const [dateRangeStart, setDateRangeStart] = useState('')
-  const [dateRangeEnd, setDateRangeEnd] = useState('')
-  const [appleId, setAppleId] = useState('')
 
   useEffect(() => {
     api()
@@ -27,6 +35,7 @@ export function PickDirsView(): JSX.Element {
         if (config.lastSourceDir) setSourceDir(config.lastSourceDir)
         if (config.lastDestDir) setDestDir(config.lastDestDir)
         if (config.lastAppleId) setAppleId(config.lastAppleId)
+        if (config.lastSourceType) setSourceType(config.lastSourceType)
         setWindowsDateTimeFormat(config.windowsDatePattern, config.windowsTimePattern)
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -42,24 +51,27 @@ export function PickDirsView(): JSX.Element {
     if (dir) setDestDir(dir)
   }
 
-  async function syncFromIcloud(): Promise<void> {
-    if (!appleId.trim() || !hasMediaTypeSelected) return
-    setPhase('icloudSync')
-    await api().icloudSyncStart({
-      appleId: appleId.trim(),
-      includePhotos,
-      includeVideos,
-      dateRangeStart: dateRangeStart || undefined,
-      dateRangeEnd: dateRangeEnd || undefined
-    })
-  }
-
   const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
   const hasMediaTypeSelected = includePhotos || includeVideos
-  const canScan = !!sourceDir && (!needsDestDir || !!destDir) && hasMediaTypeSelected
+  const hasValidSource = sourceType === 'local' ? !!sourceDir : !!appleId.trim()
+  const canScan = hasValidSource && (!needsDestDir || !!destDir) && hasMediaTypeSelected
 
   async function startScan(): Promise<void> {
-    if (!canScan || !sourceDir) return
+    if (!canScan) return
+
+    if (sourceType === 'icloud') {
+      setPhase('icloudSync')
+      await api().icloudSyncStart({
+        appleId: appleId.trim(),
+        includePhotos,
+        includeVideos,
+        dateRangeStart: dateRangeStart || undefined,
+        dateRangeEnd: dateRangeEnd || undefined
+      })
+      return
+    }
+
+    if (!sourceDir) return
     setPhase('scanning')
     await api().scanStart({
       sourceDir,
@@ -76,46 +88,66 @@ export function PickDirsView(): JSX.Element {
   return (
     <div>
       <h1>Media Organizer</h1>
-      <p>Pick a source folder to scan, then choose what to do with the files.</p>
+      <p>Pick a source, then choose what to do with the files.</p>
 
       <div style={{ marginBottom: 16 }}>
         <div style={{ marginBottom: 8 }}>
-          <strong>Source:</strong> {sourceDir ?? <em>not selected</em>}
+          <strong>Source</strong>
         </div>
-        <button onClick={pickSource}>Choose source folder</button>
-        <div style={{ marginTop: 8 }}>
-          <label>
+        <label style={{ display: 'block', marginBottom: 4 }}>
+          <input
+            type="radio"
+            checked={sourceType === 'local'}
+            onChange={() => setSourceType('local')}
+          />{' '}
+          Local folder
+        </label>
+        <label style={{ display: 'block', marginBottom: 8 }}>
+          <input
+            type="radio"
+            checked={sourceType === 'icloud'}
+            onChange={() => setSourceType('icloud')}
+          />{' '}
+          iCloud
+        </label>
+
+        {sourceType === 'local' ? (
+          <>
+            <div style={{ marginBottom: 8 }}>
+              <strong>Folder:</strong> {sourceDir ?? <em>not selected</em>}
+            </div>
+            <button onClick={pickSource}>Choose source folder</button>
+            <div style={{ marginTop: 8 }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={includeSubfolders}
+                  onChange={(e) => setIncludeSubfolders(e.target.checked)}
+                />{' '}
+                Include subfolders
+              </label>
+            </div>
+          </>
+        ) : (
+          <>
             <input
-              type="checkbox"
-              checked={includeSubfolders}
-              onChange={(e) => setIncludeSubfolders(e.target.checked)}
-            />{' '}
-            Include subfolders
-          </label>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 8 }}>
-          <strong>Or, sync directly from iCloud</strong>{' '}
-          <span style={{ fontSize: 12, opacity: 0.7 }}>
-            (downloads into a local folder, which becomes the source above)
-          </span>
-        </div>
-        <input
-          type="email"
-          placeholder="Apple ID email"
-          value={appleId}
-          onChange={(e) => setAppleId(e.target.value)}
-          style={{ marginRight: 8 }}
-        />
-        <button disabled={!appleId.trim() || !hasMediaTypeSelected} onClick={syncFromIcloud}>
-          Sync from iCloud
-        </button>
-        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
-          Uses the Photos/Videos and date-range filters below. Your Apple ID password and 2FA code are
-          entered on icloudpd&apos;s own sign-in page in your browser - this app never sees them.
-        </div>
+              type="email"
+              placeholder="Apple ID email"
+              value={appleId}
+              onChange={(e) => setAppleId(e.target.value)}
+            />
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+              Uses the Photos/Videos and date-range filters below. Your Apple ID password and 2FA
+              code are entered on icloudpd&apos;s own sign-in page in your browser - this app
+              never sees them. The sync starts when you press Scan below.
+            </div>
+            {sourceDir && (
+              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                Last synced into: {sourceDir}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div style={{ marginBottom: 16 }}>
@@ -182,6 +214,13 @@ export function PickDirsView(): JSX.Element {
           />{' '}
           Rename and copy into Year/Month folders in a destination, keeping the originals in place
         </label>
+        {sourceType === 'icloud' && (
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>
+            Since the source is from iCloud sync, these actions only affect the downloaded local
+            copy - nothing is ever deleted from iCloud itself, regardless of which option you
+            choose.
+          </div>
+        )}
       </div>
 
       {needsDestDir && (

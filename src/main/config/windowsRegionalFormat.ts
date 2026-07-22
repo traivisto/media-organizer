@@ -1,7 +1,33 @@
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Reads this Windows user's locale name (e.g. "fi-FI"), synchronously - needed early
+ * enough (before any await yields to the event loop) for index.ts's
+ * app.commandLine.appendSwitch('lang', ...) to actually affect Chromium's locale.pak
+ * selection, which drives navigator.language/Intl/native date-input rendering. Once
+ * the event loop has ticked even once, that switch stops having any effect on locale
+ * resolution (confirmed empirically) even though it's still technically "before ready".
+ * This is the closest approximation of the Windows regional format available this way -
+ * it won't reflect a per-field format override the user made independent of their base
+ * locale, since Chromium's date-input picker only understands a locale, not a custom
+ * date-fns pattern.
+ */
+export function getWindowsLocaleNameSync(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  try {
+    const stdout = execFileSync(
+      'reg',
+      ['query', 'HKCU\\Control Panel\\International', '/v', 'LocaleName'],
+      { encoding: 'utf8' }
+    )
+    return stdout.match(/REG_SZ\s+(.+)/)?.[1]?.trim()
+  } catch {
+    return undefined
+  }
+}
 
 export interface WindowsDateTimeFormat {
   datePattern: string

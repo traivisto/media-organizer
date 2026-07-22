@@ -4,11 +4,23 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { setMainWindow } from './ipc/rendererBridge'
 import { initExiftoolPool, shutdownExiftoolPool } from './metadata/exiftoolClient'
+import { getWindowsLocaleNameSync } from './config/windowsRegionalFormat'
+import { getLastWindowBounds, setLastWindowBounds } from './config/appConfig'
+
+// Must run synchronously, before anything else yields to the event loop - Chromium's
+// locale.pak selection (which drives navigator.language / Intl / native date-input
+// rendering) is resolved too early for an appendSwitch call made after even one await,
+// even though that's still technically "before app.whenReady()".
+const windowsLocale = getWindowsLocaleNameSync()
+if (windowsLocale) app.commandLine.appendSwitch('lang', windowsLocale)
 
 function createWindow(): void {
+  const bounds = getLastWindowBounds()
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: bounds?.width ?? 1200,
+    height: bounds?.height ?? 800,
+    x: bounds?.x,
+    y: bounds?.y,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -23,6 +35,10 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  mainWindow.on('close', () => {
+    setLastWindowBounds(mainWindow.getBounds())
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -35,7 +51,9 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+async function main(): Promise<void> {
+  await app.whenReady()
+
   electronApp.setAppUserModelId('com.traivisto.media-organizer')
 
   app.on('browser-window-created', (_, window) => {
@@ -49,7 +67,9 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-})
+}
+
+void main()
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

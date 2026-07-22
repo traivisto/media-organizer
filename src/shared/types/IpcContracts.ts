@@ -23,8 +23,19 @@ export const IpcChannels = {
 
   icloudSyncStart: 'icloud:syncStart',
   icloudSyncCancel: 'icloud:syncCancel',
-  icloudSyncStatus: 'icloud:syncStatus'
+  icloudSyncStatus: 'icloud:syncStatus',
+
+  setPreviewColumnWidths: 'config:setPreviewColumnWidths'
 } as const
+
+export type SourceType = 'local' | 'icloud'
+
+export interface WindowBounds {
+  width: number
+  height: number
+  x?: number
+  y?: number
+}
 
 export interface AppConfig {
   lastSourceDir?: string
@@ -33,10 +44,14 @@ export interface AppConfig {
   /** Apple ID email used for the last iCloud sync - never the password, which is
    *  entered directly into icloudpd's own sign-in page and never touches this app. */
   lastAppleId?: string
+  /** Which source option was last used, so PickDirsView can restore the same radio choice. */
+  lastSourceType?: SourceType
   /** date-fns-compatible short-date pattern read from this Windows PC's regional settings. */
   windowsDatePattern?: string
   /** date-fns-compatible short-time pattern read from this Windows PC's regional settings. */
   windowsTimePattern?: string
+  lastWindowBounds?: WindowBounds
+  lastPreviewColumnWidths?: number[]
 }
 
 export interface IcloudSyncStartRequest {

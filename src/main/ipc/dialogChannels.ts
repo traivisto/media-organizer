@@ -1,6 +1,14 @@
 import { dialog, ipcMain } from 'electron'
 import { IpcChannels } from '../../shared/types/IpcContracts'
-import { getConfig, getLastDestDir, getLastSourceDir, setLastDestDir, setLastSourceDir } from '../config/appConfig'
+import {
+  getConfig,
+  getLastDestDir,
+  getLastSourceDir,
+  setLastDestDir,
+  setLastPreviewColumnWidths,
+  setLastSourceDir,
+  setLastSourceType
+} from '../config/appConfig'
 
 export function registerDialogChannels(): void {
   ipcMain.handle(IpcChannels.pickSourceDir, async () => {
@@ -10,6 +18,7 @@ export function registerDialogChannels(): void {
     })
     if (canceled || filePaths.length === 0) return undefined
     setLastSourceDir(filePaths[0])
+    setLastSourceType('local')
     return filePaths[0]
   })
 
@@ -24,4 +33,8 @@ export function registerDialogChannels(): void {
   })
 
   ipcMain.handle(IpcChannels.getConfig, () => getConfig())
+
+  ipcMain.handle(IpcChannels.setPreviewColumnWidths, (_event, widths: number[]) => {
+    setLastPreviewColumnWidths(widths)
+  })
 }
