@@ -198,12 +198,13 @@ $alias = "Set-Alias mediaidx `"$Venv\Scripts\mediaidx.exe`""
 if (-not (Test-Path $PROFILE)) {
     New-Item -ItemType File -Path $PROFILE -Force | Out-Null
 }
-if (-not (Select-String -Path $PROFILE -Pattern "mediaidx" -Quiet -ErrorAction SilentlyContinue)) {
-    Add-Content -Path $PROFILE -Value $alias
-    Ok "added 'mediaidx' alias to your PowerShell profile"
-} else {
-    Ok "alias already present"
-}
+# Replace any existing mediaidx alias rather than skipping: after the runtime
+# moves, an alias left pointing at the old path is worse than none, because it
+# fails in a way that looks like a broken install.
+$lines = @(Get-Content $PROFILE -ErrorAction SilentlyContinue |
+           Where-Object { $_ -notmatch '^\s*Set-Alias\s+mediaidx\b' })
+[System.IO.File]::WriteAllLines($PROFILE, @($lines + $alias))
+Ok "'mediaidx' alias -> $Venv\Scripts\mediaidx.exe"
 
 # --- verify ---------------------------------------------------------------
 Step "Checking the environment"
