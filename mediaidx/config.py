@@ -103,8 +103,17 @@ def load(path: str | os.PathLike | None = None) -> Config:
     cfg_path = Path(path) if path else default_config_path()
     raw: dict = {}
     if cfg_path.exists():
-        with open(cfg_path, "rb") as fh:
-            raw = tomllib.load(fh)
+        # Windows PowerShell 5.1 writes UTF-8 *with* a BOM under `-Encoding utf8`,
+        # and tomllib rejects it as "Invalid statement (at line 1, column 1)".
+        # Any config edited on Windows can carry one, so strip it rather than
+        # making every author think about it.
+        data = cfg_path.read_bytes()
+        if data.startswith(b"\xef\xbb\xbf"):
+            data = data[3:]
+        try:
+            raw = tomllib.loads(data.decode("utf-8"))
+        except tomllib.TOMLDecodeError as e:
+            raise SystemExit(f"{cfg_path} is not valid TOML:\n  {e}") from None
 
     merged = _deep_merge(DEFAULTS, raw)
 

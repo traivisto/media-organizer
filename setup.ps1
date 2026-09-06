@@ -155,7 +155,11 @@ chunk_size     = 256
 filename_patterns_extra = [
   { re = '^(?P<ymd>\d{8})@(?P<hms>\d{6})(?:-(?P<make>.+?)-(?P<model>.+?))?-\d+$', hint = "archive" },
 ]
-"@ | Out-File -FilePath $cfg -Encoding utf8
+"@ | ForEach-Object {
+        # NOT Out-File -Encoding utf8: Windows PowerShell 5.1 prepends a BOM,
+        # which tomllib rejects at line 1, column 1.
+        [System.IO.File]::WriteAllText($cfg, $_, [System.Text.UTF8Encoding]::new($false))
+    }
     Ok "$cfg (written)"
 }
 
