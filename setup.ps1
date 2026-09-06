@@ -159,6 +159,16 @@ filename_patterns_extra = [
     Ok "$cfg (written)"
 }
 
+# --- point the app at that config ----------------------------------------
+Step "MEDIAIDX_CONFIG"
+# The application looks in %LOCALAPPDATA%\mediaidx\config.toml by default, but
+# the runtime lives in C:\mediaidx to escape MSIX redirection. Without this the
+# config is silently ignored and the built-in defaults win -- which puts the
+# database somewhere else entirely and drops the library's filename patterns.
+[Environment]::SetEnvironmentVariable("MEDIAIDX_CONFIG", $cfg, "User")
+$env:MEDIAIDX_CONFIG = $cfg
+Ok "MEDIAIDX_CONFIG = $cfg"
+
 # --- convenience ----------------------------------------------------------
 Step "Shortcut"
 $alias = "Set-Alias mediaidx `"$Venv\Scripts\mediaidx.exe`""

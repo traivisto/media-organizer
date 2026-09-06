@@ -184,7 +184,10 @@ def cmd_status(args) -> int:
 
     print(f"database   {cfg.database}")
     size = cfg.database.stat().st_size / 1e6 if cfg.database.exists() else 0
-    print(f"           {size:.0f} MB\n")
+    print(f"           {size:.0f} MB")
+    # Which config produced this matters: silently falling back to the defaults
+    # puts the database somewhere unexpected and drops library-specific patterns.
+    print(f"config     {cfg.source or 'NONE FOUND -- using built-in defaults'}\n")
     print(f"  photographs      {assets:>10,}")
     print(f"  file copies      {files:>10,}   ({dupes:,} duplicate paths)")
     if missing:
