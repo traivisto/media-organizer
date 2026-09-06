@@ -225,6 +225,78 @@ def cmd_status(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# embed / search / serve
+# --------------------------------------------------------------------------
+
+def cmd_embed(args) -> int:
+    from . import embed as embed_mod
+    from . import vision_pass
+    cfg, con = _open(args, create=False)
+
+    db.migrate(con)                      # schema v2 adds image_vectors
+    todo = vision_pass.pending(con, embed_mod.STAGE_VERSION)
+    if not todo:
+        print("nothing pending -- every photograph already has a search vector")
+        return 0
+    print(f"{len(todo):,} photographs pending"
+          + (f", processing {args.limit:,}" if args.limit else ""))
+    print("loading model (first run downloads it) ...")
+
+    try:
+        st = vision_pass.run(con, cfg, limit=args.limit, threads=args.workers,
+                             gpu_batch=args.batch,
+                             progress=vision_pass.render_progress)
+    except KeyboardInterrupt:
+        print("\n  interrupted -- committed batches are kept; re-run to continue")
+        return 130
+
+    print(f"\n\n  embedded   {st.done:>9,}")
+    print(f"  thumbnails {st.thumbs:>9,}")
+    if st.failed:
+        print(f"  failed     {st.failed:>9,}")
+    print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_search(args) -> int:
+    from . import embed as embed_mod
+    cfg, con = _open(args, create=False)
+    vec_ok = embed_mod.load_vec_extension(con)
+    n = con.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
+    if n == 0:
+        print("no search vectors yet -- run `mediaidx embed`", file=sys.stderr)
+        return 1
+
+    query = " ".join(args.query)
+    enc = embed_mod.Encoder(
+        model_name=cfg.scan.get("embed_model", embed_mod.DEFAULT_MODEL),
+        pretrained=cfg.scan.get("embed_pretrained", embed_mod.DEFAULT_PRETRAINED))
+    hits = embed_mod.search(con, enc.encode_text([query])[0],
+                            limit=args.limit, vec_ok=vec_ok)
+    print(f'\n"{query}"   {n:,} searchable\n')
+    for asset_id, score in hits:
+        r = con.execute(
+            """SELECT a.taken_at, f.path FROM assets a
+               JOIN files f ON f.asset_id = a.id WHERE a.id = ? LIMIT 1""",
+            (asset_id,)).fetchone()
+        when = (datetime.fromtimestamp(r["taken_at"]).strftime("%Y-%m-%d")
+                if r["taken_at"] else "----------")
+        print(f"  {score:.3f}  {when}  {os.path.basename(r['path'])}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    from . import serve
+    cfg = config_mod.load(args.config)
+    if not cfg.database.exists():
+        print("no database yet -- run `mediaidx add <folder>` first", file=sys.stderr)
+        return 1
+    print(f"  http://{args.host}:{args.port}\n  ctrl-c to stop")
+    serve.run(cfg, host=args.host, port=args.port)
+    return 0
+
+
+# --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
 
@@ -330,6 +402,22 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--errors", action="store_true")
     st.add_argument("--limit", type=int, default=25)
     st.set_defaults(func=cmd_status)
+
+    e = sub.add_parser("embed", help="build search vectors and thumbnails")
+    e.add_argument("--limit", type=int, help="stop after N photographs")
+    e.add_argument("--workers", type=int, default=8)
+    e.add_argument("--batch", type=int, default=32, help="GPU batch size")
+    e.set_defaults(func=cmd_embed)
+
+    q = sub.add_parser("search", help="search from the terminal")
+    q.add_argument("query", nargs="+")
+    q.add_argument("--limit", type=int, default=10)
+    q.set_defaults(func=cmd_search)
+
+    sv = sub.add_parser("serve", help="open the local search UI")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8710)
+    sv.set_defaults(func=cmd_serve)
 
     d = sub.add_parser("doctor", help="check the environment")
     d.set_defaults(func=cmd_doctor)

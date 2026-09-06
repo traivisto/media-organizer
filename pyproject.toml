@@ -9,6 +9,17 @@ dependencies = [
     "pillow>=11",
     "pillow-heif>=1.0",
     "platformdirs>=4",
+    "numpy>=2",
+    # Search vectors. torch must come from the CUDA index, not PyPI:
+    #   uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+    "torch>=2.5",
+    "open_clip_torch>=2.30",
+    "transformers>=4.45",       # SigLIP tokenizer
+    "sentencepiece>=0.2",
+    "sqlite-vec>=0.1.9",
+    # Local UI
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]

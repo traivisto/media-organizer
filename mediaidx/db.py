@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS scan_errors (
   attempts   INTEGER NOT NULL DEFAULT 1,
   updated_at INTEGER NOT NULL,
   UNIQUE (path, stage)
+);
+
+CREATE TABLE IF NOT EXISTS image_vectors (
+  asset_id  INTEGER PRIMARY KEY REFERENCES assets(id),
+  model     TEXT NOT NULL,
+  embedding BLOB NOT NULL      -- float16; sqlite-vec holds the searchable copy
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_asset   ON files(asset_id);
