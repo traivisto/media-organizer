@@ -90,19 +90,31 @@ Ok "mediaidx and dependencies"
 
 # --- exiftool -------------------------------------------------------------
 Step "ExifTool"
-$exif = (Get-Command exiftool -ErrorAction SilentlyContinue)
-if ($null -eq $exif) {
-    $known = "$env:LOCALAPPDATA\Programs\ExifTool\ExifTool.exe"
-    if (Test-Path $known) {
-        $exifPath = $known
-    } else {
-        Warn "installing via winget"
-        winget install --id OliverBetz.ExifTool --accept-source-agreements `
-                       --accept-package-agreements --silent
-        $exifPath = $known
-    }
-} else {
-    $exifPath = $exif.Source
+function Find-ExifTool {
+    $cmd = Get-Command exiftool -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    foreach ($c in @(
+        "$env:LOCALAPPDATA\Programs\ExifTool\ExifTool.exe",
+        "$env:ProgramFiles\ExifTool\exiftool.exe",
+        "${env:ProgramFiles(x86)}\ExifTool\exiftool.exe"
+    )) { if (Test-Path $c) { return $c } }
+    return $null
+}
+
+$exifPath = Find-ExifTool
+if ($null -eq $exifPath) {
+    Warn "installing via winget"
+    winget install --id OliverBetz.ExifTool --accept-source-agreements `
+                   --accept-package-agreements --silent
+    # winget updates PATH for new processes only, so re-probe known locations
+    $env:PATH = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("Path", "User")
+    $exifPath = Find-ExifTool
+}
+if ($null -eq $exifPath) {
+    Write-Host "ExifTool could not be located after installing." -ForegroundColor Red
+    Write-Host "Install it manually, then set tools.exiftool in $Root\config.toml"
+    exit 1
 }
 Ok $exifPath
 
