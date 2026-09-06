@@ -20,17 +20,27 @@ Full design: [spec.md](spec.md).
 
 ## Setup
 
-The environment lives outside OneDrive, because a SQLite WAL database and a sync
-client eventually corrupt each other (spec §10.5).
+Run once per machine, in a **non-elevated** PowerShell:
 
 ```
-uv python install 3.12
-uv venv "C:\Users\traiv\AppData\Local\mediaidx\venv" --python 3.12
-uv pip install --python "C:\Users\traiv\AppData\Local\mediaidx\venv\Scripts\python.exe" -e ".[dev]"
-winget install OliverBetz.ExifTool
+cd "C:\Users\traiv\OneDrive\My Digital Solutions\Media classifier"
+.\setup.ps1
 ```
 
-Config is read from `%LOCALAPPDATA%\mediaidx\config.toml`.
+If PowerShell refuses to run it, allow scripts for that window only with
+`Set-ExecutionPolicy -Scope Process Bypass`.
+
+It installs uv, a private Python 3.12 (your system Python is untouched), PyTorch
+with CUDA, ExifTool, and writes `%LOCALAPPDATA%\mediaidx\config.toml`. Budget a
+few minutes: the CUDA wheels are about 2.5 GB.
+
+Everything it creates lives **outside OneDrive**, because a SQLite WAL database
+and a sync client eventually corrupt each other (spec §10.5). That also means the
+environment does not travel between machines — the source code syncs, the runtime
+does not. Run `setup.ps1` on each machine that will do indexing.
+
+Do not run elevated: an administrator shell does not inherit your mapped network
+drives, so `Z:\` would not exist.
 
 ## Use
 
