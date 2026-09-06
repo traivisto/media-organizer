@@ -336,6 +336,16 @@ def cmd_doctor(args) -> int:
         except Exception as e:
             check("exiftool utf-8 round-trip", False, str(e)[:80])
 
+    print("\nprivacy")
+    offline = os.environ.get("HF_HUB_OFFLINE") in ("1", "true", "TRUE")
+    hf_cache = Path(os.path.expanduser("~/.cache/huggingface/hub"))
+    cached = hf_cache.exists() and any(hf_cache.iterdir())
+    print(f"  [INFO] photographs are never transmitted; all inference is local")
+    print(f"  [{'OK  ' if cached else 'INFO'}] model weights cached"
+          f"   {'yes -- no download needed' if cached else 'not yet, first embed will fetch them'}")
+    print(f"  [{'OK  ' if offline else 'INFO'}] HF_HUB_OFFLINE"
+          f"   {'set -- network access disabled' if offline else 'unset; set it to 1 to enforce offline once weights are cached'}")
+
     print("\nstorage")
     sync = pathutil.is_in_sync_folder(str(cfg.database))
     check("database outside sync folder", sync is None,

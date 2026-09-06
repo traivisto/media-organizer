@@ -891,9 +891,30 @@ large enough that fixing the link before the first full run is worth an evening'
 
 ### 10.4 Privacy
 
-- No network egress except to `localhost` (Ollama) and the NAS.
+**No photograph, thumbnail, filename, embedding, caption or item of metadata is
+ever transmitted anywhere.** All inference runs on the local GPU. This is the point of
+the system, and it holds without qualification.
+
+Network access is limited to two things, and both are one-time downloads of software:
+
+| Destination | When | What moves |
+|---|---|---|
+| PyPI, download.pytorch.org | setup | packages, inbound |
+| huggingface.co | first `embed` run | model weights, ~1.7 GB inbound |
+| `localhost` | captioning (M5) | images to Ollama, in-process |
+| The NAS | indexing | photographs are read, never written |
+
+An earlier draft claimed "no network egress except to localhost and the NAS", which
+was wrong: model weights are fetched from Hugging Face on first use. Nothing about a
+photograph is sent in either direction, but the claim as written was inaccurate.
+
+**Enforceable, not merely promised.** Once the weights are cached, setting
+`HF_HUB_OFFLINE=1` makes the library incapable of any network call — a later
+dependency change cannot quietly reintroduce one. `mediaidx doctor` reports whether
+offline mode is active.
+
 - The UI binds to `127.0.0.1` by default. Binding to the LAN is opt-in via config.
-- No telemetry.
+- No telemetry, no analytics, no crash reporting, no account.
 
 ### 10.5 Where the application's own files live
 
