@@ -59,6 +59,24 @@ drives, so `Z:\` would not exist.
 
 ## Use
 
+`setup.ps1` adds a `mediaidx` alias to your PowerShell profile. It only takes
+effect in a **new** window, and only if your execution policy permits profiles to
+load — `Restricted` silently skips them. To allow it once:
+
+```
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Otherwise call the executable directly, which always works:
+
+```
+C:\Users\<you>\.mediaidx\venv\Scripts\mediaidx.exe status
+```
+
+(`%USERPROFILE%` is cmd syntax and does not expand in PowerShell; there it is
+`$env:USERPROFILE`, and invoking a path built from it needs the call operator:
+`& "$env:USERPROFILE\.mediaidx\venv\Scripts\mediaidx.exe" status`.)
+
 ```
 mediaidx doctor                       check the environment first
 mediaidx add <folder>                 index exactly this folder, and no other
