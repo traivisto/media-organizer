@@ -15,11 +15,22 @@
 
     Everything it creates lives outside OneDrive. A SQLite database with WAL
     journalling inside a syncing folder eventually corrupts (spec 10.5).
+
+    The runtime goes in C:\mediaidx rather than %LOCALAPPDATA%\mediaidx, which
+    would be the conventional choice. Reason: the Claude desktop app is an MSIX
+    package, so processes it launches have their AppData\Local writes redirected
+    into a package-private store at
+
+        %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\
+
+    Anything written there is invisible to Explorer and to your own shells, which
+    is confusing and hard to diagnose. C:\ is not a virtualised location, so both
+    an assistant-launched process and your own PowerShell see the same files.
 #>
 
 $ErrorActionPreference = "Stop"
 
-$Root    = "$env:LOCALAPPDATA\mediaidx"
+$Root    = "C:\mediaidx"
 $Venv    = "$Root\venv"
 $Py      = "$Venv\Scripts\python.exe"
 $Project = $PSScriptRoot

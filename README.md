@@ -31,8 +31,15 @@ If PowerShell refuses to run it, allow scripts for that window only with
 `Set-ExecutionPolicy -Scope Process Bypass`.
 
 It installs uv, a private Python 3.12 (your system Python is untouched), PyTorch
-with CUDA, ExifTool, and writes `%LOCALAPPDATA%\mediaidx\config.toml`. Budget a
-few minutes: the CUDA wheels are about 2.5 GB.
+with CUDA, ExifTool, and writes `C:\mediaidx\config.toml`. Budget a few minutes:
+the CUDA wheels are about 2.5 GB.
+
+**Why `C:\mediaidx` and not `%LOCALAPPDATA%`**, which would be conventional: the
+Claude desktop app is an MSIX package, so processes it launches get their
+`AppData\Local` writes redirected into a package-private store under
+`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\`. Files written there are
+invisible to Explorer and to your own shells — a genuinely confusing failure.
+`C:\` is not virtualised, so every process sees the same files.
 
 Everything it creates lives **outside OneDrive**, because a SQLite WAL database
 and a sync client eventually corrupt each other (spec §10.5). That also means the
