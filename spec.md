@@ -153,9 +153,9 @@ library that follows no convention at all still indexes correctly, just with les
         ▼
  ┌─── FAST PATH ────────────────────┐
  │  1. Hash + EXIF + folder parse   │
- │  2. Face detect + embed          │      ~3 h for the full library
- │  3. Whole-image search vector    │
- └──────────────┬───────────────────┘
+ │  2. Face detect + embed          │
+ │  3. Whole-image search vector    │      (~5.5 h measured at 100 Mbps;
+ └──────────────┬───────────────────┘       ~40 min at gigabit)
                 │  rows + vectors
                 ▼
           photos.db  ◄──── 4. Captions (opt-in per folder, ~26 h full library)
@@ -275,6 +275,7 @@ CREATE TABLE assets (
   gps_lat         REAL,
   gps_lon         REAL,
   place_id        INTEGER REFERENCES places(id),
+  place_source    TEXT,                 -- gps | folder; never presented as equal
   camera_make     TEXT,
   camera_model    TEXT,
   lens            TEXT,
@@ -319,15 +320,30 @@ CREATE TABLE folders (
   root_added_at INTEGER
 );
 
+-- Places form a tree, so "photographs in Finland" can mean everything beneath
+-- Finland without the user having to name its regions (§6.3).
 CREATE TABLE places (
-  id       INTEGER PRIMARY KEY,
-  lat_bin  REAL NOT NULL,   -- rounded to ~1 km, so lookups are cached
-  lon_bin  REAL NOT NULL,
-  name     TEXT,            -- "Turku"
-  admin1   TEXT,
-  country  TEXT,
-  UNIQUE (lat_bin, lon_bin)
+  id        INTEGER PRIMARY KEY,
+  parent_id INTEGER REFERENCES places(id),
+  kind      TEXT NOT NULL,          -- country | admin1 | admin2 | locality
+  name      TEXT NOT NULL,          -- "Helsinki"
+  path      TEXT NOT NULL UNIQUE,   -- "Finland/Uusimaa/Helsinki"
+  lat       REAL,                   -- representative point, for a map later
+  lon       REAL,
+  UNIQUE (parent_id, name)
 );
+
+-- Coordinates binned to ~1 km, so a coastline photographed fifty times is
+-- geocoded once. This is a cache and may be deleted at any time.
+CREATE TABLE geo_cache (
+  lat_bin  REAL NOT NULL,
+  lon_bin  REAL NOT NULL,
+  place_id INTEGER REFERENCES places(id),
+  PRIMARY KEY (lat_bin, lon_bin)
+);
+
+CREATE INDEX idx_places_path ON places(path);
+CREATE INDEX idx_places_name ON places(name);
 
 CREATE TABLE events (
   id          INTEGER PRIMARY KEY,
@@ -661,7 +677,50 @@ sharp: **no GPS at all before 2010**, patchy through 2015, near-universal from 2
 grouping is effectively a feature of the last decade, and the first twelve years of the archive
 rely entirely on time gaps and folder labels — which the 95% filename-date coverage makes reliable.
 
-### 6.3 Review queue construction
+### 6.3 Places (M4a)
+
+Runs entirely over the database. No file is read, no model runs, no network is
+touched. A full pass over 46,000 assets takes about a minute and can be repeated
+whenever the gazetteer or the matching rules change — which is why this milestone
+is scheduled independently of the expensive indexing passes.
+
+**Gazetteer.** A bundled GeoNames extract (`cities500` plus admin and country
+tables, ~50 MB) is loaded into `places` as a tree on first run. Alternate names are
+retained, which matters here: `Thaimaa` and `Lontoo` are how this library's owner
+names Thailand and London.
+
+**Source 1 — coordinates.** GPS is binned to ~1 km and looked up against the
+gazetteer by nearest neighbour, then cached in `geo_cache`. `place_source = 'gps'`.
+
+**Source 2 — folder labels.** A parsed folder label (§5.1) is matched against
+gazetteer names as a whole-token, case- and diacritic-insensitive comparison.
+`2019 07 Alicante` resolves to Alicante, Spain; `2001 01 Thaimaa` to Thailand.
+`place_source = 'folder'`.
+
+This is what extends place search to the first two decades of the archive, which
+have no GPS at all (§1.1). It is also the riskier source, so it is constrained:
+
+- Only labels matching a gazetteer entry **in full** are accepted; no substring or
+  fuzzy matching. `Hennan rippijuhlat` matches nothing and is left alone.
+- Where a name is ambiguous (`Alicante` is both a city and a province) the more
+  populous entry wins, and the choice is recorded so it can be reviewed.
+- A folder-derived place is **coarse by construction**: no coordinates are invented,
+  and the UI labels it as coming from the folder name.
+- Any match can be rejected, which records a permanent exception.
+
+**Precedence.** GPS always wins over a folder label for the same asset. A folder
+label never overrides a coordinate, because the folder says where photographs were
+filed and the coordinate says where one was taken.
+
+**Expected coverage**, from the measured sample (§1.1):
+
+| Source | Share of library | Era |
+|---|---|---|
+| GPS | ~47% | 2010 onward, ~95% from 2016 |
+| Folder label | unmeasured; most named event folders | all years |
+| Neither | remainder | bare month folders before 2010 |
+
+### 6.4 Review queue construction
 
 For each unnamed event and unnamed face cluster, a queue row is created with `priority` set to
 the number of assets affected — **the queue is always ordered largest-first**, so the earliest
@@ -694,15 +753,36 @@ A single query box accepting mixed criteria, resolved as follows:
 | Quoted or exact term (`"rippijuhlat"`) | FTS5 over captions, folder labels, event and place names |
 | Person name | join through `faces.person_id` |
 | Date expression (`kesä 2019`, `2019-06`) | range over `assets.taken_at` |
-| Place name | join through `places` |
+| Place name (`Helsinki`, `Finland`) | join through `places`, **including descendants** |
 
 Results merge by reciprocal rank fusion across the mechanisms that matched, so a query naming both
 a person and a scene ranks photographs satisfying both above either alone.
 
-**Filters** (independent of the query): date range, person, place, event, camera, has-caption,
-has-faces, date-source (useful for auditing the 1998–2008 material).
+**Place queries resolve down the tree.** Because `places` stores a materialised path
+(§4.3), naming any level matches everything beneath it with one indexed comparison
+and no recursion:
 
-**Views:** grid, timeline by year and month, people, events, places.
+```sql
+WHERE p.path = :place OR p.path LIKE :place || '/%'
+```
+
+So `Finland` returns Helsinki, Turku and everywhere else in the country, while
+`Helsinki` returns only Helsinki. The user never has to know which level a name sits
+at, and adding `Espoo` under Uusimaa later needs no change to existing rows.
+
+**Mixed place and scene queries.** A query naming a known place and describing a
+scene — `swimming pool in Tenerife` — splits: the place term becomes a filter, the
+remainder ranks by vector similarity within it. Place names are matched against
+`places.name` as whole tokens before the query reaches the encoder, so ordinary
+searches are unaffected. If no place matches, the whole string goes to the encoder
+as before.
+
+**Filters** (independent of the query): date range, person, place, event, camera, has-caption,
+has-faces, date-source (useful for auditing the 1998–2008 material), place-source
+(coordinates versus folder name).
+
+**Views:** grid, timeline by year and month, people, events, places (browsable as the
+tree: country → region → locality, with counts).
 
 **Thumbnails.** Generated on first access into a local cache directory — never the NAS — at
 320 px and 1024 px, WebP, keyed by content hash. Browsing must never pull full-size files across
@@ -999,7 +1079,8 @@ Required tests:
 | **M1** | Scan, hash, EXIF, folder parse, schema, `status`, `doctor` | Whole library catalogued and browsable by date, folder, camera. ~35 min to run. |
 | **M2** | Stage 3, thumbnails, search UI | **Free-text search over everything.** The first genuinely useful build. |
 | **M3** | Stage 2, clustering, people UI | Faces named, searchable by person. |
-| **M4** | Events, places, review queue | Unattended indexing plus a finite question queue. |
+| **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access, ~1 min over the whole library.** |
+| **M4b** | Events, review queue | Unattended indexing plus a finite question queue. |
 | **M5** | Stage 4 captions | Descriptions and tags. |
 | **M6** | Video | See §12. |
 
