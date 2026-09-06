@@ -16,7 +16,7 @@
     Everything it creates lives outside OneDrive. A SQLite database with WAL
     journalling inside a syncing folder eventually corrupts (spec 10.5).
 
-    The runtime goes in C:\mediaidx rather than %LOCALAPPDATA%\mediaidx, which
+    The runtime goes in ~\.mediaidx rather than %LOCALAPPDATA%\mediaidx, which
     would be the conventional choice. Reason: the Claude desktop app is an MSIX
     package, so processes it launches have their AppData\Local writes redirected
     into a package-private store at
@@ -24,13 +24,19 @@
         %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\
 
     Anything written there is invisible to Explorer and to your own shells, which
-    is confusing and hard to diagnose. C:\ is not a virtualised location, so both
-    an assistant-launched process and your own PowerShell see the same files.
+    is confusing and hard to diagnose. The profile root is not virtualised, so an
+    assistant-launched process and your own PowerShell see the same files.
+
+    It is NOT at C:\mediaidx either. Root-level folders grant Authenticated Users
+    Modify, so every account on the machine could read the index -- which comes to
+    hold face embeddings and the names of the people in your photographs. The
+    profile root inherits per-user ACLs instead.
 #>
 
 $ErrorActionPreference = "Stop"
 
-$Root    = "C:\mediaidx"
+$Root    = "$env:USERPROFILE\.mediaidx"
+$OldRoot = "C:\mediaidx"
 $Venv    = "$Root\venv"
 $Py      = "$Venv\Scripts\python.exe"
 $Project = $PSScriptRoot
@@ -52,6 +58,19 @@ if (([Security.Principal.WindowsPrincipal] `
                "visible.`nClose it and run again without 'Run as administrator'." `
                -ForegroundColor Red
     exit 1
+}
+
+# --- migrate from an earlier location ------------------------------------
+if ((Test-Path "$OldRoot\photos.db") -and -not (Test-Path "$Root\photos.db")) {
+    Step "Moving your index out of $OldRoot"
+    New-Item -ItemType Directory -Path $Root -Force | Out-Null
+    foreach ($item in @("photos.db", "photos.db-wal", "photos.db-shm", "thumbs")) {
+        if (Test-Path "$OldRoot\$item") {
+            Move-Item "$OldRoot\$item" $Root -Force
+            Ok $item
+        }
+    }
+    Warn "config and venv are rebuilt below; delete $OldRoot when you are happy"
 }
 
 # --- uv -------------------------------------------------------------------

@@ -31,15 +31,23 @@ If PowerShell refuses to run it, allow scripts for that window only with
 `Set-ExecutionPolicy -Scope Process Bypass`.
 
 It installs uv, a private Python 3.12 (your system Python is untouched), PyTorch
-with CUDA, ExifTool, and writes `C:\mediaidx\config.toml`. Budget a few minutes:
+with CUDA, ExifTool, and writes `~\.mediaidx\config.toml`. Budget a few minutes:
 the CUDA wheels are about 2.5 GB.
 
-**Why `C:\mediaidx` and not `%LOCALAPPDATA%`**, which would be conventional: the
-Claude desktop app is an MSIX package, so processes it launches get their
-`AppData\Local` writes redirected into a package-private store under
+Everything lives in `C:\Users\<you>\.mediaidx` — database, thumbnail cache, logs
+and the virtual environment.
+
+**Why not `%LOCALAPPDATA%`,** which would be the conventional choice: the Claude
+desktop app is an MSIX package, so processes it launches get their `AppData\Local`
+writes redirected into a package-private store under
 `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\`. Files written there are
-invisible to Explorer and to your own shells — a genuinely confusing failure.
-`C:\` is not virtualised, so every process sees the same files.
+invisible to Explorer and to your own shells — a confusing, silent failure. The
+profile root is not virtualised.
+
+**And why not `C:\mediaidx`,** which an earlier version used: root-level folders
+grant `Authenticated Users` Modify, so every account on the machine could read the
+index. That index comes to hold face embeddings and the names of the people in your
+photographs. The profile root inherits per-user ACLs instead.
 
 Everything it creates lives **outside OneDrive**, because a SQLite WAL database
 and a sync client eventually corrupt each other (spec §10.5). That also means the
