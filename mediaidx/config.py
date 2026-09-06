@@ -1,0 +1,132 @@
+"""Configuration loading.
+
+Note what is absent by design (spec P7): no library path, no host, no share, no
+person-to-folder mapping. A fresh install indexes nothing until told what to
+index.
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+APP_NAME = "mediaidx"
+
+DEFAULTS: dict = {
+    "paths": {},
+    "scan": {
+        "extensions": [".jpg", ".jpeg", ".png", ".heic", ".heif"],
+        "exclude_dirs": [
+            "_gsdata_", "@eaDir", "#recycle", "$RECYCLE.BIN",
+            "System Volume Information", ".git",
+        ],
+        "exclude_files": ["Thumbs.db", ".DS_Store", "desktop.ini"],
+        # Measured: the read ceiling is reached at 4 threads and never moves
+        # again (spec §1.2). Eight is a hedge for a faster link, not a lever.
+        "reader_threads": 8,
+        "chunk_size": 256,
+        "folder_patterns": [
+            r"^(?P<year>\d{4})(?:\s+(?P<month>\d{2}))?(?:\s+(?P<label>.+))?$",
+        ],
+        # Conventions belonging to particular *applications* -- what a phone or a
+        # messaging app names its files -- are reasonable defaults, because they
+        # are the same on everyone's machine.
+        #
+        # Conventions belonging to a particular *library* are not, and do not
+        # appear here (P7). The reference library renames everything to
+        # `YYYYMMDD@HHMMSS-Make-Model-NN`, which no other archive would use, so
+        # that pattern lives in that user's config.toml and nowhere else.
+        "filename_patterns": [
+            {"re": r"^IMG-(?P<ymd>\d{8})-WA\d+", "hint": "whatsapp"},
+            {"re": r"^(?:IMG|VID)_(?P<ymd>\d{8})_(?P<hms>\d{6})", "hint": "camera"},
+            {"re": r"^PXL_(?P<ymd>\d{8})_(?P<hms>\d{6})", "hint": "camera"},
+            {"re": r"^Screenshot[ _-](?P<date>\d{4}-\d{2}-\d{2})", "hint": "screenshot"},
+            {"re": r"^photo_(?P<date>\d{4}-\d{2}-\d{2})_(?P<time>\d{2}-\d{2}-\d{2})",
+             "hint": "telegram"},
+            {"re": r"^(?P<ymd>\d{8})_(?P<hms>\d{6})", "hint": "camera"},
+        ],
+    },
+    "tools": {
+        "exiftool": "",  # empty means: find it on PATH
+    },
+}
+
+
+def _local_data_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/.local/share")
+    return Path(base) / APP_NAME
+
+
+@dataclass
+class Config:
+    database: Path
+    thumbnails: Path
+    logs: Path
+    names_export: Path | None
+    scan: dict = field(default_factory=dict)
+    tools: dict = field(default_factory=dict)
+    source: Path | None = None
+
+    @property
+    def extensions(self) -> set[str]:
+        return {e.lower() for e in self.scan["extensions"]}
+
+    @property
+    def exclude_dirs(self) -> set[str]:
+        return {d.lower() for d in self.scan["exclude_dirs"]}
+
+    @property
+    def exclude_files(self) -> set[str]:
+        return {f.lower() for f in self.scan["exclude_files"]}
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def default_config_path() -> Path:
+    env = os.environ.get("MEDIAIDX_CONFIG")
+    if env:
+        return Path(env)
+    return _local_data_dir() / "config.toml"
+
+
+def load(path: str | os.PathLike | None = None) -> Config:
+    cfg_path = Path(path) if path else default_config_path()
+    raw: dict = {}
+    if cfg_path.exists():
+        with open(cfg_path, "rb") as fh:
+            raw = tomllib.load(fh)
+
+    merged = _deep_merge(DEFAULTS, raw)
+
+    # Patterns specific to one library are supplied by its owner and tried before
+    # the shipped ones, so a user never has to restate the universal defaults in
+    # order to add their own (P7).
+    extra = merged["scan"].pop("filename_patterns_extra", None) or []
+    if extra:
+        merged["scan"]["filename_patterns"] = extra + merged["scan"]["filename_patterns"]
+    extra_folders = merged["scan"].pop("folder_patterns_extra", None) or []
+    if extra_folders:
+        merged["scan"]["folder_patterns"] = extra_folders + merged["scan"]["folder_patterns"]
+
+    p = merged.get("paths", {})
+    data = _local_data_dir()
+
+    return Config(
+        database=Path(p.get("database", data / "photos.db")),
+        thumbnails=Path(p.get("thumbnails", data / "thumbs")),
+        logs=Path(p.get("logs", data / "logs")),
+        names_export=Path(p["names_export"]) if p.get("names_export") else None,
+        scan=merged["scan"],
+        tools=merged["tools"],
+        source=cfg_path if cfg_path.exists() else None,
+    )
