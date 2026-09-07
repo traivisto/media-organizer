@@ -378,11 +378,13 @@ def create_app(cfg) -> FastAPI:
         total = sum(r["size"] for r in rows)
 
         def group(rs):
+            # The number is shown because it is how a cluster is addressed
+            # when merging one that the similarity shortlist did not offer.
             return "".join(
                 face_card(r["cover_hash"], r["cover_idx"],
                           r["person"] or f'{r["size"]:,} faces',
                           f'/cluster/{r["id"]}',
-                          f'{r["size"]:,}' if r["person"] else "")
+                          f'#{r["id"]}')
                 for r in rs if r["cover_hash"])
 
         parts = [f'<div class="meta">{len(rows):,} clusters &middot; '
@@ -397,7 +399,7 @@ def create_app(cfg) -> FastAPI:
         return page("People — Kuva-arkisto", "".join(parts))
 
     @app.get("/cluster/{cluster_id}", response_class=HTMLResponse)
-    def cluster_view(cluster_id: int):
+    def cluster_view(cluster_id: int, error: str = Query(default="")):
         con = connect()
         c = con.execute(
             """SELECT c.*, p.name AS person FROM face_clusters c
@@ -406,6 +408,8 @@ def create_app(cfg) -> FastAPI:
         if c is None:
             return HTMLResponse("<p>not found</p>", status_code=404)
 
+        error = (f' &middot; <b style="color:#c2554a">{html.escape(error)}</b>'
+                 if error else "")
         faces_rows = cluster.representatives(con, cluster_id, limit=200)
         proposal = cluster.suggest(con, cluster_id) if not c["person"] else None
         candidates = cluster.similar(con, cluster_id, limit=10)
@@ -435,6 +439,13 @@ def create_app(cfg) -> FastAPI:
             f'<form method="post" action="/cluster/{cluster_id}/merge">'
             f'<select name="other" style="padding:8px">{options}</select>'
             '<button class="ghost" type="submit">Merge into this</button></form>'
+            # The shortlist is ranked by similarity and is therefore a
+            # shortlist: the same child at 4 and at 17 can sit well outside it.
+            # Any cluster must remain reachable, so its number can be typed.
+            f'<form method="post" action="/cluster/{cluster_id}/merge">'
+            '<input type="number" name="other" min="1" placeholder="cluster #" '
+            'style="width:110px;padding:8px" required>'
+            '<button class="ghost" type="submit">Merge that one in</button></form>'
             f'<form method="post" action="/cluster/{cluster_id}/ignore">'
             '<button class="ghost" type="submit">Not a person</button></form>'
             '</div>')
@@ -478,7 +489,8 @@ def create_app(cfg) -> FastAPI:
                        f'style="color:var(--accent)">{heading}</a>')
         body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
                 f'&larr; people</a> &middot; <b>{heading}</b> '
-                f'&middot; {c["size"]:,} faces</div>'
+                f'&middot; cluster #{cluster_id} &middot; {c["size"]:,} faces'
+                f'{error}</div>'
                 f'{suggestion}{panel}{strip}'
                 f'<div class="meta">Every face in this cluster</div>'
                 f'<div class="faces">{cards}</div>')
@@ -496,7 +508,12 @@ def create_app(cfg) -> FastAPI:
     @app.post("/cluster/{cluster_id}/merge")
     def cluster_merge(cluster_id: int, other: int = Form(...)):
         con = connect()
-        cluster.merge(con, cluster_id, other)
+        try:
+            cluster.merge(con, cluster_id, other)
+        except ValueError:
+            return RedirectResponse(
+                f"/cluster/{cluster_id}?error=no+cluster+%23{other}",
+                status_code=303)
         return RedirectResponse(f"/cluster/{cluster_id}", status_code=303)
 
     @app.post("/cluster/{cluster_id}/ignore")

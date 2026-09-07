@@ -341,3 +341,58 @@ def test_an_ignored_cluster_takes_no_further_faces(cfg):
     _add_faces(con, [_unit(groups[0][0] + rng.normal(scale=0.02, size=faces.DIM))],
                start_asset=90_000)
     assert cluster.assign(con, cfg) == 0
+
+
+# --- reaching a cluster the shortlist did not offer ------------------------
+
+def test_any_cluster_can_be_merged_not_only_similar_ones(cfg):
+    """The shortlist is ranked by similarity, so the right answer can be
+    outside it -- the same child at 4 and at 17 especially. Merging must not
+    be limited to what was offered."""
+    con = _con()
+    rng = np.random.default_rng(20)
+    _seed(con, rng, sizes=(12, 10, 8, 6))
+    cluster.build(con, cfg)
+
+    a = _cluster_of_size(con, 12)
+    shortlist = {c["id"] for c in cluster.similar(con, a, limit=1)}
+    outside = [r[0] for r in con.execute(
+        "SELECT id FROM face_clusters WHERE id != ?", (a,))
+        if r[0] not in shortlist]
+    assert outside, "test needs a cluster outside the shortlist"
+
+    before = con.execute("SELECT size FROM face_clusters WHERE id = ?",
+                         (a,)).fetchone()[0]
+    moved = cluster.merge(con, a, outside[0])
+    assert moved > 0
+    assert con.execute("SELECT size FROM face_clusters WHERE id = ?",
+                       (a,)).fetchone()[0] == before + moved
+
+
+def test_merging_a_cluster_that_does_not_exist_is_refused(cfg):
+    con = _con()
+    _seed(con, np.random.default_rng(21))
+    cluster.build(con, cfg)
+    cid = _cluster_of_size(con, 12)
+    with pytest.raises(ValueError):
+        cluster.merge(con, cid, 999_999)
+    # and nothing was disturbed on the way
+    assert con.execute("SELECT size FROM face_clusters WHERE id = ?",
+                       (cid,)).fetchone()[0] == 12
+
+
+def test_similar_never_offers_the_cluster_itself(cfg):
+    con = _con()
+    _seed(con, np.random.default_rng(22))
+    cluster.build(con, cfg)
+    cid = _cluster_of_size(con, 12)
+    assert cid not in {c["id"] for c in cluster.similar(con, cid, limit=50)}
+
+
+def test_similar_is_ordered_by_similarity(cfg):
+    con = _con()
+    _seed(con, np.random.default_rng(23), sizes=(12, 10, 8, 6))
+    cluster.build(con, cfg)
+    got = cluster.similar(con, _cluster_of_size(con, 12), limit=10)
+    sims = [c["similarity"] for c in got]
+    assert sims == sorted(sims, reverse=True)
