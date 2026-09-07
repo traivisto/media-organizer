@@ -13,7 +13,9 @@ archive a second time, which at this link speed is another three hours.
 
 from __future__ import annotations
 
+import itertools
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +24,43 @@ from . import db, faces, images
 from . import paths as pathutil
 
 COMMIT_EVERY = 64      # chunk granularity for resumability, as in stage 1
+
+
+def rss_mb() -> float:
+    """Resident memory, so a growing backlog is visible while it grows."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD),
+                        ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        kernel32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
+        # Without these, GetCurrentProcess is assumed to return a C int, the
+        # pseudo-handle is mangled on 64-bit, and the call quietly fails --
+        # which is exactly how this returned a confident 0 MB the first time.
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+        c = Counters()
+        c.cb = ctypes.sizeof(c)
+        if not psapi.GetProcessMemoryInfo(
+                kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+            return 0.0
+        return c.WorkingSetSize / 1e6
+    except Exception:
+        return 0.0
 
 
 @dataclass
@@ -112,10 +151,28 @@ def run(con, cfg, *, limit: int | None = None, threads: int = 8,
             con.execute("BEGIN")
 
     with ThreadPoolExecutor(max_workers=threads) as pool:
+        # Bounded in-flight work, and the reason this is not `pool.map(...)`
+        # over the whole list: map submits every read immediately and holds
+        # each decoded image -- about 5.8 MB at 1600 px -- until the single
+        # consumer reaches it. Here the consumer detects faces *and* encodes a
+        # crop per face, so the eight readers outrun it, and the backlog has no
+        # ceiling. It reached several gigabytes and the process died of it
+        # after 6,720 images. A window keeps the readers fed and memory flat.
+        window = max(threads * 4, 16)
+        stream = iter(todo)
+        inflight = deque(
+            pool.submit(_read_one, item, cache_dir, True)
+            for item in itertools.islice(stream, window))
+
         con.execute("BEGIN")
         try:
-            for asset_id, content_hash, path, im, wrote, err in pool.map(
-                    lambda it: _read_one(it, cache_dir, True), todo):
+            while inflight:
+                asset_id, content_hash, path, im, wrote, err = \
+                    inflight.popleft().result()
+                nxt = next(stream, None)
+                if nxt is not None:
+                    inflight.append(pool.submit(_read_one, nxt, cache_dir, True))
+
                 if wrote:
                     st.thumbs += 1
                 if err:
@@ -167,8 +224,11 @@ def run(con, cfg, *, limit: int | None = None, threads: int = 8,
 def render_progress(st: FaceStats, stream=None) -> None:
     import sys
     stream = stream or sys.stderr
+    # Memory is on the progress line because this pass has already died once of
+    # a backlog that nothing was watching. A flat number here is the evidence
+    # that the reader window is holding.
     stream.write(
         f"\r  scanned {st.done:>7,} / {st.considered:,}   "
         f"faces {st.faces:>7,}   failed {st.failed:>4,}   "
-        f"{st.rate:>5.1f} img/s   {st.elapsed:>5.0f}s")
+        f"{st.rate:>5.1f} img/s   {rss_mb():>6,.0f} MB   {st.elapsed:>5.0f}s")
     stream.flush()
