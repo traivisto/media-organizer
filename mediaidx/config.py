@@ -48,6 +48,20 @@ DEFAULTS: dict = {
             {"re": r"^(?P<ymd>\d{8})_(?P<hms>\d{6})", "hint": "camera"},
         ],
     },
+    "models": {
+        "face": "buffalo_l",
+    },
+    "faces": {
+        # Both filters exist to keep unnameable clusters out of the review
+        # queue rather than to save time (spec §5.2). Measured on a random
+        # sample of the reference library, they discard 46% of raw detections.
+        "min_det_score": 0.5,
+        "min_face_px": 40,
+        "det_size": 640,
+        "face_thumbnails": True,
+        "cluster_min_size": 4,
+        "assign_threshold": 0.42,
+    },
     "tools": {
         "exiftool": "",  # empty means: find it on PATH
     },
@@ -66,6 +80,8 @@ class Config:
     logs: Path
     names_export: Path | None
     scan: dict = field(default_factory=dict)
+    models: dict = field(default_factory=dict)
+    faces: dict = field(default_factory=dict)
     tools: dict = field(default_factory=dict)
     source: Path | None = None
 
@@ -136,6 +152,8 @@ def load(path: str | os.PathLike | None = None) -> Config:
         logs=Path(p.get("logs", data / "logs")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
         scan=merged["scan"],
+        models=merged["models"],
+        faces=merged["faces"],
         tools=merged["tools"],
         source=cfg_path if cfg_path.exists() else None,
     )

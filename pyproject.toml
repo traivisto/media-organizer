@@ -17,6 +17,13 @@ dependencies = [
     "transformers>=4.45",       # SigLIP tokenizer
     "sentencepiece>=0.2",
     "sqlite-vec>=0.1.9",
+    # Faces. The CUDA extras are not optional in practice: without them
+    # onnxruntime finds no CUDA libraries of its own, silently falls back to
+    # the CPU, and the pass runs seven times slower with no error to show for
+    # it. They must not be confused with torch's CUDA 12 runtime -- these
+    # wheels are CUDA 13, which is what onnxruntime-gpu 1.29 is built against.
+    "onnxruntime-gpu[cuda,cudnn]>=1.29",
+    "insightface>=1.0",
     # Local UI
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -24,6 +31,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+
+[tool.uv]
+# insightface depends on `onnxruntime`, the CPU build. It installs into the
+# same import name and over the same files as `onnxruntime-gpu`, so whichever
+# lands last wins, and the loser leaves no trace of having been replaced --
+# the GPU simply stops being used. Drop the CPU requirement; onnxruntime-gpu
+# satisfies every import insightface makes.
+override-dependencies = ["onnxruntime; sys_platform == 'no-such-platform'"]
 
 [project.scripts]
 mediaidx = "mediaidx.cli:main"

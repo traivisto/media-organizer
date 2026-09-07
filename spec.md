@@ -384,14 +384,27 @@ CREATE TABLE face_clusters (
 CREATE TABLE faces (
   id         INTEGER PRIMARY KEY,
   asset_id   INTEGER NOT NULL REFERENCES assets(id),
-  bbox       TEXT NOT NULL,   -- json [x, y, w, h]
+  idx        INTEGER NOT NULL,  -- position within its photograph; names the crop on disk
+  bbox       TEXT NOT NULL,     -- json [x, y, w, h] as fractions of the image, not pixels
   det_score  REAL NOT NULL,
   blur_score REAL,
   embedding  BLOB NOT NULL,   -- 512 × float16
   cluster_id INTEGER REFERENCES face_clusters(id),
-  person_id  INTEGER REFERENCES persons(id)  -- denormalised for query speed
+  person_id  INTEGER REFERENCES persons(id),  -- denormalised for query speed
+  UNIQUE (asset_id, idx)
 );
 ```
+
+Two details that were decided during implementation:
+
+**`bbox` holds fractions, not pixels.** A pixel box is only meaningful against the exact
+image size it was measured at — 1600 px here, but 320 or 1024 in the thumbnail cache and
+anything at all in the original. Every consumer would have to know which. Fractions are
+true against all of them.
+
+**`idx` is the face's position within its photograph**, and is what names its cropped
+thumbnail on disk. Re-running the stage hands out new row ids; the photograph and the
+position of a face within it do not change, so a crop written today survives a rebuild.
 
 `faces.person_id` is set directly only when a user confirms an individual face against its
 cluster's assignment; otherwise it is derived from the cluster.
@@ -450,6 +463,7 @@ CREATE TABLE review_queue (
 | Rows, metadata, captions, FTS | ~120 MB |
 | **Database total** | **~300–400 MB** |
 | Thumbnail cache (local disk, separate) | ~1.5 GB |
+| Face crops, 160 px (~40k × ~7 kB) | ~300 MB |
 
 ---
 
@@ -591,13 +605,30 @@ before lookup so results are cached in `places` and repeated lookups cost nothin
 ### 5.2 Stage 2 — Faces
 
 - **Model:** InsightFace `buffalo_l` (SCRFD detector + ArcFace R100 embedder) on
-  `onnxruntime-gpu` with the CUDA execution provider.
+  `onnxruntime-gpu` with the CUDA execution provider. Only the detection and recognition
+  models are loaded; `buffalo_l` also ships age, gender and landmark models, which nothing
+  here uses.
 - **Input:** the decoded, orientation-corrected image, longest side capped at 1600 px.
 - **Filtering:** faces with `det_score < 0.5`, or a bounding box under 40 px on its shorter side,
   are discarded — too small to embed reliably and a major source of spurious clusters.
+- **Detect, filter, then embed — in that order.** Measured on a random sample of this library,
+  **46% of raw detections fail the filters** (72 detections, 39 kept, one photograph alone
+  contributing 19 rejects from a crowd behind the subject). Running recognition over all of
+  them and discarding the results afterwards is wasted work, and invites the mistake of
+  storing them. Recognition therefore runs once per photograph, batched over the survivors.
 - **Output:** one row per surviving face with a 512-d L2-normalised embedding stored as float16.
-- **Batch size:** 32, tuneable. Peak VRAM well under 4 GB.
-- **Expected volume:** roughly 60,000–80,000 faces across the archive.
+- **Face crops are written during this pass**, at 160 px, into the thumbnail cache. This is the
+  pass that has the photograph in memory; clustering and the review UI that follow are
+  database-only *provided* the pictures they must show are already local. Cropping them on
+  demand instead would mean reading tens of thousands of originals back across the link to
+  render one screen — the second pass the whole design exists to avoid (P4).
+- **Expected volume:** roughly 60,000–80,000 faces across the archive. The sample above
+  suggests closer to **1.0 kept faces per photograph, so ~40,000** — lower than estimated,
+  and to be confirmed by the full pass.
+
+**Measured, 2026-09-07, RTX 4080 SUPER:** 22 images/second on the GPU, against ~3.2 delivered
+by the link. As with stage 3, the model is several times faster than the pipeline can feed it,
+so inference runs on a single thread and reader threads are the only lever that matters.
 
 ### 5.3 Stage 3 — Search vector
 
@@ -813,6 +844,11 @@ mediaidx caption <path>...        Run the slow captioning stage over named folde
     --limit N                     Stop after N images
     --redo                        Re-caption assets that already have one
 
+mediaidx faces                    Run stage 2 over photographs that have no faces yet
+    --limit N                     Stop after N photographs
+    --workers N                   Reader thread count
+    --cpu                         Run without the GPU; correct, but ~7x slower
+
 mediaidx faces cluster            Build or update face clusters
     --rebuild                     Recompute from scratch, preserving names
 
@@ -909,6 +945,8 @@ ollama         = "http://localhost:11434"
 [faces]
 min_det_score      = 0.5
 min_face_px        = 40
+det_size           = 640            # SCRFD input; faces are filtered at 1600 px scale
+face_thumbnails    = true           # crops written during the pass, for the review UI
 cluster_min_size   = 4
 assign_threshold   = 0.42           # cosine distance for incremental assignment
 
@@ -981,6 +1019,7 @@ Network access is limited to two things, and both are one-time downloads of soft
 |---|---|---|
 | PyPI, download.pytorch.org | setup | packages, inbound |
 | huggingface.co | first `embed` run | model weights, ~1.7 GB inbound |
+| insightface's CDN | first `faces` run | `buffalo_l` weights, ~280 MB inbound |
 | `localhost` | captioning (M5) | images to Ollama, in-process |
 | The NAS | indexing | photographs are read, never written |
 
@@ -1037,10 +1076,29 @@ External dependencies:
 | Dependency | Purpose | Note |
 |---|---|---|
 | `exiftool` | metadata extraction | external binary, bundled or on PATH |
-| `onnxruntime-gpu` | face models | requires matching CUDA runtime |
+| `onnxruntime-gpu` | face models | see the two traps below |
+| `insightface` | detection + recognition | wheels exist for 3.12; no compiler needed |
 | `pillow-heif` | HEIC decoding | 4,452 files depend on it |
 | `sqlite-vec` | vector search | loadable SQLite extension |
 | Ollama | captioning | installed; `gemma4:12b` already present and vision-capable |
+
+**Two ways the face stage silently loses its GPU.** Both were hit during M3, both fail the
+same way — no error, no warning, just a pass running roughly seven times slower than it
+should. Neither is discoverable from the output, which is why `doctor` now builds a real
+inference session and reports the provider it actually got, rather than the providers
+onnxruntime merely lists.
+
+1. **`insightface` depends on `onnxruntime`, the CPU build.** It installs into the same
+   import name and over the same files as `onnxruntime-gpu`; whichever lands last wins, and
+   the loser leaves no trace of having been replaced. Resolved with a `[tool.uv]`
+   `override-dependencies` entry dropping the CPU requirement — `onnxruntime-gpu` satisfies
+   every import insightface makes.
+2. **`onnxruntime-gpu` 1.29 is built against CUDA 13; the PyTorch here carries CUDA 12.8.**
+   Left alone, onnxruntime searches PyTorch's lib directory first, fails to resolve
+   `cublasLt64_13.dll`, and falls back to the CPU. The fix is `ort.preload_dlls(directory="")`
+   before the first session, which selects the `nvidia-*` CUDA 13 wheels that
+   `onnxruntime-gpu[cuda,cudnn]` installs. Those extras are not optional in practice, and
+   the two CUDA runtimes coexist without conflict — the DLL names differ by major version.
 
 ### 11.2 Testing
 
@@ -1078,7 +1136,8 @@ Required tests:
 |---|---|---|
 | **M1** | Scan, hash, EXIF, folder parse, schema, `status`, `doctor` | Whole library catalogued and browsable by date, folder, camera. ~35 min to run. |
 | **M2** | Stage 3, thumbnails, search UI | **Free-text search over everything.** The first genuinely useful build. |
-| **M3** | Stage 2, clustering, people UI | Faces named, searchable by person. |
+| **M3a** | Stage 2: detection, embeddings, face crops | Every face in the library found and vectorised. **The only part of M3 that reads files** — the long pass. |
+| **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it can be built while M3a runs or long after.** |
 | **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access, ~1 min over the whole library.** |
 | **M4b** | Events, review queue | Unattended indexing plus a finite question queue. |
 | **M5** | Stage 4 captions | Descriptions and tags. |

@@ -221,6 +221,22 @@ def cmd_status(args) -> int:
     print(f"  gps   {gps:,} of {assets:,}"
           f"  ({100*gps/assets if assets else 0:.0f}%)")
 
+    has_faces = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='faces'").fetchone()
+    if has_faces and one("SELECT COUNT(*) FROM faces"):
+        nf = one("SELECT COUNT(*) FROM faces")
+        imgs = one("SELECT COUNT(DISTINCT asset_id) FROM faces")
+        clusters = one("SELECT COUNT(*) FROM face_clusters")
+        named = one("SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL")
+        print(f"\nfaces")
+        print(f"  detected         {nf:>10,}   in {imgs:,} photographs")
+        if clusters:
+            print(f"  clusters         {clusters:>10,}")
+            print(f"  named            {named:>10,}"
+                  f"  ({100*named/nf if nf else 0:.0f}% of faces)")
+        else:
+            print("  not clustered yet   `mediaidx faces cluster`")
+
     errs = one("SELECT COUNT(*) FROM scan_errors")
     if errs:
         print(f"\n  {errs:,} errors recorded   `mediaidx status --errors`")
@@ -257,6 +273,45 @@ def cmd_embed(args) -> int:
     print(f"  thumbnails {st.thumbs:>9,}")
     if st.failed:
         print(f"  failed     {st.failed:>9,}")
+    print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_faces(args) -> int:
+    from . import face_pass
+    from . import faces as faces_mod
+    cfg, con = _open(args, create=False)
+
+    db.migrate(con)                      # schema v3 adds faces, persons, clusters
+    todo = face_pass.pending(con, faces_mod.STAGE_VERSION)
+    if not todo:
+        print("nothing pending -- every photograph has been searched for faces")
+        return 0
+    print(f"{len(todo):,} photographs pending"
+          + (f", processing {args.limit:,}" if args.limit else ""))
+
+    if not args.cpu and not faces_mod.cuda_available():
+        print("\n  the CUDA execution provider is unavailable -- this would run on the\n"
+              "  CPU, roughly seven times slower. `mediaidx doctor` says why.\n"
+              "  Pass --cpu to run it anyway.", file=sys.stderr)
+        return 1
+
+    print("loading model (first run downloads it) ...")
+    st = None
+    try:
+        st = face_pass.run(con, cfg, limit=args.limit, threads=args.workers,
+                           progress=face_pass.render_progress,
+                           device="cpu" if args.cpu else "cuda")
+    except KeyboardInterrupt:
+        print("\n  interrupted -- committed chunks are kept; re-run to continue")
+        return 130
+
+    print(f"\n\n  photographs {st.done:>9,}")
+    print(f"  faces       {st.faces:>9,}   in {st.with_faces:,} photographs")
+    if st.thumbs:
+        print(f"  thumbnails  {st.thumbs:>9,}")
+    if st.failed:
+        print(f"  failed      {st.failed:>9,}   `mediaidx status --errors`")
     print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
     return 0
 
@@ -335,6 +390,38 @@ def cmd_doctor(args) -> int:
                       "non-ASCII filename decoded")
         except Exception as e:
             check("exiftool utf-8 round-trip", False, str(e)[:80])
+
+    print("\nface stage")
+    try:
+        from . import faces as faces_mod
+        import onnxruntime as ort
+        faces_mod.preload_cuda()
+        check("onnxruntime", True, ort.__version__)
+
+        model_dir = Path(os.path.expanduser("~/.insightface/models")) / \
+            cfg.models.get("face", faces_mod.DEFAULT_MODEL)
+        have = model_dir.is_dir() and any(model_dir.glob("*.onnx"))
+        print(f"  [{'OK  ' if have else 'INFO'}] face model"
+              f"   {'cached at ' + str(model_dir) if have else 'not yet, first `faces` run will fetch it'}")
+
+        # Whether the provider *lists* is not the question -- it lists even when
+        # its CUDA libraries are missing, and then quietly runs on the CPU seven
+        # times slower. The only honest test is to build a session and ask what
+        # it actually got.
+        if have:
+            det = model_dir / "det_10g.onnx"
+            s = ort.InferenceSession(str(det), providers=["CUDAExecutionProvider",
+                                                          "CPUExecutionProvider"])
+            got = s.get_providers()[0]
+            check("CUDA execution provider", got == "CUDAExecutionProvider",
+                  got if got == "CUDAExecutionProvider"
+                  else "falling back to the CPU -- install onnxruntime-gpu[cuda,cudnn]")
+        else:
+            print("  [INFO] CUDA execution provider   not testable until the model is cached")
+    except ImportError as e:
+        print(f"  [INFO] face stack not installed   {e}")
+    except Exception as e:
+        check("face stage", False, str(e)[:100])
 
     print("\nprivacy")
     offline = os.environ.get("HF_HUB_OFFLINE") in ("1", "true", "TRUE")
@@ -421,6 +508,13 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--workers", type=int, default=8)
     e.add_argument("--batch", type=int, default=32, help="GPU batch size")
     e.set_defaults(func=cmd_embed)
+
+    fa = sub.add_parser("faces", help="detect and embed faces")
+    fa.add_argument("--limit", type=int, help="stop after N photographs")
+    fa.add_argument("--workers", type=int, default=8)
+    fa.add_argument("--cpu", action="store_true",
+                    help="run without the GPU; correct, but far slower")
+    fa.set_defaults(func=cmd_faces)
 
     q = sub.add_parser("search", help="search from the terminal")
     q.add_argument("query", nargs="+")

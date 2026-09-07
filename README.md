@@ -7,16 +7,22 @@ Full design: [spec.md](spec.md).
 
 ## Status
 
-**M1 complete** — identity, metadata, and date resolution.
+**M2 complete** — the library is catalogued and searchable by free text.
 
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | Scan, hash, EXIF, filename/folder dates, schema, `status`, `doctor` | **done** |
-| M2 | Search vectors, thumbnails, search UI | next |
-| M3 | Faces, clustering, people UI | |
+| M2 | Search vectors, thumbnails, search UI | **done** |
+| M3a | Faces: detection, embeddings, face crops | **built**, full pass not yet run |
+| M3b | Clustering, naming, people UI | next |
 | M4 | Events, places, review queue | |
 | M5 | Captions | |
 | M6 | Video | deferred |
+
+M3 is split because only M3a reads files. Once it has run, clustering and the
+people UI work entirely from the database and the local face crops — so they can
+be built while the long pass runs, and re-run as often as needed afterwards
+without touching the NAS again.
 
 ## Setup
 
@@ -87,6 +93,11 @@ mediaidx scan                         re-check every folder given before
 mediaidx roots                        list them; `roots forget <folder>` drops one
 mediaidx status                       counts, date sources, coverage
 mediaidx status --conflicts           where EXIF and filename disagree
+mediaidx embed                        search vectors and thumbnails
+mediaidx faces                        find and vectorise every face
+mediaidx faces --limit 200            try it on a slice first
+mediaidx search "a phrase"            free-text search from the terminal
+mediaidx serve                        the local UI, http://localhost:8710
 ```
 
 Everything is safe to re-run. An unchanged file is skipped without being opened,
@@ -114,10 +125,15 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-34 tests covering date resolution, filename and folder parsing, the sanity bounds
+68 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, scope containment, the read-only
-guarantee, and the separation between shipped defaults and library-specific
-configuration.
+guarantee, face storage and crop geometry, and the separation between shipped
+defaults and library-specific configuration.
+
+The face *model* is not exercised there — it needs a GPU, 300 MB of weights and a
+photograph of a real person. `mediaidx doctor` covers that end instead, and it
+checks the one thing that fails silently: whether inference actually got the GPU,
+by building a session and asking, rather than trusting the provider list.
 
 ## Known constraint
 

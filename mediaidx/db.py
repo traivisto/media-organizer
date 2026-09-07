@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -90,6 +90,38 @@ CREATE TABLE IF NOT EXISTS image_vectors (
   embedding BLOB NOT NULL      -- float16; sqlite-vec holds the searchable copy
 );
 
+CREATE TABLE IF NOT EXISTS persons (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  source     TEXT NOT NULL,        -- seeded | manual
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS face_clusters (
+  id         INTEGER PRIMARY KEY,
+  person_id  INTEGER REFERENCES persons(id),
+  size       INTEGER NOT NULL,
+  centroid   BLOB NOT NULL,
+  status     TEXT NOT NULL,        -- unnamed | named | ignored
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS faces (
+  id         INTEGER PRIMARY KEY,
+  asset_id   INTEGER NOT NULL REFERENCES assets(id),
+  idx        INTEGER NOT NULL,     -- position within its photograph; names the crop on disk
+  bbox       TEXT NOT NULL,        -- json [x, y, w, h], fractions of the image, not pixels
+  det_score  REAL NOT NULL,
+  blur_score REAL,
+  embedding  BLOB NOT NULL,        -- 512 x float16
+  cluster_id INTEGER REFERENCES face_clusters(id),
+  person_id  INTEGER REFERENCES persons(id),   -- denormalised for query speed
+  UNIQUE (asset_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_faces_asset   ON faces(asset_id);
+CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_faces_person  ON faces(person_id);
 CREATE INDEX IF NOT EXISTS idx_files_asset   ON files(asset_id);
 CREATE INDEX IF NOT EXISTS idx_files_folder  ON files(folder_id);
 CREATE INDEX IF NOT EXISTS idx_files_missing ON files(missing_since);

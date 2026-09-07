@@ -103,9 +103,20 @@ Step "PyTorch with CUDA (~2.5 GB, this is the slow part)"
 uv pip install --python $Py torch --index-url https://download.pytorch.org/whl/cu128
 Ok "torch"
 
-Step "Remaining packages"
+Step "Remaining packages (includes the CUDA 13 runtime for the face models, ~2 GB)"
 uv pip install --python $Py -e "$Project[dev]"
 Ok "mediaidx and dependencies"
+
+# onnxruntime-gpu falls back to the CPU without complaint when its CUDA
+# libraries are missing, and a face pass then takes seven times longer with
+# nothing in the output to explain it. Better to find out here.
+Step "GPU check for the face stage"
+$prov = & $Py -c "import onnxruntime as ort; ort.preload_dlls(directory=''); print('CUDAExecutionProvider' in ort.get_available_providers())" 2>$null
+if ($prov -match "True") {
+    Ok "onnxruntime sees CUDA"
+} else {
+    Warn 'onnxruntime has no CUDA provider -- faces would run on the CPU. Run "mediaidx doctor" for the detail.'
+}
 
 # --- exiftool -------------------------------------------------------------
 Step "ExifTool"
