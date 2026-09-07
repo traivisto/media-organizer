@@ -301,6 +301,62 @@ def suggest(con, cluster_id: int, *, share: float = 0.6):
             f'{top["hint"]}')
 
 
+def named_people(con) -> list:
+    """Everyone who has been named, with how much of the library they are in."""
+    return con.execute(
+        """SELECT p.id, p.name,
+                  COUNT(DISTINCT f.asset_id) AS photos,
+                  (SELECT a.content_hash FROM faces x
+                     JOIN assets a ON a.id = x.asset_id
+                    WHERE x.person_id = p.id
+                    ORDER BY x.blur_score DESC LIMIT 1) AS cover_hash,
+                  (SELECT x.idx FROM faces x WHERE x.person_id = p.id
+                    ORDER BY x.blur_score DESC LIMIT 1) AS cover_idx
+           FROM persons p JOIN faces f ON f.person_id = p.id
+           GROUP BY p.id ORDER BY photos DESC""").fetchall()
+
+
+def people_in_query(con, q: str) -> list:
+    """Named people whose name appears *inside* the query.
+
+    The opposite direction to the search strip, which asks whether the query
+    appears inside a name so that typing "emm" finds Emmi. Here the question is
+    which people a phrase like "Tommi and Emmi" is asking about, so the names
+    are looked for in the phrase. Both are needed and they are not the same
+    test.
+
+    Where one matched name contains another -- Emmi inside Emmiliina -- only
+    the longer is kept, otherwise every search for Emmiliina would silently
+    become a search for two people.
+    """
+    needle = q.casefold()
+    hits = [r for r in named_people(con) if r["name"].casefold() in needle]
+    return [r for r in hits
+            if not any(o["id"] != r["id"]
+                       and r["name"].casefold() in o["name"].casefold()
+                       for o in hits)]
+
+
+def photos_with_all(con, person_ids: list[int], limit: int = 300) -> list:
+    """Photographs containing every one of these people.
+
+    Everyone in the list has to appear, which is the question actually being
+    asked: "the two of them together", not "either of them".
+    """
+    if not person_ids:
+        return []
+    marks = ",".join("?" * len(person_ids))
+    return con.execute(
+        f"""SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
+                   a.camera_model
+            FROM assets a
+            JOIN faces f ON f.asset_id = a.id AND f.person_id IN ({marks})
+            GROUP BY a.id
+            HAVING COUNT(DISTINCT f.person_id) = ?
+            ORDER BY a.taken_at DESC LIMIT ?""",
+        [*person_ids, len(person_ids), limit]).fetchall()
+
+
 def representatives(con, cluster_id: int, limit: int = 12) -> list:
     """Sharpest and most confident first -- what a person is recognised from."""
     return con.execute(

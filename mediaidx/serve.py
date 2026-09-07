@@ -207,9 +207,29 @@ def create_app(cfg) -> FastAPI:
 
         people = people_matching(con, q)
 
+        # "Tommi and Emmi" is a question about a pair, not about either of
+        # them. If the query names more than one person, the photographs they
+        # are both in come first -- that is what was asked -- and the vector
+        # search still runs underneath.
+        together = ""
+        named = cluster.people_in_query(con, q)
+        if len(named) > 1:
+            person_ids = [r["id"] for r in named]
+            rows = cluster.photos_with_all(con, person_ids)
+            who = " and ".join(html.escape(r["name"]) for r in named)
+            if rows:
+                together = (
+                    f'<div class="meta">{len(rows):,} photographs with '
+                    f'<b>{who}</b> together</div>'
+                    f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+            else:
+                together = (f'<div class="meta">No photograph has {who} '
+                            'in it together.</div>')
+
         if embedded == 0:
-            body = people + ('<div class="empty"><p>No search vectors yet.</p>'
-                             '<p><code>mediaidx embed</code></p></div>')
+            body = people + together + (
+                '<div class="empty"><p>No search vectors yet.</p>'
+                '<p><code>mediaidx embed</code></p></div>')
             return HTMLResponse(PAGE.format(
                 title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
                 placeholder="kids on a beach at sunset"))
@@ -217,8 +237,9 @@ def create_app(cfg) -> FastAPI:
         vec = encoder().encode_text([q])[0]
         hits = embed.search(con, vec, limit=limit, vec_ok=state["vec_ok"])
         if not hits:
-            body = people + ('<div class="empty"><p>No matching photographs.</p></div>'
-                             if not people else "")
+            body = people + together + (
+                '<div class="empty"><p>No matching photographs.</p></div>'
+                if not (people or together) else "")
         else:
             ids = [h[0] for h in hits]
             scores = dict(hits)
@@ -228,7 +249,7 @@ def create_app(cfg) -> FastAPI:
                 ids).fetchall()
             by_id = {r["id"]: r for r in rows}
             cards = "".join(card(by_id[i], scores[i]) for i in ids if i in by_id)
-            body = (people +
+            body = (people + together +
                     f'<div class="meta">{len(ids)} matches for '
                     f'&ldquo;{html.escape(q)}&rdquo; of {embedded:,} searchable'
                     f'</div><div class="grid">{cards}</div>')
