@@ -89,6 +89,14 @@ nav a:hover {{ color:var(--accent); }}
   background:var(--rule); }}
 .person b {{ color:var(--ink); font-size:14.5px; }}
 .ghost {{ background:transparent; color:var(--ink-2); border:1px solid var(--rule); }}
+.cands {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; display:flex;
+  gap:10px; flex-wrap:wrap; }}
+.cand {{ display:flex; gap:9px; align-items:center; margin:0; padding:8px;
+  background:var(--surface); border:1px solid var(--rule); border-radius:4px;
+  font-size:12px; color:var(--ink-3); }}
+.cand img {{ width:56px; height:56px; border-radius:3px; object-fit:cover;
+  background:var(--rule); }}
+.cand button {{ padding:6px 10px; font-size:12px; }}
 </style></head><body>
 <header><form action="/" method="get">
   <input type="search" name="q" value="{q}" placeholder="{placeholder}" autofocus>
@@ -375,19 +383,14 @@ def create_app(cfg) -> FastAPI:
 
         faces_rows = cluster.representatives(con, cluster_id, limit=200)
         proposal = cluster.suggest(con, cluster_id) if not c["person"] else None
-        others = con.execute(
-            """SELECT c.id, c.size, p.name FROM face_clusters c
-               LEFT JOIN persons p ON p.id = c.person_id
-               WHERE c.id != ? AND c.status != 'ignored'
-               ORDER BY (c.person_id IS NULL), c.size DESC LIMIT 60""",
-            (cluster_id,)).fetchall()
+        candidates = cluster.similar(con, cluster_id, limit=10)
 
         def option(o) -> str:
             label = o["name"] or f'unnamed #{o["id"]}'
             return (f'<option value="{o["id"]}">{html.escape(label)} '
                     f'({o["size"]:,})</option>')
 
-        options = "".join(option(o) for o in others)
+        options = "".join(option(o) for o in candidates)
 
         suggestion = ""
         if proposal:
@@ -411,6 +414,31 @@ def create_app(cfg) -> FastAPI:
             '<button class="ghost" type="submit">Not a person</button></form>'
             '</div>')
 
+        # The likeliest merges, shown as faces with one button each. Merging is
+        # the common repair on this data -- the same person across enough years
+        # becomes several clusters -- so it should cost a look and a click, not
+        # a hunt through a list of 737 numbers.
+        def candidate_tile(c) -> str:
+            label = html.escape(c["name"] or f'#{c["id"]}')
+            return (
+                f'<form method="post" action="/cluster/{cluster_id}/merge" '
+                f'class="cand">'
+                f'<input type="hidden" name="other" value="{c["id"]}">'
+                f'<a href="/cluster/{c["id"]}">'
+                f'<img src="/face/{c["cover_hash"]}/{c["cover_idx"]}" alt=""></a>'
+                f'<span>{label}<br>{c["size"]:,} faces '
+                f'&middot; {c["similarity"]:.2f}</span>'
+                f'<button class="ghost" type="submit">Merge in</button></form>')
+
+        strip = ""
+        if candidates:
+            tiles = "".join(candidate_tile(c) for c in candidates
+                            if c["cover_hash"])
+            strip = ('<div class="meta">Most similar clusters &mdash; the same '
+                     'person often lands in more than one. The number is cosine '
+                     'similarity to this cluster; look before merging.</div>'
+                     f'<div class="cands">{tiles}</div>')
+
         cards = "".join(
             face_card(r["content_hash"], r["idx"],
                       datetime.fromtimestamp(r["taken_at"]).strftime("%Y")
@@ -426,7 +454,9 @@ def create_app(cfg) -> FastAPI:
         body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
                 f'&larr; people</a> &middot; <b>{heading}</b> '
                 f'&middot; {c["size"]:,} faces</div>'
-                f'{suggestion}{panel}<div class="faces">{cards}</div>')
+                f'{suggestion}{panel}{strip}'
+                f'<div class="meta">Every face in this cluster</div>'
+                f'<div class="faces">{cards}</div>')
         return page(f"{title} — Kuva-arkisto", body)
 
     @app.post("/cluster/{cluster_id}/name")

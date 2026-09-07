@@ -312,6 +312,50 @@ def representatives(con, cluster_id: int, limit: int = 12) -> list:
            LIMIT ?""", (cluster_id, limit)).fetchall()
 
 
+def similar(con, cluster_id: int, limit: int = 12) -> list[dict]:
+    """Clusters nearest this one by centroid, likeliest first.
+
+    The merge dropdown used to list clusters by size and stop at 60, which on a
+    library with 737 of them meant most could not be reached at all -- and size
+    is a useless ordering for this question anyway. What someone merging wants
+    is "which of these is the same person", and the embeddings already answer
+    that. The same child at 4 and at 17 will not be the top match, but it is
+    far more likely to be in the first dozen by similarity than in the first
+    dozen by size.
+    """
+    rows = con.execute(
+        """SELECT c.id, c.size, c.centroid, p.name,
+                  (SELECT a.content_hash FROM faces f
+                     JOIN assets a ON a.id = f.asset_id
+                    WHERE f.cluster_id = c.id
+                    ORDER BY f.blur_score DESC LIMIT 1) AS cover_hash,
+                  (SELECT f.idx FROM faces f WHERE f.cluster_id = c.id
+                    ORDER BY f.blur_score DESC LIMIT 1) AS cover_idx
+           FROM face_clusters c
+           LEFT JOIN persons p ON p.id = c.person_id
+           WHERE c.status != 'ignored'""").fetchall()
+    mine = next((r for r in rows if r["id"] == cluster_id), None)
+    if mine is None:
+        return []
+    others = [r for r in rows if r["id"] != cluster_id]
+    if not others:
+        return []
+
+    def vec(blob):
+        v = np.frombuffer(blob, dtype=np.float16).astype(np.float32)
+        n = float(np.linalg.norm(v))
+        return v / n if n else v
+
+    me = vec(mine["centroid"])
+    mat = np.vstack([vec(r["centroid"]) for r in others])
+    sims = mat @ me
+    order = np.argsort(-sims)[:limit]
+    return [{"id": others[i]["id"], "size": others[i]["size"],
+             "name": others[i]["name"], "similarity": float(sims[i]),
+             "cover_hash": others[i]["cover_hash"],
+             "cover_idx": others[i]["cover_idx"]} for i in order]
+
+
 def overview(con) -> list:
     """Clusters for the review screen: biggest first, unnamed before named."""
     return con.execute(
