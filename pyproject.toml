@@ -24,9 +24,11 @@ dependencies = [
     # wheels are CUDA 13, which is what onnxruntime-gpu 1.29 is built against.
     "onnxruntime-gpu[cuda,cudnn]>=1.29",
     "insightface>=1.0",
+    "scikit-learn>=1.5",        # HDBSCAN for face clustering
     # Local UI
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",  # form posts: naming and merging clusters
 ]
 
 [project.optional-dependencies]
