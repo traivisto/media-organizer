@@ -688,6 +688,17 @@ Runs over embeddings in the database; touches no files.
    `person` assignments by majority vote of each old cluster's members. Cheap, because embeddings
    were kept (P5).
 
+**Measured, 2026-09-07.** 8,786 real face embeddings clustered in 59 s, producing 153 clusters
+covering 70% of faces; the remaining 30% stayed noise. Cost grows with the square of the face
+count, so the full library at ~40,000 faces is roughly 20 minutes -- a one-off, and re-runnable
+whenever a threshold changes. Random unit vectors, the worst case for the tree search, take
+about twice as long as real embeddings at the same count, which is the right direction: real
+faces cluster, and clustered data prunes better.
+
+**HDBSCAN needs contrast.** A dataset containing exactly one group is labelled noise in its
+entirety, because there is nothing for the density estimate to stand against. This never arises
+on a real library and is entirely an issue for tests, which must seed several groups.
+
 **Merging is a first-class operation.** A person photographed across 28 years will produce several
 clusters — children especially, whose embeddings drift substantially with age. The review UI must
 make merging two clusters a single action, and the data model must allow many clusters per person.
@@ -1137,7 +1148,7 @@ Required tests:
 | **M1** | Scan, hash, EXIF, folder parse, schema, `status`, `doctor` | Whole library catalogued and browsable by date, folder, camera. ~35 min to run. |
 | **M2** | Stage 3, thumbnails, search UI | **Free-text search over everything.** The first genuinely useful build. |
 | **M3a** | Stage 2: detection, embeddings, face crops | Every face in the library found and vectorised. **The only part of M3 that reads files** — the long pass. |
-| **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it can be built while M3a runs or long after.** |
+| **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it is re-runnable whenever a threshold changes.** |
 | **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access, ~1 min over the whole library.** |
 | **M4b** | Events, review queue | Unattended indexing plus a finite question queue. |
 | **M5** | Stage 4 captions | Descriptions and tags. |

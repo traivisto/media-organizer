@@ -15,9 +15,11 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import FastAPI, Form, Query
+from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
+                               Response)
 
+from . import cluster
 from . import config as config_mod
 from . import db, embed, images
 from . import paths as pathutil
@@ -62,11 +64,28 @@ figcaption b {{ color:var(--ink-2); font-weight:500; }}
 .empty {{ max-width:640px; margin:70px auto; text-align:center; color:var(--ink-3); }}
 .empty code {{ background:var(--surface); padding:2px 6px; border-radius:3px; }}
 a {{ color:inherit; text-decoration:none; }}
+nav {{ max-width:1500px; margin:8px auto 0; display:flex; gap:16px;
+  font-size:13px; color:var(--ink-3); }}
+nav a:hover {{ color:var(--accent); }}
+/* Faces are square, small and scanned in bulk: a tighter grid than the photo
+   one, because recognising a person takes a glance, not a look. */
+.faces {{ max-width:1500px; margin:0 auto; padding:14px 20px 60px;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; }}
+.faces figure img {{ aspect-ratio:1; }}
+.chip {{ display:inline-block; padding:2px 8px; border:1px solid var(--rule);
+  border-radius:11px; font-size:12px; color:var(--ink-2); background:var(--surface); }}
+.panel {{ max-width:1500px; margin:0 auto; padding:14px 20px 0;
+  display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
+.panel input[type=text] {{ padding:8px 12px; font-size:15px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
+.panel form {{ display:flex; gap:8px; align-items:center; margin:0; }}
+.ghost {{ background:transparent; color:var(--ink-2); border:1px solid var(--rule); }}
 </style></head><body>
 <header><form action="/" method="get">
   <input type="search" name="q" value="{q}" placeholder="{placeholder}" autofocus>
   <button type="submit">Search</button>
-</form></header>
+</form>
+<nav><a href="/">Photographs</a><a href="/people">People</a></nav></header>
 {body}
 </body></html>"""
 
@@ -199,16 +218,203 @@ def create_app(cfg) -> FastAPI:
             f'<div style="color:var(--ink-3);font-size:12px;'
             f'font-family:ui-monospace,monospace;padding:1px 0">'
             f'{html.escape(f["path"])}</div>' for f in files)
+
+        # Who is in it: named people first, then a count of the rest, so a
+        # photograph says what is known without pretending to know more.
+        in_photo = con.execute(
+            """SELECT fa.id, fa.idx, fa.cluster_id, p.id AS pid, p.name
+               FROM faces fa LEFT JOIN persons p ON p.id = fa.person_id
+               WHERE fa.asset_id = ? ORDER BY p.name IS NULL, fa.idx""",
+            (asset_id,)).fetchall()
+        who = ""
+        if in_photo:
+            chips = []
+            for f in in_photo:
+                href = (f'/person/{f["pid"]}' if f["pid"]
+                        else (f'/cluster/{f["cluster_id"]}' if f["cluster_id"] else None))
+                label = f["name"] or "unnamed"
+                chip = (f'<img src="/face/{a["content_hash"]}/{f["idx"]}" '
+                        f'style="width:34px;height:34px;border-radius:50%;'
+                        f'object-fit:cover;vertical-align:middle;margin-right:6px">'
+                        f'<span class="chip">{html.escape(label)}</span>')
+                chips.append(f'<a href="{href}">{chip}</a>' if href else chip)
+            who = ('<div style="margin:14px 0;display:flex;gap:14px;'
+                   'align-items:center;flex-wrap:wrap">' + "".join(chips) + '</div>')
         body = (
             f'<div style="max-width:1100px;margin:0 auto;padding:20px">'
             f'<a href="/" style="color:var(--accent)">&larr; back</a>'
             f'<img src="/thumb/m/{a["content_hash"]}" '
             f'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
+            f'{who}'
             f'<table style="font-size:14px">{info}</table>'
             f'<div style="margin-top:14px">{paths}</div></div>')
         return HTMLResponse(PAGE.format(
             title=f"{when} — Kuva-arkisto", q="", body=body,
             placeholder="kids on a beach at sunset"))
+
+    # ----------------------------------------------------------------------
+    # People
+    # ----------------------------------------------------------------------
+
+    def page(title, body):
+        return HTMLResponse(PAGE.format(
+            title=title, q="", body=body,
+            placeholder="kids on a beach at sunset"))
+
+    def face_card(hash_, idx, label, href, sub="") -> str:
+        return (
+            f'<figure><a href="{href}">'
+            f'<img loading="lazy" src="/face/{hash_}/{idx}" alt="">'
+            f'<figcaption><b>{html.escape(str(label))}</b>'
+            f'<span>{html.escape(str(sub))}</span></figcaption></a></figure>')
+
+    @app.get("/face/{content_hash}/{idx}")
+    def face(content_hash: str, idx: int):
+        p = images.face_thumb_path(cache_dir, content_hash, idx)
+        if not p.exists():
+            return Response(status_code=404)
+        return FileResponse(p, media_type="image/webp",
+                            headers={"Cache-Control": "public, max-age=604800"})
+
+    @app.get("/people", response_class=HTMLResponse)
+    def people():
+        con = connect()
+        rows = cluster.overview(con)
+        if not rows:
+            nfaces = con.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
+            hint = ("mediaidx faces cluster" if nfaces else "mediaidx faces")
+            body = (f'<div class="empty"><p>No face clusters yet.</p>'
+                    f'<p><code>{hint}</code></p></div>')
+            return page("People — Kuva-arkisto", body)
+
+        named = [r for r in rows if r["person"]]
+        unnamed = [r for r in rows if not r["person"]]
+        total = sum(r["size"] for r in rows)
+
+        def group(rs):
+            return "".join(
+                face_card(r["cover_hash"], r["cover_idx"],
+                          r["person"] or f'{r["size"]:,} faces',
+                          f'/cluster/{r["id"]}',
+                          f'{r["size"]:,}' if r["person"] else "")
+                for r in rs if r["cover_hash"])
+
+        parts = [f'<div class="meta">{len(rows):,} clusters &middot; '
+                 f'{total:,} faces &middot; {len(unnamed):,} still unnamed'
+                 '  &middot;  biggest first, because naming one is worth the most'
+                 '</div>']
+        if unnamed:
+            parts.append(f'<div class="faces">{group(unnamed)}</div>')
+        if named:
+            parts.append('<div class="meta">Named</div>'
+                         f'<div class="faces">{group(named)}</div>')
+        return page("People — Kuva-arkisto", "".join(parts))
+
+    @app.get("/cluster/{cluster_id}", response_class=HTMLResponse)
+    def cluster_view(cluster_id: int):
+        con = connect()
+        c = con.execute(
+            """SELECT c.*, p.name AS person FROM face_clusters c
+               LEFT JOIN persons p ON p.id = c.person_id WHERE c.id = ?""",
+            (cluster_id,)).fetchone()
+        if c is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+
+        faces_rows = cluster.representatives(con, cluster_id, limit=200)
+        proposal = cluster.suggest(con, cluster_id) if not c["person"] else None
+        others = con.execute(
+            """SELECT c.id, c.size, p.name FROM face_clusters c
+               LEFT JOIN persons p ON p.id = c.person_id
+               WHERE c.id != ? AND c.status != 'ignored'
+               ORDER BY (c.person_id IS NULL), c.size DESC LIMIT 60""",
+            (cluster_id,)).fetchall()
+
+        def option(o) -> str:
+            label = o["name"] or f'unnamed #{o["id"]}'
+            return (f'<option value="{o["id"]}">{html.escape(label)} '
+                    f'({o["size"]:,})</option>')
+
+        options = "".join(option(o) for o in others)
+
+        suggestion = ""
+        if proposal:
+            suggestion = (f'<div class="meta">Suggested: '
+                          f'<b>{html.escape(proposal[0])}</b> &mdash; '
+                          f'{html.escape(proposal[1])}. '
+                          'It is only a suggestion; nothing is named until you say so.'
+                          '</div>')
+
+        panel = (
+            '<div class="panel">'
+            f'<form method="post" action="/cluster/{cluster_id}/name">'
+            f'<input type="text" name="name" placeholder="who is this?" '
+            f'value="{html.escape(c["person"] or (proposal[0] if proposal else ""))}" '
+            'autofocus>'
+            '<button type="submit">Save</button></form>'
+            f'<form method="post" action="/cluster/{cluster_id}/merge">'
+            f'<select name="other" style="padding:8px">{options}</select>'
+            '<button class="ghost" type="submit">Merge into this</button></form>'
+            f'<form method="post" action="/cluster/{cluster_id}/ignore">'
+            '<button class="ghost" type="submit">Not a person</button></form>'
+            '</div>')
+
+        cards = "".join(
+            face_card(r["content_hash"], r["idx"],
+                      datetime.fromtimestamp(r["taken_at"]).strftime("%Y")
+                      if r["taken_at"] else "",
+                      f'/photo/{r["asset_id"]}')
+            for r in faces_rows)
+
+        title = c["person"] or f'Unnamed cluster of {c["size"]:,} faces'
+        heading = html.escape(title)
+        if c["person"]:
+            heading = (f'<a href="/person/{c["person_id"]}" '
+                       f'style="color:var(--accent)">{heading}</a>')
+        body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
+                f'&larr; people</a> &middot; <b>{heading}</b> '
+                f'&middot; {c["size"]:,} faces</div>'
+                f'{suggestion}{panel}<div class="faces">{cards}</div>')
+        return page(f"{title} — Kuva-arkisto", body)
+
+    @app.post("/cluster/{cluster_id}/name")
+    def cluster_name(cluster_id: int, name: str = Form(default="")):
+        con = connect()
+        if name.strip():
+            cluster.set_person(con, cluster_id, name)
+        else:
+            cluster.clear_person(con, cluster_id)
+        return RedirectResponse(f"/cluster/{cluster_id}", status_code=303)
+
+    @app.post("/cluster/{cluster_id}/merge")
+    def cluster_merge(cluster_id: int, other: int = Form(...)):
+        con = connect()
+        cluster.merge(con, cluster_id, other)
+        return RedirectResponse(f"/cluster/{cluster_id}", status_code=303)
+
+    @app.post("/cluster/{cluster_id}/ignore")
+    def cluster_ignore(cluster_id: int):
+        con = connect()
+        cluster.set_status(con, cluster_id, "ignored")
+        return RedirectResponse("/people", status_code=303)
+
+    @app.get("/person/{person_id}", response_class=HTMLResponse)
+    def person(person_id: int, limit: int = 300):
+        con = connect()
+        p = con.execute("SELECT * FROM persons WHERE id = ?",
+                        (person_id,)).fetchone()
+        if p is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        rows = con.execute(
+            """SELECT DISTINCT a.id, a.content_hash, a.taken_at,
+                      a.taken_at_precision, a.camera_model
+               FROM assets a JOIN faces f ON f.asset_id = a.id
+               WHERE f.person_id = ? ORDER BY a.taken_at DESC LIMIT ?""",
+            (person_id, limit)).fetchall()
+        body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
+                f'&larr; people</a> &middot; <b>{html.escape(p["name"])}</b> '
+                f'&middot; {len(rows):,} photographs</div>'
+                f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+        return page(f'{p["name"]} — Kuva-arkisto', body)
 
     return app
 

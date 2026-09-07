@@ -7,22 +7,39 @@ Full design: [spec.md](spec.md).
 
 ## Status
 
-**M2 complete** — the library is catalogued and searchable by free text.
+**M3 complete** — the library is searchable by free text, and by who is in the photograph.
 
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | Scan, hash, EXIF, filename/folder dates, schema, `status`, `doctor` | **done** |
 | M2 | Search vectors, thumbnails, search UI | **done** |
-| M3a | Faces: detection, embeddings, face crops | **built**, full pass not yet run |
-| M3b | Clustering, naming, people UI | next |
+| M3a | Faces: detection, embeddings, face crops | **done** |
+| M3b | Clustering, naming, people UI | **done** |
 | M4 | Events, places, review queue | |
 | M5 | Captions | |
 | M6 | Video | deferred |
 
-M3 is split because only M3a reads files. Once it has run, clustering and the
-people UI work entirely from the database and the local face crops — so they can
-be built while the long pass runs, and re-run as often as needed afterwards
-without touching the NAS again.
+M3 is split because only M3a reads files. Clustering and the people UI work
+entirely from the database and the local face crops, so they can be re-run as
+often as a threshold needs changing without touching the NAS again.
+
+## People
+
+`mediaidx faces` finds faces; `mediaidx faces cluster` groups them; naming
+happens in the UI under **People**, biggest cluster first, because naming the
+largest one is worth the most. Nothing is ever named automatically. Where a
+folder was indexed with `--person`, the UI offers that name as a suggestion and
+says why, but it stays a suggestion until you accept it.
+
+Two things the review screen expects you to do, because the data genuinely
+requires them:
+
+- **Merge.** One person across 28 years produces several clusters — a child at 4
+  and at 17 are further apart than two unrelated adults, and no threshold fixes
+  that. Merging is one action, and a person may hold any number of clusters.
+- **Not a person.** Sculpture, portraits on a wall, mannequins. On this library
+  the largest such cluster held 175 faces from a single art installation, all
+  correctly grouped and none of them anybody.
 
 ## Setup
 
@@ -96,6 +113,9 @@ mediaidx status --conflicts           where EXIF and filename disagree
 mediaidx embed                        search vectors and thumbnails
 mediaidx faces                        find and vectorise every face
 mediaidx faces --limit 200            try it on a slice first
+mediaidx faces cluster                group the faces into people
+mediaidx faces cluster --rebuild      recompute from scratch, keeping names
+mediaidx people                       who is named, and how much of the library
 mediaidx search "a phrase"            free-text search from the terminal
 mediaidx serve                        the local UI, http://localhost:8710
 ```
@@ -125,10 +145,10 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-68 tests covering date resolution, filename and folder parsing, the sanity bounds
+87 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, scope containment, the read-only
-guarantee, face storage and crop geometry, and the separation between shipped
-defaults and library-specific configuration.
+guarantee, face storage and crop geometry, clustering, naming and merging, and
+the separation between shipped defaults and library-specific configuration.
 
 The face *model* is not exercised there — it needs a GPU, 300 MB of weights and a
 photograph of a real person. `mediaidx doctor` covers that end instead, and it

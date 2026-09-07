@@ -278,6 +278,9 @@ def cmd_embed(args) -> int:
 
 
 def cmd_faces(args) -> int:
+    if args.action == "cluster":
+        return cmd_faces_cluster(args)
+
     from . import face_pass
     from . import faces as faces_mod
     cfg, con = _open(args, create=False)
@@ -313,6 +316,69 @@ def cmd_faces(args) -> int:
     if st.failed:
         print(f"  failed      {st.failed:>9,}   `mediaidx status --errors`")
     print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_faces_cluster(args) -> int:
+    from . import cluster
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    n = con.execute("SELECT COUNT(*) FROM faces").fetchone()[0]
+    if n == 0:
+        print("no faces yet -- run `mediaidx faces` first", file=sys.stderr)
+        return 1
+
+    existing = con.execute("SELECT COUNT(*) FROM face_clusters").fetchone()[0]
+    if existing and not args.rebuild:
+        # The cheap path: only the faces that arrived since the last build,
+        # matched against the centroids that already exist.
+        moved = cluster.assign(con, cfg)
+        left = con.execute(
+            "SELECT COUNT(*) FROM faces WHERE cluster_id IS NULL").fetchone()[0]
+        print(f"  assigned {moved:,} new faces to existing clusters")
+        print(f"  {left:,} still unclustered   "
+              "`mediaidx faces cluster --rebuild` to recompute from scratch")
+        return 0
+
+    print(f"clustering {n:,} faces "
+          + ("(rebuild -- names are preserved by majority vote)" if args.rebuild
+             else "for the first time"))
+    print("  this is CPU work over the database; no file is read")
+    st = cluster.build(con, cfg, rebuild=args.rebuild)
+
+    print(f"\n  clusters    {st.clusters:>9,}")
+    print(f"  clustered   {st.clustered:>9,}   "
+          f"({100*st.clustered/st.faces if st.faces else 0:.0f}% of faces)")
+    print(f"  unclustered {st.noise:>9,}   left as noise, not forced")
+    if st.named:
+        print(f"  names kept  {st.named:>9,}")
+    print(f"  {st.elapsed:.0f}s")
+    print("\n  `mediaidx serve`, then People, to name them")
+    return 0
+
+
+def cmd_people(args) -> int:
+    cfg, con = _open(args, create=False)
+    rows = con.execute(
+        """SELECT p.name, COUNT(DISTINCT c.id) AS clusters,
+                  COUNT(f.id) AS faces,
+                  COUNT(DISTINCT f.asset_id) AS photos
+           FROM persons p
+           LEFT JOIN face_clusters c ON c.person_id = p.id
+           LEFT JOIN faces f ON f.person_id = p.id
+           GROUP BY p.id ORDER BY photos DESC""").fetchall()
+    if not rows:
+        print("nobody named yet -- `mediaidx serve`, then People")
+        return 0
+    unnamed = con.execute(
+        "SELECT COUNT(*) FROM face_clusters WHERE person_id IS NULL "
+        "AND status != 'ignored'").fetchone()[0]
+    for r in rows:
+        print(f"  {r['photos']:>7,} photographs  {r['faces']:>7,} faces  "
+              f"{r['clusters']:>3} clusters  {r['name']}")
+    if unnamed:
+        print(f"\n  {unnamed:,} clusters still unnamed")
     return 0
 
 
@@ -509,12 +575,19 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--batch", type=int, default=32, help="GPU batch size")
     e.set_defaults(func=cmd_embed)
 
-    fa = sub.add_parser("faces", help="detect and embed faces")
+    fa = sub.add_parser("faces", help="detect and embed faces; `faces cluster` groups them")
+    fa.add_argument("action", nargs="?", choices=["cluster"],
+                    help="'cluster' to group faces into people; omit to detect")
     fa.add_argument("--limit", type=int, help="stop after N photographs")
     fa.add_argument("--workers", type=int, default=8)
     fa.add_argument("--cpu", action="store_true",
                     help="run without the GPU; correct, but far slower")
+    fa.add_argument("--rebuild", action="store_true",
+                    help="with `cluster`: recompute from scratch, preserving names")
     fa.set_defaults(func=cmd_faces)
+
+    pe = sub.add_parser("people", help="who has been named, and how much of the library")
+    pe.set_defaults(func=cmd_people)
 
     q = sub.add_parser("search", help="search from the terminal")
     q.add_argument("query", nargs="+")
