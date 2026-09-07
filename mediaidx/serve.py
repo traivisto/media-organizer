@@ -216,11 +216,15 @@ def create_app(cfg) -> FastAPI:
         if len(named) > 1:
             person_ids = [r["id"] for r in named]
             rows = cluster.photos_with_all(con, person_ids)
+            total = cluster.count_photos_with_all(con, person_ids)
             who = " and ".join(html.escape(r["name"]) for r in named)
             if rows:
+                # The count is the count, not the length of one page of it.
+                shown = ("" if len(rows) >= total
+                         else f' &middot; showing the {len(rows):,} most recent')
                 together = (
-                    f'<div class="meta">{len(rows):,} photographs with '
-                    f'<b>{who}</b> together</div>'
+                    f'<div class="meta">{total:,} photographs with '
+                    f'<b>{who}</b> together{shown}</div>'
                     f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
             else:
                 together = (f'<div class="meta">No photograph has {who} '

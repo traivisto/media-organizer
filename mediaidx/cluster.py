@@ -357,6 +357,20 @@ def photos_with_all(con, person_ids: list[int], limit: int = 300) -> list:
         [*person_ids, len(person_ids), limit]).fetchall()
 
 
+def count_photos_with_all(con, person_ids: list[int]) -> int:
+    """How many there are, as opposed to how many a page is showing."""
+    if not person_ids:
+        return 0
+    marks = ",".join("?" * len(person_ids))
+    return con.execute(
+        f"""SELECT COUNT(*) FROM (
+              SELECT a.id FROM assets a
+              JOIN faces f ON f.asset_id = a.id AND f.person_id IN ({marks})
+              GROUP BY a.id
+              HAVING COUNT(DISTINCT f.person_id) = ?)""",
+        [*person_ids, len(person_ids)]).fetchone()[0]
+
+
 def representatives(con, cluster_id: int, limit: int = 12) -> list:
     """Sharpest and most confident first -- what a person is recognised from."""
     return con.execute(

@@ -166,3 +166,19 @@ def test_a_pair_that_never_appears_together_says_so(built):
     # Henna is in nothing, so she is not a named person with photographs and
     # the pair query does not fire; the page must not claim a pairing.
     assert "together" not in body or "No photograph" in body
+
+
+def test_the_count_is_the_count_not_the_page_size(built):
+    """A capped page must not report its own length as the total."""
+    _, persons, dbp = built
+    con = _con(dbp)
+    ids = [persons["Tommi"], persons["Emmi"]]
+    assert cluster.count_photos_with_all(con, ids) == 3
+    # A page smaller than the result set still reports the true total.
+    assert len(cluster.photos_with_all(con, ids, limit=1)) == 1
+    assert cluster.count_photos_with_all(con, ids) == 3
+
+
+def test_counting_nobody_is_zero(built):
+    _, _, dbp = built
+    assert cluster.count_photos_with_all(_con(dbp), []) == 0
