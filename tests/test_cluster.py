@@ -396,3 +396,39 @@ def test_similar_is_ordered_by_similarity(cfg):
     got = cluster.similar(con, _cluster_of_size(con, 12), limit=10)
     sims = [c["similarity"] for c in got]
     assert sims == sorted(sims, reverse=True)
+
+
+def test_one_name_for_two_people_is_visible_not_silent(cfg):
+    """Naming a cluster with an existing name joins that person. That is right
+    for one person in several clusters and wrong for two people who share a
+    first name, so the page has to say it is happening."""
+    con = _con()
+    _seed(con, np.random.default_rng(24))
+    cluster.build(con, cfg)
+    a, b = _cluster_of_size(con, 12), _cluster_of_size(con, 10)
+    pid = cluster.set_person(con, a, "Reetta")
+    assert cluster.set_person(con, b, "Reetta") == pid, "should be one person"
+
+    # Both clusters, one person, and the count reflects both.
+    assert con.execute(
+        "SELECT COUNT(*) FROM face_clusters WHERE person_id = ?",
+        (pid,)).fetchone()[0] == 2
+    assert con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id = ?", (pid,)).fetchone()[0] == 22
+
+
+def test_renaming_one_cluster_separates_two_people_again(cfg):
+    """The repair for a shared name: rename one, and only its faces move."""
+    con = _con()
+    _seed(con, np.random.default_rng(25))
+    cluster.build(con, cfg)
+    a, b = _cluster_of_size(con, 12), _cluster_of_size(con, 10)
+    first = cluster.set_person(con, a, "Reetta")
+    cluster.set_person(con, b, "Reetta")
+
+    second = cluster.set_person(con, b, "Reetta S")
+    assert second != first
+    assert con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id = ?", (first,)).fetchone()[0] == 12
+    assert con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id = ?", (second,)).fetchone()[0] == 10

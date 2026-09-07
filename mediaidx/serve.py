@@ -410,16 +410,30 @@ def create_app(cfg) -> FastAPI:
 
         error = (f' &middot; <b style="color:#c2554a">{html.escape(error)}</b>'
                  if error else "")
+
+        # A name is the unique key for a person, so typing one that already
+        # exists attaches this cluster to that person -- which is exactly what
+        # you want for one person photographed several ways, and exactly how
+        # two different people who share a first name get silently conflated.
+        # Either way it should be visible rather than inferred afterwards.
+        shared = ""
+        if c["person_id"]:
+            other = con.execute(
+                "SELECT (SELECT COUNT(*) FROM face_clusters "
+                "          WHERE person_id = ? AND id != ?) AS clusters, "
+                "       (SELECT COUNT(*) FROM faces WHERE person_id = ?) AS faces",
+                (c["person_id"], cluster_id, c["person_id"])).fetchone()
+            if other["clusters"]:
+                plural = "s" if other["clusters"] > 1 else ""
+                shared = (
+                    f'<div class="meta">{html.escape(c["person"])} is also on '
+                    f'{other["clusters"]} other cluster{plural} &mdash; '
+                    f'{other["faces"]:,} faces in total. Right for one person '
+                    'photographed several ways; wrong for two people who share '
+                    'a name, in which case rename one of them.</div>')
         faces_rows = cluster.representatives(con, cluster_id, limit=200)
         proposal = cluster.suggest(con, cluster_id) if not c["person"] else None
         candidates = cluster.similar(con, cluster_id, limit=10)
-
-        def option(o) -> str:
-            label = o["name"] or f'unnamed #{o["id"]}'
-            return (f'<option value="{o["id"]}">{html.escape(label)} '
-                    f'({o["size"]:,})</option>')
-
-        options = "".join(option(o) for o in candidates)
 
         suggestion = ""
         if proposal:
@@ -436,16 +450,15 @@ def create_app(cfg) -> FastAPI:
             f'value="{html.escape(c["person"] or (proposal[0] if proposal else ""))}" '
             'autofocus>'
             '<button type="submit">Save</button></form>'
-            f'<form method="post" action="/cluster/{cluster_id}/merge">'
-            f'<select name="other" style="padding:8px">{options}</select>'
-            '<button class="ghost" type="submit">Merge into this</button></form>'
-            # The shortlist is ranked by similarity and is therefore a
-            # shortlist: the same child at 4 and at 17 can sit well outside it.
-            # Any cluster must remain reachable, so its number can be typed.
+            # One way to merge, not three. The face strip below covers the
+            # likely candidates, which a dropdown of the same ten names only
+            # restated in a worse medium; this field covers everything else,
+            # because similarity is a shortlist and the same child at 4 and at
+            # 17 sits outside it.
             f'<form method="post" action="/cluster/{cluster_id}/merge">'
             '<input type="number" name="other" min="1" placeholder="cluster #" '
             'style="width:110px;padding:8px" required>'
-            '<button class="ghost" type="submit">Merge that one in</button></form>'
+            '<button class="ghost" type="submit">Merge in</button></form>'
             f'<form method="post" action="/cluster/{cluster_id}/ignore">'
             '<button class="ghost" type="submit">Not a person</button></form>'
             '</div>')
@@ -471,8 +484,9 @@ def create_app(cfg) -> FastAPI:
             tiles = "".join(candidate_tile(c) for c in candidates
                             if c["cover_hash"])
             strip = ('<div class="meta">Most similar clusters &mdash; the same '
-                     'person often lands in more than one. The number is cosine '
-                     'similarity to this cluster; look before merging.</div>'
+                     'person often lands in more than one. Merging keeps '
+                     f'<b>this</b> cluster (#{cluster_id}) and absorbs the other. '
+                     'The number is cosine similarity; look before merging.</div>'
                      f'<div class="cands">{tiles}</div>')
 
         cards = "".join(
@@ -491,7 +505,7 @@ def create_app(cfg) -> FastAPI:
                 f'&larr; people</a> &middot; <b>{heading}</b> '
                 f'&middot; cluster #{cluster_id} &middot; {c["size"]:,} faces'
                 f'{error}</div>'
-                f'{suggestion}{panel}{strip}'
+                f'{suggestion}{shared}{panel}{strip}'
                 f'<div class="meta">Every face in this cluster</div>'
                 f'<div class="faces">{cards}</div>')
         return page(f"{title} — Kuva-arkisto", body)
