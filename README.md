@@ -145,10 +145,11 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-87 tests covering date resolution, filename and folder parsing, the sanity bounds
+124 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, scope containment, the read-only
-guarantee, face storage and crop geometry, clustering, naming and merging, and
-the separation between shipped defaults and library-specific configuration.
+guarantee, face storage and crop geometry, clustering, naming, merging and
+searching by person, and the separation between shipped defaults and
+library-specific configuration.
 
 The face *model* is not exercised there — it needs a GPU, 300 MB of weights and a
 photograph of a real person. `mediaidx doctor` covers that end instead, and it

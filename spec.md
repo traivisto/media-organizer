@@ -622,9 +622,10 @@ before lookup so results are cached in `places` and repeated lookups cost nothin
   database-only *provided* the pictures they must show are already local. Cropping them on
   demand instead would mean reading tens of thousands of originals back across the link to
   render one screen — the second pass the whole design exists to avoid (P4).
-- **Expected volume:** roughly 60,000–80,000 faces across the archive. The sample above
-  suggests closer to **1.0 kept faces per photograph, so ~40,000** — lower than estimated,
-  and to be confirmed by the full pass.
+- **Measured volume, full pass 2026-09-07: 45,648 faces in 18,284 photographs**, from
+  39,851 searched. That is 1.14 kept faces per photograph, against an original estimate of
+  60,000–80,000. 33 photographs failed, all of them files truncated in the archive itself —
+  the same ones stage 3 could not read.
 
 **Measured, 2026-09-07, RTX 4080 SUPER:** 22 images/second on the GPU, against ~3.2 delivered
 by the link. As with stage 3, the model is several times faster than the pipeline can feed it,
@@ -688,10 +689,11 @@ Runs over embeddings in the database; touches no files.
    `person` assignments by majority vote of each old cluster's members. Cheap, because embeddings
    were kept (P5).
 
-**Measured, 2026-09-07.** 8,786 real face embeddings clustered in 59 s, producing 153 clusters
-covering 70% of faces; the remaining 30% stayed noise. Cost grows with the square of the face
-count, so the full library at ~40,000 faces is roughly 20 minutes -- a one-off, and re-runnable
-whenever a threshold changes. Random unit vectors, the worst case for the tree search, take
+**Measured, 2026-09-07.** The full library: **45,648 faces into 737 clusters in 19 minutes**,
+covering 54% of faces, with 20,774 left as noise rather than forced into a cluster. (An earlier
+trial over 8,786 faces gave 153 clusters and 70% coverage; the full archive holds far more
+one-off strangers, so a lower share clustering is the right direction.) Cost grows with the
+square of the face count, and it is re-runnable whenever a threshold changes. Random unit vectors, the worst case for the tree search, take
 about twice as long as real embeddings at the same count, which is the right direction: real
 faces cluster, and clustered data prunes better.
 
