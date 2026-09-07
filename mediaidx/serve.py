@@ -79,6 +79,15 @@ nav a:hover {{ color:var(--accent); }}
 .panel input[type=text] {{ padding:8px 12px; font-size:15px; color:var(--ink);
   background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
 .panel form {{ display:flex; gap:8px; align-items:center; margin:0; }}
+.people {{ max-width:1500px; margin:0 auto; padding:6px 20px 0;
+  display:flex; gap:10px; flex-wrap:wrap; }}
+.person {{ display:flex; gap:10px; align-items:center; padding:8px 14px 8px 8px;
+  background:var(--surface); border:1px solid var(--rule); border-radius:30px;
+  font-size:13px; color:var(--ink-2); }}
+.person:hover {{ border-color:var(--accent); }}
+.person img {{ width:44px; height:44px; border-radius:50%; object-fit:cover;
+  background:var(--rule); }}
+.person b {{ color:var(--ink); font-size:14.5px; }}
 .ghost {{ background:transparent; color:var(--ink-2); border:1px solid var(--rule); }}
 </style></head><body>
 <header><form action="/" method="get">
@@ -126,6 +135,46 @@ def create_app(cfg) -> FastAPI:
             f'<figcaption><b>{html.escape(when)}</b>'
             f'<span>{html.escape(str(right)[:18])}</span></figcaption></a></figure>')
 
+    def people_matching(con, q: str) -> str:
+        """Named people whose name contains the query.
+
+        The vector search answers "what is in the photograph", and a person's
+        name is not in the photograph -- SigLIP has never been told what Anski
+        looks like. So a typed name has to be matched against the names people
+        have actually given, before the query goes anywhere near a model.
+        Both results are shown: "Anski" finds the person, "Anski beach" still
+        ranks beaches, and neither hides the other.
+        """
+        needle = q.strip().casefold()
+        if not needle:
+            return ""
+        # Matched in Python, not with LIKE ... COLLATE NOCASE: SQLite's NOCASE
+        # folds ASCII A-Z and nothing else, so on this library "ÄÄKKÖNEN" would
+        # not find "Ääkkönen" and "ökö" would not find "Ökö". casefold() knows
+        # what those letters are. There are tens of people, not thousands, so
+        # reading them all and filtering here costs nothing.
+        rows = [r for r in con.execute(
+            """SELECT p.id, p.name,
+                      COUNT(DISTINCT f.asset_id) AS photos,
+                      (SELECT a.content_hash FROM faces x
+                         JOIN assets a ON a.id = x.asset_id
+                        WHERE x.person_id = p.id
+                        ORDER BY x.blur_score DESC LIMIT 1) AS cover_hash,
+                      (SELECT x.idx FROM faces x WHERE x.person_id = p.id
+                        ORDER BY x.blur_score DESC LIMIT 1) AS cover_idx
+               FROM persons p JOIN faces f ON f.person_id = p.id
+               GROUP BY p.id ORDER BY photos DESC""").fetchall()
+            if needle in r["name"].casefold()][:12]
+        if not rows:
+            return ""
+        chips = "".join(
+            f'<a href="/person/{r["id"]}" class="person">'
+            f'<img src="/face/{r["cover_hash"]}/{r["cover_idx"]}" alt="">'
+            f'<span><b>{html.escape(r["name"])}</b><br>'
+            f'{r["photos"]:,} photographs</span></a>' for r in rows
+            if r["cover_hash"])
+        return f'<div class="meta">People</div><div class="people">{chips}</div>'
+
     @app.get("/", response_class=HTMLResponse)
     def home(q: str = Query(default=""), limit: int = 120):
         con = connect()
@@ -148,9 +197,11 @@ def create_app(cfg) -> FastAPI:
                 title="Kuva-arkisto", q="", body=body,
                 placeholder="kids on a beach at sunset"))
 
+        people = people_matching(con, q)
+
         if embedded == 0:
-            body = ('<div class="empty"><p>No search vectors yet.</p>'
-                    '<p><code>mediaidx embed</code></p></div>')
+            body = people + ('<div class="empty"><p>No search vectors yet.</p>'
+                             '<p><code>mediaidx embed</code></p></div>')
             return HTMLResponse(PAGE.format(
                 title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
                 placeholder="kids on a beach at sunset"))
@@ -158,7 +209,8 @@ def create_app(cfg) -> FastAPI:
         vec = encoder().encode_text([q])[0]
         hits = embed.search(con, vec, limit=limit, vec_ok=state["vec_ok"])
         if not hits:
-            body = '<div class="empty"><p>No matches.</p></div>'
+            body = people + ('<div class="empty"><p>No matching photographs.</p></div>'
+                             if not people else "")
         else:
             ids = [h[0] for h in hits]
             scores = dict(hits)
@@ -168,7 +220,8 @@ def create_app(cfg) -> FastAPI:
                 ids).fetchall()
             by_id = {r["id"]: r for r in rows}
             cards = "".join(card(by_id[i], scores[i]) for i in ids if i in by_id)
-            body = (f'<div class="meta">{len(ids)} matches for '
+            body = (people +
+                    f'<div class="meta">{len(ids)} matches for '
                     f'&ldquo;{html.escape(q)}&rdquo; of {embedded:,} searchable'
                     f'</div><div class="grid">{cards}</div>')
         return HTMLResponse(PAGE.format(
