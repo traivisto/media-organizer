@@ -747,6 +747,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # Windows gives a redirected stdout the ANSI codepage, and cp1252 cannot
+    # encode most of the gazetteer: printing `Ρόδος` or `Côte d'Azur` raises
+    # UnicodeEncodeError and takes the whole command down *after* the work is
+    # done. Everything stored is UTF-8, so everything written is too.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass                        # already wrapped, or not a real stream
+
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

@@ -186,7 +186,7 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-180 tests covering date resolution, filename and folder parsing, the sanity bounds
+181 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, GPS hemispheres, scope
 containment, the read-only guarantee, face storage and crop geometry, clustering,
 naming, merging and searching by person, the gazetteer and both ways into it, and
