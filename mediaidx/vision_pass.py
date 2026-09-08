@@ -5,20 +5,26 @@ once (P4). It is a separate command as well, for assets indexed before M2
 existed -- which is the whole 2019 folder, and would be the whole library had
 we run the full index before building this.
 
-The GPU is not the constraint here and never will be: it encodes at ~47 img/s
-against ~3.2 img/s of reading. Everything below is arranged around keeping the
-reader threads busy, not the GPU.
+The GPU is not the constraint here today: it encodes at ~47 img/s against the
+~3.2 img/s the 100 Mbps link delivers. Everything below is arranged around
+keeping the reader threads busy, not the GPU -- but not on the assumption that
+they can never get ahead, because fixing the link (spec 1.2) is the point and
+would raise reads to ~32 img/s against a consumer that also writes two
+thumbnails per image. Hence the bounded reader window in `run`.
 """
 
 from __future__ import annotations
 
+import itertools
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import db, embed, images
 from . import paths as pathutil
+from .face_pass import rss_mb
 
 
 @dataclass
@@ -125,8 +131,29 @@ def run(con, cfg, *, limit: int | None = None, threads: int = 8,
             if progress:
                 progress(st)
 
-        for asset_id, tensor, wrote, err in pool.map(
-                lambda it: _prepare_one(it, encoder, cache_dir), todo):
+        # Bounded in-flight work, and the reason this is not `pool.map(...)`
+        # over the whole list: map submits every read immediately and holds
+        # each result -- a decoded 2048 px image's preprocessed tensor -- until
+        # the single consumer reaches it, with no ceiling on the backlog. That
+        # is what killed the stage 2 pass. Here the margin is currently wide
+        # (the GPU encodes at ~47 img/s against ~3.2 img/s of reading), but it
+        # is a margin the link speed happens to give us, not one this loop
+        # earns: the consumer also writes two thumbnails per image, and at
+        # gigabit the readers would deliver ~32 img/s into it. A window keeps
+        # the readers fed either way and memory flat.
+        window = max(threads * 4, 16)
+        stream = iter(todo)
+        inflight = deque(
+            pool.submit(_prepare_one, item, encoder, cache_dir)
+            for item in itertools.islice(stream, window))
+
+        while inflight:
+            asset_id, tensor, wrote, err = inflight.popleft().result()
+            nxt = next(stream, None)
+            if nxt is not None:
+                inflight.append(
+                    pool.submit(_prepare_one, nxt, encoder, cache_dir))
+
             if wrote:
                 st.thumbs += 1
             if err:
@@ -147,8 +174,11 @@ def run(con, cfg, *, limit: int | None = None, threads: int = 8,
 def render_progress(st: EmbedStats, stream=None) -> None:
     import sys
     stream = stream or sys.stderr
+    # Memory is on the line for the same reason as in stage 2: it is the
+    # one number that shows the reader window holding rather than merely
+    # being outrun by a slow link.
     stream.write(
         f"\r  embedded {st.done:>7,} / {st.considered:,}   "
         f"thumbs {st.thumbs:>7,}   failed {st.failed:>4,}   "
-        f"{st.rate:>5.1f} img/s   {st.elapsed:>5.0f}s")
+        f"{st.rate:>5.1f} img/s   {rss_mb():>6,.0f} MB   {st.elapsed:>5.0f}s")
     stream.flush()
