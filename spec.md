@@ -323,14 +323,48 @@ CREATE TABLE folders (
 -- Places form a tree, so "photographs in Finland" can mean everything beneath
 -- Finland without the user having to name its regions (§6.3).
 CREATE TABLE places (
-  id        INTEGER PRIMARY KEY,
-  parent_id INTEGER REFERENCES places(id),
-  kind      TEXT NOT NULL,          -- country | admin1 | admin2 | locality
-  name      TEXT NOT NULL,          -- "Helsinki"
-  path      TEXT NOT NULL UNIQUE,   -- "Finland/Uusimaa/Helsinki"
-  lat       REAL,                   -- representative point, for a map later
-  lon       REAL,
+  id         INTEGER PRIMARY KEY,
+  parent_id  INTEGER REFERENCES places(id),
+  kind       TEXT NOT NULL,          -- country | admin1 | admin2 | locality
+  name       TEXT NOT NULL,          -- "Helsinki"
+  path       TEXT NOT NULL UNIQUE,   -- "Finland/Uusimaa/Helsinki"
+  lat        REAL,                   -- representative point, for a map later
+  lon        REAL,
+  population INTEGER NOT NULL DEFAULT 0,  -- the gazetteer's own figure, or 0
+  rank_pop   INTEGER NOT NULL DEFAULT 0,  -- own population, or the sum inside
+  geonameid  INTEGER,
   UNIQUE (parent_id, name)
+);
+
+-- Every name a place answers to, normalised: casefolded, diacritics stripped.
+-- A match index and nothing else -- no original spelling is kept, because the
+-- display name is in `places.name` and what the user wrote is the folder
+-- label. `own` separates a place's own name from an exonym, which is what
+-- decides how much a match is trusted (§6.3).
+CREATE TABLE place_names (
+  place_id INTEGER NOT NULL REFERENCES places(id),
+  norm     TEXT NOT NULL,
+  own      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (place_id, norm)
+);
+
+-- What a folder label resolved to, one row per folder: a machine-made guess
+-- from a single word, kept where it can be looked at and thrown out.
+CREATE TABLE folder_places (
+  folder_id  INTEGER PRIMARY KEY REFERENCES folders(id),
+  place_id   INTEGER NOT NULL REFERENCES places(id),
+  label      TEXT NOT NULL,
+  candidates INTEGER NOT NULL,   -- how many places carried that name
+  matched_at INTEGER NOT NULL
+);
+
+-- A rejected match, permanent and surviving every re-run. A NULL place_id
+-- rejects the label outright rather than one reading of it.
+CREATE TABLE place_exceptions (
+  label_norm TEXT NOT NULL,
+  place_id   INTEGER REFERENCES places(id),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (label_norm, place_id)
 );
 
 -- Coordinates binned to ~1 km, so a coastline photographed fifty times is
@@ -600,7 +634,16 @@ infers a person from a folder name, and a Finnish genitive such as `Anskun` is n
 invertible in any case. The hint is stored against the folder so it survives re-scans.
 
 **Reverse geocoding.** Offline, from a bundled GeoNames extract. Coordinates are binned to ~1 km
-before lookup so results are cached in `places` and repeated lookups cost nothing.
+before lookup so results are cached in `geo_cache` and repeated lookups cost nothing (§6.3).
+
+**GPS is signed by a separate tag.** `EXIF:GPSLatitude` and `EXIF:GPSLongitude` are unsigned
+magnitudes; the hemisphere is in `GPSLatitudeRef` and `GPSLongitudeRef`, and exiftool's
+`Composite:GPS*` pair is the two combined. Reading the magnitude alone is silently wrong rather
+than obviously wrong — an unsigned coordinate is still a valid coordinate — and it filed every
+western photograph in this library at its eastern mirror image. Tenerife came out in the Libyan
+desert, Massachusetts in Kyrgyzstan. The sign is not recoverable from what was stored, so the
+repair is to re-read: `mediaidx meta` re-extracts metadata for every asset whose stage 1 row is
+behind the current version, headers only, at ~37 files/s against the ~3.2 of a hashing pass.
 
 ### 5.2 Stage 2 — Faces
 
@@ -724,45 +767,87 @@ rely entirely on time gaps and folder labels — which the 95% filename-date cov
 ### 6.3 Places (M4a)
 
 Runs entirely over the database. No file is read, no model runs, no network is
-touched. A full pass over 46,000 assets takes about a minute and can be repeated
+touched. A full pass over the library takes about ten seconds and can be repeated
 whenever the gazetteer or the matching rules change — which is why this milestone
 is scheduled independently of the expensive indexing passes.
 
-**Gazetteer.** A bundled GeoNames extract (`cities500` plus admin and country
-tables, ~50 MB) is loaded into `places` as a tree on first run. Alternate names are
-retained, which matters here: `Thaimaa` and `Lontoo` are how this library's owner
-names Thailand and London.
+**Gazetteer.** A GeoNames extract — `cities500` plus the admin and country tables,
+16 MB compressed and ~44 MB on disk — is loaded into `places` as a tree on first
+run. **Measured:** 285,144 places (252 countries, 51,450 regions, 233,442
+localities) and 1,147,379 names in 22 seconds, adding ~175 MB to the database.
+2,260 localities are dropped as same-named siblings under one parent, the most
+populous of each pair surviving.
+
+Alternate names are retained, which matters here: `Lontoo` and `Tukholma` are how
+this library's owner names London and Stockholm, and both arrive in the
+`cities500` alternate-name column at no extra cost. Only the normalised form is
+stored — the table is a match index, and keeping the original spelling of 1.1
+million names as well cost 60 MB and bought nothing.
 
 **Source 1 — coordinates.** GPS is binned to ~1 km and looked up against the
-gazetteer by nearest neighbour, then cached in `geo_cache`. `place_source = 'gps'`.
+gazetteer by nearest neighbour (a haversine ball tree over the localities), then
+cached in `geo_cache`. `place_source = 'gps'`. The query runs once per distinct
+bin, not once per photograph, so a week in one town costs a handful of lookups.
+
+*What a hit is allowed to claim.* The gazetteer holds points, not borders, so
+distance is the only evidence about whether the nearest town is really where a
+photograph was taken. Within **25 km** the locality is the answer; out to 100 km
+only its region is; beyond that only the country; past 500 km nothing is claimed.
+A photograph taken mid-Baltic belongs to no locality, and saying otherwise would
+be inventing precision the data does not contain.
 
 **Source 2 — folder labels.** A parsed folder label (§5.1) is matched against
 gazetteer names as a whole-token, case- and diacritic-insensitive comparison.
-`2019 07 Alicante` resolves to Alicante, Spain; `2001 01 Thaimaa` to Thailand.
-`place_source = 'folder'`.
+`2019 07 Alicante` resolves to Alicante, Spain. `place_source = 'folder'`, and the
+label is inherited by subfolders, so `2001 01 Thaimaa\skannatut` is placed by the
+folder above it.
 
 This is what extends place search to the first two decades of the archive, which
 have no GPS at all (§1.1). It is also the riskier source, so it is constrained:
 
 - Only labels matching a gazetteer entry **in full** are accepted; no substring or
   fuzzy matching. `Hennan rippijuhlat` matches nothing and is left alone.
-- Where a name is ambiguous (`Alicante` is both a city and a province) the more
-  populous entry wins, and the choice is recorded so it can be reviewed.
-- A folder-derived place is **coarse by construction**: no coordinates are invented,
-  and the UI labels it as coming from the folder name.
-- Any match can be rejected, which records a permanent exception.
+- **A place's own name counts at any size; an exonym has to be a place people talk
+  about.** Bad Ischl (1,914 people) is matched by its own name and accepted. A
+  match that exists only in the alternate-name column must clear a population
+  floor, default 50,000 — without it `Nina` resolves to Neenah, Wisconsin, and
+  `TBD` to Timbiquí, Colombia. Measured on the reference library, the floor is
+  what separates `Lontoo`, `Hampuri`, `Praha` and `Tallinna` from a village that
+  happens to be spelled like a Finnish given name.
+- Where a name is ambiguous the entry with the greater **`rank_pop`** wins, and
+  the number of candidates is recorded so an ambiguous match can be reviewed.
+  `rank_pop` is a place's own population or the sum of what is inside it, because
+  GeoNames gives a region no population at all: without it Florida the state
+  arrives as 0 and loses to Floridablanca, Colombia.
+- A folder-derived place is **coarse by construction**: no coordinates are
+  invented, and both the UI and the photograph's own page label it as coming from
+  the folder name.
+- Any match can be rejected in the Places view, which records a permanent
+  exception and re-runs the folder source. Coordinates are not touched by a
+  rejection — nothing about a wrong label changes what a receiver recorded.
 
 **Precedence.** GPS always wins over a folder label for the same asset. A folder
 label never overrides a coordinate, because the folder says where photographs were
 filed and the coordinate says where one was taken.
 
+**Reading it back.** `places.path` is a materialised path, so a place and
+everything beneath it is one prefix query: `Finland` means the whole country
+without anyone naming its regions (§7). Counts shown in the UI are counts of the
+whole subtree.
+
 **Expected coverage**, from the measured sample (§1.1):
 
 | Source | Share of library | Era |
 |---|---|---|
-| GPS | ~47% | 2010 onward, ~95% from 2016 |
-| Folder label | unmeasured; most named event folders | all years |
-| Neither | remainder | bare month folders before 2010 |
+| GPS | **51%** — 20,402 of 39,884, all placed | 2010 onward, ~95% from 2016 |
+| Folder label | **6%** — 2,428 more, from 35 of 165 labels | all years |
+| Neither | 43% | bare month folders before 2010 |
+
+**Measured, 2026-09-08:** 22,830 of 39,884 photographs placed (57%) across 39
+countries, in 11 seconds over 2,669 distinct 1 km bins. Of the 35 folder labels
+that matched, five are wrong and reviewable — `USA` lands on Concord, North
+Carolina, and `West Coast` on New Zealand — which is the reason every one of
+them is listed for rejection rather than merely counted.
 
 ### 6.4 Review queue construction
 
@@ -1151,7 +1236,7 @@ Required tests:
 | **M2** | Stage 3, thumbnails, search UI | **Free-text search over everything.** The first genuinely useful build. |
 | **M3a** | Stage 2: detection, embeddings, face crops | Every face in the library found and vectorised. **The only part of M3 that reads files** — the long pass. |
 | **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it is re-runnable whenever a threshold changes.** |
-| **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access, ~1 min over the whole library.** |
+| **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access; 22 s to load the gazetteer, 11 s to place the library.** |
 | **M4b** | Events, review queue | Unattended indexing plus a finite question queue. |
 | **M5** | Stage 4 captions | Descriptions and tags. |
 | **M6** | Video | See §12. |

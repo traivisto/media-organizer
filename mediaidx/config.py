@@ -62,6 +62,13 @@ DEFAULTS: dict = {
         "cluster_min_size": 4,
         "assign_threshold": 0.42,
     },
+    "places": {
+        # A folder label matching a place's *own* name is accepted whatever its
+        # size. One matching only an exonym has to clear this, because an
+        # exonym is evidence that people far away talk about the place --
+        # without the floor, `Nina` resolves to Neenah, Wisconsin (spec 6.3).
+        "exonym_min_population": 50_000,
+    },
     "tools": {
         "exiftool": "",  # empty means: find it on PATH
     },
@@ -82,7 +89,11 @@ class Config:
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
+    places: dict = field(default_factory=dict)
     tools: dict = field(default_factory=dict)
+    # Defaulted so that constructing a Config by hand -- which the tests do --
+    # does not have to know about a gazetteer to talk about faces.
+    gazetteer: Path = field(default_factory=lambda: _local_data_dir() / "gazetteer")
     source: Path | None = None
 
     @property
@@ -150,10 +161,12 @@ def load(path: str | os.PathLike | None = None) -> Config:
         database=Path(p.get("database", data / "photos.db")),
         thumbnails=Path(p.get("thumbnails", data / "thumbs")),
         logs=Path(p.get("logs", data / "logs")),
+        gazetteer=Path(p.get("gazetteer", data / "gazetteer")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
         scan=merged["scan"],
         models=merged["models"],
         faces=merged["faces"],
+        places=merged["places"],
         tools=merged["tools"],
         source=cfg_path if cfg_path.exists() else None,
     )

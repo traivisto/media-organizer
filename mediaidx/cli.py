@@ -193,11 +193,26 @@ def cmd_status(args) -> int:
     if missing:
         print(f"  missing          {missing:>10,}")
 
+    # Counted at the *current* version of each stage, not merely `done`: a
+    # stage whose logic has changed is pending again for every asset (spec
+    # 4.2), and a status line that called that finished would hide exactly the
+    # work someone needs to be told about.
+    from . import embed as embed_mod
+    from . import faces as faces_mod
+    versions = {"meta": pipeline.STAGE_VERSION,
+                "faces": faces_mod.STAGE_VERSION,
+                "embed": embed_mod.STAGE_VERSION,
+                "caption": 1}
     print("\nstages")
-    for stage in ("meta", "faces", "embed", "caption"):
-        done = one("SELECT COUNT(*) FROM stage_state WHERE stage=? AND status='done'", stage)
+    for stage, version in versions.items():
+        done = one("SELECT COUNT(*) FROM stage_state WHERE stage=? "
+                   "AND status='done' AND version >= ?", stage, version)
+        stale = one("SELECT COUNT(*) FROM stage_state WHERE stage=? "
+                    "AND status='done' AND version < ?", stage, version)
         pend = assets - done
         bar = "done" if pend == 0 and done else f"{pend:,} pending"
+        if stale:
+            bar += f"   ({stale:,} at an older version)"
         print(f"  {stage:<9} {done:>10,} done   {bar}")
 
     print("\ndates")
@@ -220,6 +235,24 @@ def cmd_status(args) -> int:
     gps = one("SELECT COUNT(*) FROM assets WHERE gps_lat IS NOT NULL")
     print(f"  gps   {gps:,} of {assets:,}"
           f"  ({100*gps/assets if assets else 0:.0f}%)")
+
+    has_places = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='places'").fetchone()
+    if has_places:
+        gaz = one("SELECT COUNT(*) FROM places")
+        print("\nplaces")
+        if not gaz:
+            print("  no gazetteer loaded   `mediaidx places --load`")
+        else:
+            placed = one("SELECT COUNT(*) FROM assets WHERE place_id IS NOT NULL")
+            by = {r["s"]: r["n"] for r in con.execute(
+                "SELECT place_source AS s, COUNT(*) AS n FROM assets "
+                "WHERE place_id IS NOT NULL GROUP BY s")}
+            print(f"  gazetteer        {gaz:>10,}   places")
+            print(f"  placed           {placed:>10,}"
+                  f"  ({100*placed/assets if assets else 0:.0f}%)"
+                  f"   {by.get('gps', 0):,} by coordinate,"
+                  f" {by.get('folder', 0):,} by folder")
 
     has_faces = con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='faces'").fetchone()
@@ -355,6 +388,102 @@ def cmd_faces_cluster(args) -> int:
         print(f"  names kept  {st.named:>9,}")
     print(f"  {st.elapsed:.0f}s")
     print("\n  `mediaidx serve`, then People, to name them")
+    return 0
+
+
+def cmd_meta(args) -> int:
+    from . import pipeline
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    todo = pipeline.pending_meta(con)
+    if not todo:
+        print("nothing pending -- every photograph's metadata is current")
+        return 0
+    print(f"{len(todo):,} photographs whose metadata predates the current "
+          f"stage version")
+    print("  headers only -- nothing is hashed and no image is decoded")
+    try:
+        st = pipeline.refresh_meta(con, cfg, limit=args.limit,
+                                   progress=pipeline.render_meta_progress)
+    except KeyboardInterrupt:
+        print("\n  interrupted -- committed chunks are kept; re-run to continue")
+        return 130
+
+    print(f"\n\n  re-read          {st.updated:>10,}")
+    if st.moved:
+        print(f"  coordinates moved{st.moved:>10,}   "
+              "`mediaidx places` to put them back on the map")
+    if st.failed:
+        print(f"  failed           {st.failed:>10,}   `mediaidx status --errors`")
+    print(f"  {st.rate:.1f} files/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_places(args) -> int:
+    from . import places
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    if args.rejected:
+        rows = con.execute(
+            "SELECT label_norm, place_path FROM place_exceptions "
+            "ORDER BY label_norm").fetchall()
+        if not rows:
+            print("nothing rejected")
+            return 0
+        for r in rows:
+            print(f"  {r['label_norm']:<28} "
+                  f"{r['place_path'] or 'never a place at all'}")
+        return 0
+
+    loaded = places.state(con)
+    if args.load or loaded is None:
+        gaz = cfg.gazetteer
+        if not gaz.exists():
+            print(f"no gazetteer at {gaz}\n\n"
+                  "  Download these four files from "
+                  "https://download.geonames.org/export/dump/ into that folder:\n"
+                  "    cities500.zip  admin1CodesASCII.txt  admin2Codes.txt  "
+                  "countryInfo.txt", file=sys.stderr)
+            return 1
+        print(f"loading the gazetteer from {gaz}")
+        g = places.load_gazetteer(con, gaz)
+        print(f"  countries   {g.countries:>9,}")
+        print(f"  regions     {g.admin1 + g.admin2:>9,}")
+        print(f"  localities  {g.localities:>9,}")
+        print(f"  names       {g.names:>9,}   {g.collisions:,} dropped as "
+              "same-named siblings")
+        print(f"  {g.elapsed:.0f}s\n")
+
+    st = places.run(con, cfg, progress=None)
+    con.commit()
+
+    total = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    print(f"  by coordinate    {st.gps_placed:>10,}   "
+          f"from {st.bins:,} distinct 1 km bins")
+    if st.gps_unplaced:
+        print(f"  coordinate lost  {st.gps_unplaced:>10,}   "
+              "nearest place is too far away to name")
+    print(f"  by folder label  {st.folder_placed:>10,}   "
+          f"{st.labels_matched:,} of {st.labels:,} labels matched")
+    print(f"  placed           {st.placed:>10,}   "
+          f"({100 * st.placed / total if total else 0:.0f}% of {total:,})")
+    print(f"  {st.elapsed:.0f}s")
+
+    rows = con.execute(
+        """SELECT fp.label, p.path, fp.candidates FROM folder_places fp
+             JOIN places p ON p.id = fp.place_id
+            GROUP BY fp.label ORDER BY fp.candidates DESC, fp.label LIMIT ?""",
+        (args.limit,)).fetchall()
+    if rows:
+        # Every folder match is a guess made from a word, so they are printed
+        # rather than merely counted -- ambiguous ones first.
+        print("\nfolder labels resolved (most ambiguous first)")
+        for r in rows:
+            note = f"   1 of {r['candidates']}" if r["candidates"] > 1 else ""
+            print(f"  {r['label']:<26} {r['path']}{note}")
+        print("\n  wrong ones: `mediaidx serve`, then Places, to reject one")
     return 0
 
 
@@ -585,6 +714,18 @@ def build_parser() -> argparse.ArgumentParser:
     fa.add_argument("--rebuild", action="store_true",
                     help="with `cluster`: recompute from scratch, preserving names")
     fa.set_defaults(func=cmd_faces)
+
+    m = sub.add_parser("meta", help="re-read metadata for photographs whose stage is behind")
+    m.add_argument("--limit", type=int, default=None)
+    m.set_defaults(func=cmd_meta)
+
+    pl = sub.add_parser("places", help="put photographs on the map, by coordinate and by folder")
+    pl.add_argument("--load", action="store_true",
+                    help="rebuild the gazetteer from the extract before matching")
+    pl.add_argument("--rejected", action="store_true",
+                    help="list the folder-label matches that were thrown out")
+    pl.add_argument("--limit", type=int, default=40)
+    pl.set_defaults(func=cmd_places)
 
     pe = sub.add_parser("people", help="who has been named, and how much of the library")
     pe.set_defaults(func=cmd_people)

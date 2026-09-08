@@ -23,6 +23,7 @@ from . import cluster
 from . import config as config_mod
 from . import db, embed, images
 from . import paths as pathutil
+from . import places as places_mod
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -97,12 +98,25 @@ nav a:hover {{ color:var(--accent); }}
 .cand img {{ width:56px; height:56px; border-radius:3px; object-fit:cover;
   background:var(--rule); }}
 .cand button {{ padding:6px 10px; font-size:12px; }}
+/* A place list is read down the column, not scanned like a grid of faces:
+   one line each, the count where the eye can compare them. */
+.rows {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; }}
+.rows a, .rows div.row {{ display:flex; gap:14px; align-items:baseline;
+  padding:7px 10px; border-bottom:1px solid var(--rule); }}
+.rows a:hover {{ background:var(--surface); }}
+.rows b {{ flex:1; font-weight:500; color:var(--ink); }}
+.rows span {{ color:var(--ink-3); font-size:12.5px; }}
+.rows form {{ display:inline; margin:0; }}
+.rows form button {{ padding:3px 9px; font-size:11.5px; }}
+.crumb {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; font-size:13px;
+  color:var(--ink-3); }}
+.crumb a {{ color:var(--accent); }}
 </style></head><body>
 <header><form action="/" method="get">
   <input type="search" name="q" value="{q}" placeholder="{placeholder}" autofocus>
   <button type="submit">Search</button>
 </form>
-<nav><a href="/">Photographs</a><a href="/people">People</a></nav></header>
+<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a></nav></header>
 {body}
 </body></html>"""
 
@@ -183,6 +197,61 @@ def create_app(cfg) -> FastAPI:
             if r["cover_hash"])
         return f'<div class="meta">People</div><div class="people">{chips}</div>'
 
+    def _like(prefix: str) -> str:
+        """A place name may contain % or _ -- Wilkes-Barre/Scranton does not,
+        but nothing says one cannot."""
+        return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def subtree_counts(con) -> dict:
+        """photographs in each place *and everything under it*.
+
+        Counted upwards from the places actually used, so this walks a few
+        thousand rows rather than the gazetteer's 285,000.
+        """
+        rows = con.execute(
+            """WITH RECURSIVE up(id, n) AS (
+                 SELECT place_id, COUNT(*) FROM assets
+                  WHERE place_id IS NOT NULL GROUP BY place_id
+                 UNION ALL
+                 SELECT p.parent_id, up.n FROM up JOIN places p ON p.id = up.id
+                  WHERE p.parent_id IS NOT NULL)
+               SELECT id, SUM(n) AS n FROM up GROUP BY id""").fetchall()
+        return {r["id"]: r["n"] for r in rows}
+
+    def place_photos(con, path: str, limit: int):
+        esc = _like(path)
+        return con.execute(
+            """SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
+                      a.camera_model
+                 FROM assets a JOIN places p ON p.id = a.place_id
+                WHERE p.path = ? OR p.path LIKE ? ESCAPE '\\'
+                ORDER BY a.taken_at DESC LIMIT ?""",
+            (path, esc + "/%", limit)).fetchall()
+
+    def places_matching(con, q: str) -> str:
+        """Places whose name the query mentions.
+
+        Same reasoning as the people strip: a place name is not *in* the
+        photograph either, so the model cannot find it and the gazetteer has
+        to be asked directly. `Alicante` shows the place; `Alicante beach`
+        still ranks beaches.
+        """
+        needle = q.strip()
+        if not needle or not con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='places'").fetchone():
+            return ""
+        counts = subtree_counts(con)
+        rows = [r for r in places_mod.lookup(con, needle, limit=8)
+                if counts.get(r["id"])]
+        if not rows:
+            return ""
+        chips = "".join(
+            f'<a href="/place/{r["id"]}" class="person" style="padding:8px 14px">'
+            f'<span><b>{html.escape(r["name"])}</b><br>'
+            f'{counts[r["id"]]:,} photographs</span></a>' for r in rows[:6])
+        return f'<div class="meta">Places</div><div class="people">{chips}</div>'
+
     @app.get("/", response_class=HTMLResponse)
     def home(q: str = Query(default=""), limit: int = 120):
         con = connect()
@@ -205,7 +274,7 @@ def create_app(cfg) -> FastAPI:
                 title="Kuva-arkisto", q="", body=body,
                 placeholder="kids on a beach at sunset"))
 
-        people = people_matching(con, q)
+        people = people_matching(con, q) + places_matching(con, q)
 
         # "Tommi and Emmi" is a question about a pair, not about either of
         # them. If the query names more than one person, the photographs they
@@ -296,6 +365,7 @@ def create_app(cfg) -> FastAPI:
             row("camera", " ".join(filter(None, [a["camera_make"], a["camera_model"]]))),
             row("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
             row("gps", gps),
+            _place_row(con, a),
             row("source", a["source_hint"]),
             row("conflict", a["conflict_note"]),
             row("hash", a["content_hash"][:24] + "..."),
@@ -337,6 +407,148 @@ def create_app(cfg) -> FastAPI:
         return HTMLResponse(PAGE.format(
             title=f"{when} — Kuva-arkisto", q="", body=body,
             placeholder="kids on a beach at sunset"))
+
+    def _place_row(con, a) -> str:
+        """Where this was taken, and -- always -- on what evidence.
+
+        A coordinate and a folder name are not the same kind of claim, and the
+        page says which one it is rather than letting a guess look like a
+        measurement.
+        """
+        if not a["place_id"]:
+            return ""
+        p = con.execute("SELECT id, name, path FROM places WHERE id = ?",
+                        (a["place_id"],)).fetchone()
+        if p is None:
+            return ""
+        where = " · ".join(reversed(p["path"].split("/")))
+        note = ("from the coordinate" if a["place_source"] == "gps"
+                else "from the folder name")
+        return ('<tr><td style="color:var(--ink-3);padding:3px 16px 3px 0">place</td>'
+                f'<td><a href="/place/{p["id"]}" style="color:var(--accent)">'
+                f'{html.escape(where)}</a> '
+                f'<span style="color:var(--ink-3)">&mdash; {note}</span></td></tr>')
+
+    # ----------------------------------------------------------------------
+    # Places
+    # ----------------------------------------------------------------------
+
+    @app.get("/places", response_class=HTMLResponse)
+    def places_view():
+        con = connect()
+        if not con.execute("SELECT COUNT(*) FROM places").fetchone()[0]:
+            return page("Places — Kuva-arkisto",
+                        '<div class="empty"><p>No gazetteer loaded.</p>'
+                        '<p><code>mediaidx places --load</code></p></div>')
+        counts = subtree_counts(con)
+        rows = [r for r in con.execute(
+            "SELECT id, name FROM places WHERE kind = 'country' ORDER BY name")
+            if counts.get(r["id"])]
+        placed = con.execute(
+            "SELECT COUNT(*) FROM assets WHERE place_id IS NOT NULL").fetchone()[0]
+        total = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        if not rows:
+            return page("Places — Kuva-arkisto",
+                        '<div class="empty"><p>Nothing placed yet.</p>'
+                        '<p><code>mediaidx places</code></p></div>')
+
+        listing = "".join(
+            f'<a href="/place/{r["id"]}"><b>{html.escape(r["name"])}</b>'
+            f'<span>{counts[r["id"]]:,}</span></a>'
+            for r in sorted(rows, key=lambda r: -counts[r["id"]]))
+        body = [f'<div class="meta">{placed:,} of {total:,} photographs placed '
+                f'&middot; {len(rows)} countries</div>',
+                f'<div class="rows">{listing}</div>',
+                _folder_review(con)]
+        return page("Places — Kuva-arkisto", "".join(body))
+
+    def _folder_review(con) -> str:
+        """Every match made from a folder name, offered for rejection.
+
+        These are guesses made from a single word, and the ambiguous ones come
+        first: `1 of 16` means fifteen other places carry that name.
+        """
+        rows = con.execute(
+            """SELECT fp.label, fp.candidates, p.id, p.path,
+                      COUNT(a.id) AS n
+                 FROM folder_places fp
+                 JOIN places p ON p.id = fp.place_id
+                 LEFT JOIN files f ON f.folder_id = fp.folder_id
+                 LEFT JOIN assets a ON a.id = f.asset_id
+                                   AND a.place_source = 'folder'
+                GROUP BY fp.folder_id
+                ORDER BY fp.candidates DESC, n DESC""").fetchall()
+        if not rows:
+            return ""
+        seen, listing = set(), []
+        for r in rows:
+            if (r["label"], r["id"]) in seen:
+                continue
+            seen.add((r["label"], r["id"]))
+            amb = (f'1 of {r["candidates"]}' if r["candidates"] > 1 else "only match")
+            listing.append(
+                '<div class="row">'
+                f'<b>{html.escape(r["label"])}</b>'
+                f'<span style="flex:2"><a href="/place/{r["id"]}" '
+                f'style="color:var(--accent)">{html.escape(r["path"])}</a></span>'
+                f'<span>{amb}</span>'
+                f'<form method="post" action="/place/reject">'
+                f'<input type="hidden" name="label" value="{html.escape(r["label"])}">'
+                f'<input type="hidden" name="place_id" value="{r["id"]}">'
+                f'<button class="ghost" type="submit">Not this place</button>'
+                '</form></div>')
+        return ('<div class="meta" style="padding-top:26px">From folder names '
+                '&mdash; a guess made from one word, most ambiguous first. '
+                'Rejecting one is permanent and re-runs the match.</div>'
+                f'<div class="rows">{"".join(listing)}</div>')
+
+    @app.post("/place/reject")
+    def place_reject(label: str = Form(...), place_id: int = Form(...)):
+        con = connect()
+        places_mod.reject(con, label, place_id)
+        places_mod.rematch_folders(con, cfg)
+        con.commit()
+        return RedirectResponse("/places", status_code=303)
+
+    @app.get("/place/{place_id}", response_class=HTMLResponse)
+    def place_view(place_id: int, limit: int = 240):
+        con = connect()
+        p = con.execute("SELECT * FROM places WHERE id = ?",
+                        (place_id,)).fetchone()
+        if p is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        counts = subtree_counts(con)
+
+        crumbs, node = [], p
+        while node is not None:
+            crumbs.append(f'<a href="/place/{node["id"]}">'
+                          f'{html.escape(node["name"])}</a>')
+            node = con.execute("SELECT * FROM places WHERE id = ?",
+                               (node["parent_id"],)).fetchone()                 if node["parent_id"] else None
+        crumb = ('<div class="crumb">'
+                 + " / ".join(reversed(crumbs)) + "</div>")
+
+        children = [r for r in con.execute(
+            "SELECT id, name FROM places WHERE parent_id = ? ORDER BY name",
+            (place_id,)) if counts.get(r["id"])]
+        listing = ""
+        if children:
+            listing = ('<div class="meta">Within</div><div class="rows">'
+                       + "".join(
+                           f'<a href="/place/{c["id"]}"><b>{html.escape(c["name"])}'
+                           f'</b><span>{counts[c["id"]]:,}</span></a>'
+                           for c in sorted(children, key=lambda c: -counts[c["id"]]))
+                       + "</div>")
+
+        rows = place_photos(con, p["path"], limit)
+        total = counts.get(place_id, 0)
+        # The count is the count of the whole subtree; the grid is one page of
+        # it. Saying so beats letting the two numbers quietly disagree.
+        shown = "" if len(rows) >= total else f' &middot; showing {len(rows):,}'
+        grid = (f'<div class="meta">{total:,} photographs in '
+                f'{html.escape(p["name"])} and everything within it{shown}</div>'
+                f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+        return page(f'{p["name"]} — Kuva-arkisto', crumb + listing + grid)
 
     # ----------------------------------------------------------------------
     # People

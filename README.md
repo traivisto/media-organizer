@@ -7,7 +7,8 @@ Full design: [spec.md](spec.md).
 
 ## Status
 
-**M3 complete** — the library is searchable by free text, and by who is in the photograph.
+**M4a complete** — the library is searchable by free text, by who is in the
+photograph, and by where it was taken.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -15,13 +16,45 @@ Full design: [spec.md](spec.md).
 | M2 | Search vectors, thumbnails, search UI | **done** |
 | M3a | Faces: detection, embeddings, face crops | **done** |
 | M3b | Clustering, naming, people UI | **done** |
-| M4 | Events, places, review queue | |
+| M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
+| M4b | Events, review queue | |
 | M5 | Captions | |
 | M6 | Video | deferred |
 
 M3 is split because only M3a reads files. Clustering and the people UI work
 entirely from the database and the local face crops, so they can be re-run as
 often as a threshold needs changing without touching the NAS again.
+
+## Places
+
+`mediaidx places` puts photographs on the map from two sources, and never
+pretends they are the same kind of evidence.
+
+A **coordinate** is looked up against an offline GeoNames extract — no request
+leaves the machine — binned to about a kilometre so a week in one town costs a
+handful of lookups. How much a hit may claim depends on how far away the nearest
+town is: the town itself within 25 km, only the region out to 100, only the
+country beyond that, and nothing at all past 500. The gazetteer holds points, not
+borders, and a photograph taken mid-Baltic is in no municipality.
+
+A **folder name** covers the two decades of the archive that have no GPS at all.
+`2019 07 Alicante` places its photographs in Alicante; `Hennan rippijuhlat`
+matches nothing and is left alone, because only a label matching a gazetteer name
+in full is ever accepted. Alternate names are what make this work in Finnish:
+`Lontoo` and `Tukholma` are in the gazetteer as names of London and Stockholm.
+
+Those matches are guesses made from a single word, so the Places view lists every
+one of them, most ambiguous first, with the number of places that carried the
+name — and one click rejects it for good. A guess is never allowed to look like a
+measurement: the photograph's own page says *from the coordinate* or *from the
+folder name*, every time.
+
+A place means everything inside it. `Finland` finds photographs filed under
+Helsinki without anyone naming a single region.
+
+Measured on the reference library: 22,830 of 39,884 photographs placed across 39
+countries in 11 seconds — 20,402 by coordinate and 2,428 more from 35 folder
+labels, of which five are wrong and waiting to be rejected.
 
 ## People
 
@@ -54,8 +87,12 @@ If PowerShell refuses to run it, allow scripts for that window only with
 `Set-ExecutionPolicy -Scope Process Bypass`.
 
 It installs uv, a private Python 3.12 (your system Python is untouched), PyTorch
-with CUDA, ExifTool, and writes `~\.mediaidx\config.toml`. Budget a few minutes:
-the CUDA wheels are about 2.5 GB.
+with CUDA, ExifTool, the GeoNames extract behind place search, and writes
+`~\.mediaidx\config.toml`. Budget a few minutes: the CUDA wheels are about 2.5 GB.
+
+The gazetteer is the only reference data downloaded, ~16 MB, and the only reason
+the application ever reaches the network after setup. Geocoding itself is
+entirely offline: no coordinate from your archive is ever sent anywhere.
 
 Everything lives in `C:\Users\<you>\.mediaidx` — database, thumbnail cache, logs
 and the virtual environment.
@@ -116,6 +153,10 @@ mediaidx faces --limit 200            try it on a slice first
 mediaidx faces cluster                group the faces into people
 mediaidx faces cluster --rebuild      recompute from scratch, keeping names
 mediaidx people                       who is named, and how much of the library
+mediaidx places                       put photographs on the map
+mediaidx places --load                rebuild the gazetteer from the extract first
+mediaidx places --rejected            the folder matches you threw out
+mediaidx meta                         re-read metadata whose stage version is behind
 mediaidx search "a phrase"            free-text search from the terminal
 mediaidx serve                        the local UI, http://localhost:8710
 ```
@@ -145,11 +186,11 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-124 tests covering date resolution, filename and folder parsing, the sanity bounds
-that stop a serial number being read as a date, scope containment, the read-only
-guarantee, face storage and crop geometry, clustering, naming, merging and
-searching by person, and the separation between shipped defaults and
-library-specific configuration.
+180 tests covering date resolution, filename and folder parsing, the sanity bounds
+that stop a serial number being read as a date, GPS hemispheres, scope
+containment, the read-only guarantee, face storage and crop geometry, clustering,
+naming, merging and searching by person, the gazetteer and both ways into it, and
+the separation between shipped defaults and library-specific configuration.
 
 The face *model* is not exercised there — it needs a GPU, 300 MB of weights and a
 photograph of a real person. `mediaidx doctor` covers that end instead, and it

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS assets (
   source_hint        TEXT,
   gps_lat            REAL,
   gps_lon            REAL,
+  place_id           INTEGER REFERENCES places(id),
+  place_source       TEXT,               -- gps | folder; never presented as equal
   camera_make        TEXT,
   camera_model       TEXT,
   lens               TEXT,
@@ -119,6 +121,85 @@ CREATE TABLE IF NOT EXISTS faces (
   UNIQUE (asset_id, idx)
 );
 
+-- Places form a tree, so "photographs in Finland" can mean everything beneath
+-- Finland without the user having to name its regions (spec 6.3).
+CREATE TABLE IF NOT EXISTS places (
+  id         INTEGER PRIMARY KEY,
+  parent_id  INTEGER REFERENCES places(id),
+  kind       TEXT NOT NULL,          -- country | admin1 | admin2 | locality
+  name       TEXT NOT NULL,
+  path       TEXT NOT NULL UNIQUE,   -- "Finland/Uusimaa/Helsinki"
+  lat        REAL,                   -- representative point, for a map later
+  lon        REAL,
+  population INTEGER NOT NULL DEFAULT 0,   -- the gazetteer's own figure, or 0
+  rank_pop   INTEGER NOT NULL DEFAULT 0,   -- see below; how ambiguity is resolved
+  geonameid  INTEGER,
+  UNIQUE (parent_id, name)
+);
+
+-- Every name a place answers to, which is the point of using a gazetteer at
+-- all: this library's owner writes `Lontoo` and `Tukholma`, not London and
+-- Stockholm. This is a match index and holds only the match key -- casefolded,
+-- diacritics stripped. Nothing displays from here: the place's own name is in
+-- `places.name`, and what the user wrote is in the folder label. Storing the
+-- original spelling of all 1.1 million alternate names as well cost 60 MB and
+-- bought nothing.
+CREATE TABLE IF NOT EXISTS place_names (
+  place_id INTEGER NOT NULL REFERENCES places(id),
+  norm     TEXT NOT NULL,
+  own      INTEGER NOT NULL DEFAULT 0,  -- the place's own name, not an exonym
+  PRIMARY KEY (place_id, norm)
+);
+
+-- What a folder label resolved to, one row per folder, kept so every
+-- machine-made guess can be looked at and thrown out. `candidates` is how many
+-- places carried the name, so a 1 is a certainty and a 40 is a coin toss.
+CREATE TABLE IF NOT EXISTS folder_places (
+  folder_id  INTEGER PRIMARY KEY REFERENCES folders(id),
+  place_id   INTEGER NOT NULL REFERENCES places(id),
+  label      TEXT NOT NULL,
+  candidates INTEGER NOT NULL,
+  matched_at INTEGER NOT NULL
+);
+
+-- Coordinates binned to ~1 km, so a coastline photographed fifty times is
+-- geocoded once. This is a cache and may be deleted at any time.
+CREATE TABLE IF NOT EXISTS geo_cache (
+  lat_bin  REAL NOT NULL,
+  lon_bin  REAL NOT NULL,
+  place_id INTEGER REFERENCES places(id),
+  PRIMARY KEY (lat_bin, lon_bin)
+);
+
+-- A rejected folder-label match, kept so the same wrong answer is never
+-- proposed twice. An empty place_path rejects the label outright rather than
+-- one reading of it.
+--
+-- Keyed by path and not by place_id, because a place's id is assigned while
+-- the gazetteer is being loaded and every id changes when it is reloaded. A
+-- rejection stored by id would come back pointing at an unrelated town.
+CREATE TABLE IF NOT EXISTS place_exceptions (
+  label_norm TEXT NOT NULL,
+  place_path TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (label_norm, place_path)
+);
+
+-- What the loaded gazetteer is, so a changed extract or changed loading rules
+-- can be told from a merely absent one.
+CREATE TABLE IF NOT EXISTS gazetteer_state (
+  version   INTEGER NOT NULL,
+  loaded_at INTEGER NOT NULL,
+  places    INTEGER NOT NULL,
+  names     INTEGER NOT NULL,
+  source    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_places_path   ON places(path);
+CREATE INDEX IF NOT EXISTS idx_places_name   ON places(name);
+CREATE INDEX IF NOT EXISTS idx_places_parent ON places(parent_id);
+CREATE INDEX IF NOT EXISTS idx_place_names   ON place_names(norm);
+
 CREATE INDEX IF NOT EXISTS idx_faces_asset   ON faces(asset_id);
 CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_faces_person  ON faces(person_id);
@@ -146,13 +227,43 @@ def connect(db_path: str | Path, *, create: bool = True) -> sqlite3.Connection:
     return con
 
 
+# Indexes over columns that arrive by ALTER TABLE, so they cannot be created
+# until the columns exist on an already-populated database.
+LATE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_assets_place ON assets(place_id);
+"""
+
+
 def migrate(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
+    _add_missing_columns(con)
+    con.executescript(LATE_INDEXES)
     row = con.execute("SELECT version FROM schema_version").fetchone()
     if row is None:
         con.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
     elif row["version"] < SCHEMA_VERSION:
         con.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+
+# New tables arrive by `CREATE TABLE IF NOT EXISTS` above, but a new *column*
+# on a table that already exists does not -- and the reference library's
+# database is 40,000 assets and many hours of GPU work, so it is migrated in
+# place rather than rebuilt. Each entry is checked against the live table, so
+# running this on a fresh database is a no-op.
+ADDED_COLUMNS = {
+    "assets": [
+        ("place_id", "INTEGER REFERENCES places(id)"),
+        ("place_source", "TEXT"),
+    ],
+}
+
+
+def _add_missing_columns(con: sqlite3.Connection) -> None:
+    for table, columns in ADDED_COLUMNS.items():
+        have = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns:
+            if name not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 # --------------------------------------------------------------------------

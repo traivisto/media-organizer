@@ -17,7 +17,12 @@ import exiftool
 TAGS = (
     "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:ModifyDate",
     "EXIF:Make", "EXIF:Model", "EXIF:LensModel",
+    # The signed pair is `Composite:*`, which exiftool computes by applying the
+    # N/S/E/W reference. `EXIF:GPSLongitude` on its own is unsigned, and taking
+    # it at face value puts every western coordinate in the wrong hemisphere.
     "EXIF:GPSLatitude", "EXIF:GPSLongitude",
+    "EXIF:GPSLatitudeRef", "EXIF:GPSLongitudeRef",
+    "Composite:GPSLatitude", "Composite:GPSLongitude",
     "EXIF:Orientation", "EXIF:ISO", "EXIF:FNumber",
     "EXIF:ExposureTime", "EXIF:FocalLength",
     "File:ImageWidth", "File:ImageHeight", "File:FileType",
@@ -96,12 +101,33 @@ def to_fields(m: dict) -> dict:
         v = num(key)
         return int(v) if v is not None else None
 
+    def gps(axis: str, negative: str):
+        """Signed degrees, from whichever of the two forms the file carries.
+
+        A photograph of Adeje on Tenerife stores GPSLongitude 16.777 with
+        GPSLongitudeRef `W`. Read without the reference it is 16.777 East,
+        which is the Libyan desert -- and nothing downstream can tell, because
+        an unsigned coordinate is still a perfectly plausible coordinate.
+        """
+        v = num("Composite:GPS" + axis)
+        if v is not None:
+            return v
+        v = num("EXIF:GPS" + axis)
+        if v is None:
+            return None
+        ref = str(m.get("EXIF:GPS" + axis + "Ref") or "").strip().upper()[:1]
+        if ref == negative:
+            return -abs(v)
+        if ref:
+            return abs(v)
+        return v            # no reference at all: trust the sign it was given
+
     return {
         "width": integer("File:ImageWidth"),
         "height": integer("File:ImageHeight"),
         "orientation": integer("EXIF:Orientation"),
-        "gps_lat": num("EXIF:GPSLatitude"),
-        "gps_lon": num("EXIF:GPSLongitude"),
+        "gps_lat": gps("Latitude", "S"),
+        "gps_lon": gps("Longitude", "W"),
         "camera_make": m.get("EXIF:Make") or None,
         "camera_model": m.get("EXIF:Model") or None,
         "lens": m.get("EXIF:LensModel") or None,

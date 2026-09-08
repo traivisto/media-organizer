@@ -24,7 +24,10 @@ from . import db, dates, exif, walker
 from . import paths as pathutil
 
 STAGE = "meta"
-STAGE_VERSION = 1
+# 2: GPS was read without its N/S/E/W reference, so every western longitude was
+# stored as its eastern mirror image. The coordinates on disk cannot be
+# repaired -- the sign is not in them -- so the stage goes pending again.
+STAGE_VERSION = 2
 READ_BLOCK = 1 << 20
 
 
@@ -239,4 +242,137 @@ def render_progress(st: Stats, stream=sys.stderr) -> None:
         f"skip {st.skipped:>7,}  {st.mb_per_s:>6.1f} MB/s  "
         f"{st.elapsed:>5.0f}s"
     )
+    stream.flush()
+
+
+# --------------------------------------------------------------------------
+# Re-reading metadata for assets that already exist
+# --------------------------------------------------------------------------
+#
+# `scan` skips a file whose size and mtime are unchanged, and extracts metadata
+# only for content it has never seen. That is what makes a re-scan cheap, and
+# it also means a bumped STAGE_VERSION does nothing on its own: the files are
+# unchanged, so nothing is re-read, and stage 1's version number was decorative
+# until this existed.
+#
+# The cost is not the same cost. Hashing reads the whole file at ~3.2 files/s
+# over this link; exiftool reads headers at ~37. So the repair is its own pass
+# rather than a forced re-scan: 18 minutes over the whole library instead of
+# three and a half hours, and no file is hashed to prove what is already known.
+
+@dataclass
+class MetaStats:
+    considered: int = 0
+    updated: int = 0
+    moved: int = 0          # coordinates that actually changed
+    failed: int = 0
+    started: float = field(default_factory=time.time)
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self.started
+
+    @property
+    def rate(self) -> float:
+        e = self.elapsed
+        return self.updated / e if e > 0 else 0.0
+
+
+# What a re-read is allowed to touch: the columns that come straight off the
+# file. Dates are deliberately absent -- they are resolved from the filename and
+# the folder as well as from EXIF (spec 5.1), and a metadata refresh has no
+# business relitigating them.
+REFRESHED = ("width", "height", "orientation", "gps_lat", "gps_lon",
+             "camera_make", "camera_model", "lens", "iso", "f_number",
+             "exposure_time", "focal_length")
+
+
+def pending_meta(con, version: int = STAGE_VERSION,
+                 limit: int | None = None) -> list[tuple[int, str]]:
+    """(asset_id, path) for assets whose stage 1 row is behind the version."""
+    sql = """
+        SELECT a.id, MIN(f.path) AS path
+        FROM assets a
+        JOIN files f ON f.asset_id = a.id AND f.missing_since IS NULL
+        LEFT JOIN stage_state s
+               ON s.asset_id = a.id AND s.stage = ? AND s.version >= ?
+        WHERE s.asset_id IS NULL
+        GROUP BY a.id
+        ORDER BY a.id
+    """
+    args: list = [STAGE, version]
+    if limit:
+        sql += " LIMIT ?"
+        args.append(limit)
+    return [(r["id"], r["path"]) for r in con.execute(sql, args)]
+
+
+def refresh_meta(con, cfg, *, limit: int | None = None,
+                 progress=None) -> MetaStats:
+    exe = exif.find_exiftool(cfg.tools.get("exiftool", ""))
+    if not exe:
+        raise SystemExit("exiftool not found -- `mediaidx doctor`")
+
+    st = MetaStats()
+    todo = pending_meta(con, limit=limit)
+    st.considered = len(todo)
+    if not todo:
+        return st
+
+    now = int(time.time())
+    chunk_size = int(cfg.scan.get("chunk_size", 256))
+    with exif.Exif(exe) as et:
+        for i in range(0, len(todo), chunk_size):
+            chunk = todo[i:i + chunk_size]
+            by_path = {pathutil.long_path(p): aid for aid, p in chunk}
+            meta = et.batch(list(by_path))
+
+            con.execute("BEGIN")
+            try:
+                for long, asset_id in by_path.items():
+                    m = meta.get(long)
+                    if not m:
+                        st.failed += 1
+                        db.set_stage(con, asset_id, STAGE, STAGE_VERSION,
+                                     "failed", now, "metadata re-read failed")
+                        continue
+                    fields = exif.to_fields(m)
+                    before = con.execute(
+                        "SELECT gps_lat, gps_lon FROM assets WHERE id = ?",
+                        (asset_id,)).fetchone()
+                    # A value the file no longer carries is left alone rather
+                    # than blanked: for ~7% of this library the camera make
+                    # comes from the filename, not from EXIF (spec 5.1), and a
+                    # re-read must not throw that away.
+                    sets = {k: v for k, v in fields.items()
+                            if k in REFRESHED and v is not None}
+                    if sets:
+                        con.execute(
+                            "UPDATE assets SET "
+                            + ",".join(f"{k}=?" for k in sets)
+                            + " WHERE id = ?",
+                            [*sets.values(), asset_id])
+                    if (sets.get("gps_lat"), sets.get("gps_lon")) != \
+                            (before["gps_lat"], before["gps_lon"]) and \
+                            sets.get("gps_lat") is not None:
+                        st.moved += 1
+                    db.set_stage(con, asset_id, STAGE, STAGE_VERSION,
+                                 "done", now)
+                    st.updated += 1
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+            if progress:
+                progress(st)
+    con.commit()
+    return st
+
+
+def render_meta_progress(st: MetaStats, stream=None) -> None:
+    stream = stream or sys.stderr
+    stream.write(
+        f"\r  re-read {st.updated:>7,} / {st.considered:,}   "
+        f"moved {st.moved:>6,}   failed {st.failed:>4,}   "
+        f"{st.rate:>5.1f} files/s   {st.elapsed:>5.0f}s")
     stream.flush()

@@ -148,6 +148,30 @@ if ($null -eq $exifPath) {
 }
 Ok $exifPath
 
+# --- gazetteer ------------------------------------------------------------
+# Four files, ~16 MB compressed, from GeoNames. This is the only reference data
+# the application needs and the only reason it ever touches the network after
+# setup -- reverse geocoding itself is entirely offline (spec 6.3).
+Step "Gazetteer"
+$gaz = "$Root\gazetteer"
+New-Item -ItemType Directory -Force $gaz | Out-Null
+$want = @("cities500.zip", "admin1CodesASCII.txt", "admin2Codes.txt", "countryInfo.txt")
+$missing = $want | Where-Object { -not (Test-Path (Join-Path $gaz $_)) }
+if ($missing.Count -eq 0) {
+    Ok "$gaz (already present)"
+} else {
+    foreach ($f in $missing) {
+        try {
+            Invoke-WebRequest -UseBasicParsing `
+                -Uri "https://download.geonames.org/export/dump/$f" `
+                -OutFile (Join-Path $gaz $f)
+        } catch {
+            Warn "could not download $f -- run ``mediaidx places --load`` after fetching it by hand"
+        }
+    }
+    Ok $gaz
+}
+
 # --- configuration --------------------------------------------------------
 Step "Configuration"
 $cfg = "$Root\config.toml"
@@ -166,6 +190,8 @@ if (Test-Path $cfg) {
 database   = "$($Root -replace '\\','/')/photos.db"
 thumbnails = "$($Root -replace '\\','/')/thumbs"
 logs       = "$($Root -replace '\\','/')/logs"
+# The GeoNames extract behind place search. Reloaded with ``mediaidx places --load``.
+gazetteer  = "$($Root -replace '\\','/')/gazetteer"
 
 # The only irreplaceable data the system produces, so this one does belong
 # in OneDrive where it is backed up for free.
