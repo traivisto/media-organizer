@@ -382,10 +382,12 @@ CREATE INDEX idx_places_name ON places(name);
 CREATE TABLE events (
   id          INTEGER PRIMARY KEY,
   name        TEXT,
-  name_source TEXT,         -- folder | user | auto
+  name_source TEXT,         -- folder | user
   start_at    INTEGER NOT NULL,
   end_at      INTEGER NOT NULL,
   place_id    INTEGER REFERENCES places(id),
+  folder_id   INTEGER REFERENCES folders(id),
+  anchor_id   INTEGER REFERENCES assets(id),   -- its first photograph
   asset_count INTEGER NOT NULL
 );
 
@@ -394,7 +396,34 @@ CREATE TABLE event_assets (
   asset_id INTEGER NOT NULL REFERENCES assets(id),
   PRIMARY KEY (event_id, asset_id)
 );
+
+-- A name somebody typed, and a decision never to be asked again.
+CREATE TABLE event_names (
+  anchor_id  INTEGER PRIMARY KEY REFERENCES assets(id),
+  name       TEXT,
+  dismissed  INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- "This is not one event": a photograph that begins a new one whatever the
+-- clock says.
+CREATE TABLE event_cuts (
+  asset_id   INTEGER PRIMARY KEY REFERENCES assets(id),
+  created_at INTEGER NOT NULL
+);
 ```
+
+**Every event is rebuilt from scratch on each `derive`, so no id here is
+stable and nothing a person decided may be stored on one.** A typed name lives
+in `event_names` and a split in `event_cuts`, both keyed by a *photograph* —
+which is a fact about the archive and survives every rebuild. This is the same
+reasoning that keys a rejected place by its path rather than by a gazetteer id
+(§6.3): an id assigned during a rebuild comes back pointing at a different
+fortnight.
+
+The anchor is the event's earliest photograph. If the grouping later changes so
+that photograph starts a shorter event, the name follows it there — the right
+half of a split to keep it on, and visible either way.
 
 ### 4.4 Faces and people
 
@@ -482,11 +511,17 @@ CREATE TABLE review_queue (
   priority    INTEGER NOT NULL,  -- affected asset count; queue is ordered by this desc
   suggestion  TEXT,              -- proposed name
   rationale   TEXT,              -- why it was proposed, shown to the user
-  status      TEXT NOT NULL,     -- open | answered | skipped | dismissed
-  skipped_at  INTEGER,           -- skipped items return after the next derive run
-  answered_at INTEGER
+  status      TEXT NOT NULL,     -- open | skipped
+  skipped_at  INTEGER            -- skipped items return after the next derive run
 );
 ```
+
+The queue is rebuilt with the events and so holds no decisions either. There is
+no `answered` or `dismissed` state to store, because an answered question has
+produced a name and a dismissed one a row in `event_names`; both are read back
+from there, and a row that is neither is simply gone. `skipped` is the one
+status worth keeping, and only until the next `derive` — which is precisely
+what skipping means.
 
 ### 4.7 Storage budget
 
@@ -748,21 +783,57 @@ on a real library and is entirely an issue for tests, which must seed several gr
 clusters — children especially, whose embeddings drift substantially with age. The review UI must
 make merging two clusters a single action, and the data model must allow many clusters per person.
 
-### 6.2 Event detection
+### 6.2 Event detection (M4b)
+
+Runs entirely over the database, like places and clustering: no file is read, no
+model runs, no network is touched. **Measured: the whole of `derive` — places,
+events and the queue over 39,884 photographs — is 2.3 seconds**, which is why it
+is re-run rather than incrementally maintained.
 
 Assets are grouped by:
 
 1. **Folder first.** A folder with a parsed label (`2019 07 Alicante`) is authoritative — it
-   becomes an event with `name_source = folder`, and no question is queued.
+   becomes an event with `name_source = folder`, and no question is queued. The label is
+   inherited down its subtree, so `2001 01 Thaimaa\skannatut` is part of the same trip —
+   the same inheritance rule places uses (§6.3).
 2. **Time and place otherwise.** Within a bare month folder, assets are split at gaps exceeding
    4 hours, then further split when GPS positions separate by more than 25 km. Both thresholds are
    configurable.
 3. **Minimum size.** Groups below 5 assets are not promoted to events and never enter the queue.
+   **A labelled folder is exempt**: the floor exists to keep specks out of the review queue, and
+   a folder somebody named is never asked about, so a labelled trip of three photographs is still
+   an event.
 
 Assets without GPS group on time and folder alone. Measured availability (§1.1) makes the split
 sharp: **no GPS at all before 2010**, patchy through 2015, near-universal from 2016. So place-based
 grouping is effectively a feature of the last decade, and the first twelve years of the archive
 rely entirely on time gaps and folder labels — which the 95% filename-date coverage makes reliable.
+
+An asset filed in two folders belongs to the event its earliest copy was found in — the same
+tie-break places uses, so a duplicate is never in two events.
+
+**Where an event was.** Not the commonest place among its photographs: a week driving through
+Spain is in Spain, not in whichever village produced the most pictures. Place paths are taken
+commonest first until 80% of the *placed* photographs are covered, and what those share is the
+answer — for a single afternoon the town itself, for a road trip the country. One stray
+coordinate (an airport in another country) therefore cannot coarsen the whole event to nothing.
+
+**Splitting.** "Not one event" cuts at the longest interruption inside the event, one press at a
+time, so the result is predictable and the button can simply be pressed again. It is offered only
+where a cut leaves a real event on **both** sides. Without that rule an event of evenly spaced
+photographs is cut after its first one, and the orphan then falls below the minimum size and drops
+out of the timeline — a button called *not one event* would be quietly deleting a photograph.
+
+**Measured, 2026-09-08:** 1,374 events over 34,180 of 39,884 photographs (86%) — 165 from folder
+labels and 1,209 from the clock; 5,704 photographs sit in runs shorter than five and are in no
+event. **The estimate of 400–600 events below was wrong by a factor of two and a half**, and no
+threshold fixes it: raising the time gap to 8 hours *increases* the count to 1,407, because
+merging short runs pushes them over the minimum size. Twenty-eight years of ordinary photography
+really is that many separate afternoons. What follows from that is in §6.4.
+
+Two events span more than a year — `2012 11 Thanksgiving` reaches back to 2000 and
+`2010 11 Caribbean Cruise` to 2005. Both are folder-named and correctly held together; the spans
+are a camera clock that was never set, and they are already listed by `status --conflicts`.
 
 ### 6.3 Places (M4a)
 
@@ -849,26 +920,48 @@ that matched, five are wrong and reviewable — `USA` lands on Concord, North
 Carolina, and `West Coast` on New Zealand — which is the reason every one of
 them is listed for rejection rather than merely counted.
 
-### 6.4 Review queue construction
+### 6.4 Review queue construction (M4b)
 
-For each unnamed event and unnamed face cluster, a queue row is created with `priority` set to
-the number of assets affected — **the queue is always ordered largest-first**, so the earliest
-questions cover the most photographs.
+For each unnamed event and unnamed face cluster **above a floor**, a queue row is created with
+`priority` set to the number of photographs affected — **the queue is always ordered
+largest-first**, so the earliest questions cover the most photographs.
 
-**Suggestions.** Where captions and faces exist, the application proposes an answer and states its
-rationale:
+**Why there is a floor at all.** Promotion to an event and promotion to a *question* are two
+different decisions, and this is what the measurement in §6.2 forced. Five photographs is enough
+to be an event — it belongs in the timeline, it is browsable, a place query finds it — but 1,209
+unnamed ones is not a finite queue, it is a second job. So everything of five or more is an event,
+and only the substantial ones are asked about:
 
-> Captions mention white robes, a decorated cake and a formal gathering.
-> Suggested: *Sini's confirmation party*
+| Floor | Config | Default | Questions on the reference library |
+|---|---|---|---|
+| Event | `queue_min_assets` | 20 | 158 of 1,209 unnamed events |
+| Face cluster | `queue_min_faces` | 10 | 156 of 576 unnamed clusters |
 
-Correcting a proposal is far less work than composing an answer, which is the point.
+Setting them to `min_event_assets` and `cluster_min_size` restores the literal behaviour above,
+and the queue becomes 1,785 questions. **Measured, 2026-09-08: 314 questions, covering 7,726
+photographs.** The tail is not lost — it is in the Events and People views, biggest first, whenever
+somebody wants it.
+
+**Suggestions.** Where the database already knows something, the application proposes an answer
+and states its rationale, because correcting a proposal is far less work than composing one:
+
+> Ansku in 22 of 30 photographs; 28 of 30 placed in Alicante by coordinate.
+> Suggested: *Ansku in Alicante*
+
+Two sources today — the people whose faces have been named, and the place. Captions are the third
+and arrive with M5. Both sources are held to a share of the whole event, not of the subset that
+happens to carry the evidence: a person must be in **40%** of its photographs and a place must
+hold **40%** of them. The place rule matters more than it sounds. An event's place is decided
+among the photographs that *have* a coordinate, which on this archive can be a fifth of them, and
+"New York County" proposed on the strength of 27 photographs out of 124 is a guess wearing a
+fact's clothes. The place is still shown among the event's facts; it is only kept out of the
+proposed name. **Measured: 85 of 314 questions carry a suggestion**; the rule removed 23 that
+did not deserve one. Where nothing is known, no suggestion is offered — a date is not a name, and
+one would only have to be deleted.
 
 **Skipping.** A skipped item returns to the queue after the next derive run. Questions get easier
 as surrounding events and faces acquire names; "some party in Turku" on the first pass is often
 obvious on the second.
-
-**Expected volume:** roughly 400–600 real events across the archive, most already named by their
-folder. Perhaps 150–250 genuine questions reach the queue.
 
 ---
 
@@ -950,9 +1043,15 @@ mediaidx faces                    Run stage 2 over photographs that have no face
 mediaidx faces cluster            Build or update face clusters
     --rebuild                     Recompute from scratch, preserving names
 
-mediaidx derive                   Rebuild events, places and the review queue
+mediaidx derive                   Rebuild places, events and the review queue
+    --no-places                   Leave the places alone; rebuild only events and the queue
+
+mediaidx events                   What the archive says happened, and when
+    --unnamed                     Only the ones with no name
+    --limit N                     How many to list
 
 mediaidx review                   Open the review queue in the browser
+    --no-open                     Print the address instead of opening a browser
 mediaidx serve                    Start the local web UI  (default http://localhost:8710)
 
 mediaidx status                   Per-stage counts: done, pending, failed
@@ -1051,7 +1150,11 @@ assign_threshold   = 0.42           # cosine distance for incremental assignment
 [events]
 time_gap_hours     = 4
 place_gap_km       = 25
-min_event_assets   = 5
+min_event_assets   = 5              # below this a run is not an event at all
+# ...and these are the floors for being *asked* about, which is a different
+# question. See 6.4: five would put 1,785 questions in the queue.
+queue_min_assets   = 20
+queue_min_faces    = 10
 ```
 
 Note what is absent: no host, share or library path, and no person-to-folder mapping. Person
@@ -1237,7 +1340,7 @@ Required tests:
 | **M3a** | Stage 2: detection, embeddings, face crops | Every face in the library found and vectorised. **The only part of M3 that reads files** — the long pass. |
 | **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it is re-runnable whenever a threshold changes.** |
 | **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access; 22 s to load the gazetteer, 11 s to place the library.** |
-| **M4b** | Events, review queue | Unattended indexing plus a finite question queue. |
+| **M4b** | Events, review queue, review UI | Unattended indexing plus a finite question queue. **Database-only; the whole `derive` is 2.3 s. 1,374 events over 86% of the library, and 314 questions covering 7,726 photographs.** |
 | **M5** | Stage 4 captions | Descriptions and tags. |
 | **M6** | Video | See §12. |
 

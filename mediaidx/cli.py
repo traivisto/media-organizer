@@ -270,6 +270,23 @@ def cmd_status(args) -> int:
         else:
             print("  not clustered yet   `mediaidx faces cluster`")
 
+    has_events = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+    if has_events and one("SELECT COUNT(*) FROM events"):
+        nev = one("SELECT COUNT(*) FROM events")
+        named = one("SELECT COUNT(*) FROM events WHERE name IS NOT NULL")
+        in_ev = one("SELECT COUNT(DISTINCT asset_id) FROM event_assets")
+        print("\nevents")
+        print(f"  events           {nev:>10,}   {named:,} named, {nev - named:,} not")
+        print(f"  photographs      {in_ev:>10,}"
+              f"  ({100*in_ev/assets if assets else 0:.0f}%)")
+        openq = one("SELECT COUNT(*) FROM review_queue WHERE status = 'open'")
+        if openq:
+            print(f"  queue            {openq:>10,}   questions"
+                  "   `mediaidx review`")
+    elif has_events:
+        print("\nevents\n  none yet   `mediaidx derive`")
+
     errs = one("SELECT COUNT(*) FROM scan_errors")
     if errs:
         print(f"\n  {errs:,} errors recorded   `mediaidx status --errors`")
@@ -484,6 +501,96 @@ def cmd_places(args) -> int:
             note = f"   1 of {r['candidates']}" if r["candidates"] > 1 else ""
             print(f"  {r['label']:<26} {r['path']}{note}")
         print("\n  wrong ones: `mediaidx serve`, then Places, to reject one")
+    return 0
+
+
+def cmd_derive(args) -> int:
+    """Everything the database can work out about itself, in one pass.
+
+    Places, then events, then the queue -- in that order because an event asks
+    where its photographs were, and the queue asks both. None of it reads a
+    file, so this is seconds of work and safe to repeat whenever a threshold
+    changes.
+    """
+    from . import events as events_mod
+    from . import places as places_mod
+    from . import queue as queue_mod
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    if not args.no_places:
+        if places_mod.state(con) is None:
+            print("no gazetteer loaded -- `mediaidx places --load` first; "
+                  "carrying on without places", file=sys.stderr)
+        else:
+            p = places_mod.run(con, cfg)
+            con.commit()
+            print(f"places     {p.placed:>10,} placed   "
+                  f"{p.gps_placed:,} by coordinate, {p.folder_placed:,} by folder"
+                  f"   {p.elapsed:.0f}s")
+
+    e = events_mod.run(con, cfg)
+    print(f"events     {e.events:>10,}          "
+          f"{e.from_folder:,} from folder names, {e.from_time:,} from the clock"
+          f"   {e.elapsed:.0f}s")
+    print(f"           {e.assets:>10,} photographs in an event"
+          f"   ({e.ungrouped:,} in runs too short to be one)")
+    print(f"           {e.named:>10,} named, {e.unnamed:,} not")
+
+    q = queue_mod.build(con, cfg)
+    print(f"queue      {q.total:>10,} questions   "
+          f"{q.events:,} events, {q.clusters:,} face clusters"
+          f"   {q.suggested:,} with a suggestion")
+    print(f"           {q.photographs:>10,} photographs would be labelled by "
+          "answering them")
+    print("\n  `mediaidx review` to work through it")
+    return 0
+
+
+def cmd_events(args) -> int:
+    from . import events as events_mod
+    cfg, con = _open(args, create=False)
+    db.migrate(con)                      # schema v5 adds the events tables
+    rows = events_mod.overview(con, limit=args.limit,
+                               unnamed_only=args.unnamed)
+    if not rows:
+        print("no events yet -- `mediaidx derive`")
+        return 0
+    total = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    named = con.execute(
+        "SELECT COUNT(*) FROM events WHERE name IS NOT NULL").fetchone()[0]
+    for r in rows:
+        when = datetime.fromtimestamp(r["start_at"]).strftime("%Y-%m-%d")
+        name = r["name"] or "-"
+        where = r["place"] or ""
+        src = {"folder": "folder", "user": "named"}.get(r["name_source"], "")
+        print(f"  {when}  {r['asset_count']:>6,}  {name:<34.34} "
+              f"{where:<18.18} {src}")
+    print(f"\n  {total:,} events, {named:,} named, {total - named:,} not")
+    return 0
+
+
+def cmd_review(args) -> int:
+    """Open the queue in the browser, which is where it is answered."""
+    from . import queue as queue_mod
+    from . import serve
+    cfg, con = _open(args, create=False)
+    db.migrate(con)                      # schema v5 adds the queue
+    c = queue_mod.counts(con)
+    if not c["total"]:
+        print("nothing in the queue -- `mediaidx derive` builds it")
+        return 0
+    print(f"  {c['open']:,} open questions   "
+          f"{c['events']:,} events, {c['clusters']:,} face clusters")
+    print(f"  {c['photographs']:,} photographs would be labelled by answering them")
+    con.close()
+    url = f"http://{args.host}:{args.port}/review"
+    print(f"\n  {url}\n  ctrl-c to stop")
+    if not args.no_open:
+        import threading
+        import webbrowser
+        threading.Timer(1.0, webbrowser.open, (url,)).start()
+    serve.run(cfg, host=args.host, port=args.port)
     return 0
 
 
@@ -726,6 +833,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="list the folder-label matches that were thrown out")
     pl.add_argument("--limit", type=int, default=40)
     pl.set_defaults(func=cmd_places)
+
+    dv = sub.add_parser("derive", help="rebuild places, events and the review queue")
+    dv.add_argument("--no-places", action="store_true",
+                    help="leave the places alone; rebuild only events and the queue")
+    dv.set_defaults(func=cmd_derive)
+
+    evp = sub.add_parser("events", help="what the archive says happened, and when")
+    evp.add_argument("--unnamed", action="store_true",
+                     help="only the ones with no name")
+    evp.add_argument("--limit", type=int, default=60)
+    evp.set_defaults(func=cmd_events)
+
+    rv = sub.add_parser("review", help="work through the questions, largest first")
+    rv.add_argument("--host", default="127.0.0.1")
+    rv.add_argument("--port", type=int, default=8710)
+    rv.add_argument("--no-open", action="store_true",
+                    help="print the address instead of opening a browser")
+    rv.set_defaults(func=cmd_review)
 
     pe = sub.add_parser("people", help="who has been named, and how much of the library")
     pe.set_defaults(func=cmd_people)

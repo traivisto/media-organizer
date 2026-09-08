@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -194,6 +194,73 @@ CREATE TABLE IF NOT EXISTS gazetteer_state (
   names     INTEGER NOT NULL,
   source    TEXT NOT NULL
 );
+
+-- An event is a stretch of one day, or one trip, that the photographs
+-- themselves attest to: a folder somebody labelled, or a run of pictures with
+-- no long gap and no long journey inside it (spec 6.2).
+--
+-- Rebuilt from scratch on every `derive`, so no id here is stable and nothing
+-- a person did may be stored against one. What a person did lives in
+-- `event_names` and `event_cuts`, keyed by a photograph.
+CREATE TABLE IF NOT EXISTS events (
+  id          INTEGER PRIMARY KEY,
+  name        TEXT,
+  name_source TEXT,            -- folder | user
+  start_at    INTEGER NOT NULL,
+  end_at      INTEGER NOT NULL,
+  place_id    INTEGER REFERENCES places(id),
+  folder_id   INTEGER REFERENCES folders(id),
+  anchor_id   INTEGER REFERENCES assets(id),   -- its first photograph; see below
+  asset_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS event_assets (
+  event_id INTEGER NOT NULL REFERENCES events(id),
+  asset_id INTEGER NOT NULL REFERENCES assets(id),
+  PRIMARY KEY (event_id, asset_id)
+);
+
+-- A name somebody typed, and a decision never to be asked again. Keyed by the
+-- event's *first photograph* rather than by its id, for the same reason a
+-- rejected place is keyed by path: the ids are rebuilt and would come back
+-- pointing at a different fortnight. A photograph is a fact about the archive
+-- and survives every re-run.
+--
+-- If the grouping later changes so that the first photograph starts a shorter
+-- event, the name follows it there -- which is the right half of a split to
+-- keep it on, and visible either way.
+CREATE TABLE IF NOT EXISTS event_names (
+  anchor_id  INTEGER PRIMARY KEY REFERENCES assets(id),
+  name       TEXT,
+  dismissed  INTEGER NOT NULL DEFAULT 0,   -- asked once, answered "don't ask"
+  created_at INTEGER NOT NULL
+);
+
+-- "This is not one event": a photograph that begins a new one whatever the
+-- clock says. Also permanent, also keyed by a photograph, and the only way a
+-- labelled folder is ever broken into more than one event.
+CREATE TABLE IF NOT EXISTS event_cuts (
+  asset_id   INTEGER PRIMARY KEY REFERENCES assets(id),
+  created_at INTEGER NOT NULL
+);
+
+-- The questions worth asking, largest first. Rebuilt with the events, so it
+-- holds no decisions either -- an answered event has a name, a dismissed one
+-- has a row in `event_names`, and both are read back from there.
+CREATE TABLE IF NOT EXISTS review_queue (
+  id          INTEGER PRIMARY KEY,
+  kind        TEXT NOT NULL,      -- event | face_cluster
+  ref_id      INTEGER NOT NULL,   -- events.id or face_clusters.id
+  priority    INTEGER NOT NULL,   -- affected photographs; the queue order
+  suggestion  TEXT,
+  rationale   TEXT,
+  status      TEXT NOT NULL,      -- open | skipped
+  skipped_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_assets_asset ON event_assets(asset_id);
+CREATE INDEX IF NOT EXISTS idx_events_start       ON events(start_at);
+CREATE INDEX IF NOT EXISTS idx_queue_priority     ON review_queue(status, priority DESC);
 
 CREATE INDEX IF NOT EXISTS idx_places_path   ON places(path);
 CREATE INDEX IF NOT EXISTS idx_places_name   ON places(name);

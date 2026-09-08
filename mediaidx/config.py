@@ -62,6 +62,22 @@ DEFAULTS: dict = {
         "cluster_min_size": 4,
         "assign_threshold": 0.42,
     },
+    "events": {
+        # A gap longer than this ends an event; so does a jump further than
+        # `place_gap_km`, where both photographs carry a coordinate (spec 6.2).
+        "time_gap_hours": 4,
+        "place_gap_km": 25,
+        # Below this many photographs a run is not an event at all. A folder
+        # somebody labelled is exempt: the floor exists to keep specks out of
+        # the review queue, and a named folder is never asked about.
+        "min_event_assets": 5,
+        # ...and these are the floors for being *asked* about, which is a
+        # different question. Measured on the reference library, five would put
+        # 1,209 events and 576 clusters in the queue; twenty and ten put 158
+        # and 156 there. See queue.py for why the two floors are separate.
+        "queue_min_assets": 20,
+        "queue_min_faces": 10,
+    },
     "places": {
         # A folder label matching a place's *own* name is accepted whatever its
         # size. One matching only an exonym has to clear this, because an
@@ -89,6 +105,7 @@ class Config:
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
+    events: dict = field(default_factory=dict)
     places: dict = field(default_factory=dict)
     tools: dict = field(default_factory=dict)
     # Defaulted so that constructing a Config by hand -- which the tests do --
@@ -166,6 +183,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         scan=merged["scan"],
         models=merged["models"],
         faces=merged["faces"],
+        events=merged["events"],
         places=merged["places"],
         tools=merged["tools"],
         source=cfg_path if cfg_path.exists() else None,

@@ -22,8 +22,10 @@ from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
 from . import cluster
 from . import config as config_mod
 from . import db, embed, images
+from . import events as events_mod
 from . import paths as pathutil
 from . import places as places_mod
+from . import queue as queue_mod
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -68,6 +70,10 @@ a {{ color:inherit; text-decoration:none; }}
 nav {{ max-width:1500px; margin:8px auto 0; display:flex; gap:16px;
   font-size:13px; color:var(--ink-3); }}
 nav a:hover {{ color:var(--accent); }}
+/* The header is sticky, so focusing the search box makes the browser scroll it
+   clear -- taking the first line of the page under the header with it. The
+   search pages want the caret; every other page wants its own first line, so
+   the attribute is filled in per page rather than baked in here. */
 /* Faces are square, small and scanned in bulk: a tighter grid than the photo
    one, because recognising a person takes a glance, not a look. */
 .faces {{ max-width:1500px; margin:0 auto; padding:14px 20px 60px;
@@ -113,10 +119,10 @@ nav a:hover {{ color:var(--accent); }}
 .crumb a {{ color:var(--accent); }}
 </style></head><body>
 <header><form action="/" method="get">
-  <input type="search" name="q" value="{q}" placeholder="{placeholder}" autofocus>
+  <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
   <button type="submit">Search</button>
 </form>
-<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a></nav></header>
+<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a><a href="/events">Events</a><a href="/review">Review</a></nav></header>
 {body}
 </body></html>"""
 
@@ -252,6 +258,26 @@ def create_app(cfg) -> FastAPI:
             f'{counts[r["id"]]:,} photographs</span></a>' for r in rows[:6])
         return f'<div class="meta">Places</div><div class="people">{chips}</div>'
 
+    def events_matching(con, q: str) -> str:
+        """Events whose name the query mentions.
+
+        The third of the same argument: `rippijuhlat` is not a thing SigLIP can
+        see in a photograph, it is a word somebody wrote on a folder. So the
+        names are matched directly, and the vector search still runs underneath.
+        """
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                           "AND name='events'").fetchone():
+            return ""
+        rows = events_mod.matching(con, q, limit=6)
+        if not rows:
+            return ""
+        chips = "".join(
+            f'<a href="/event/{r["id"]}" class="person" style="padding:8px 14px">'
+            f'<span><b>{html.escape(r["name"])}</b><br>'
+            f'{datetime.fromtimestamp(r["start_at"]):%B %Y} &middot; '
+            f'{r["asset_count"]:,} photographs</span></a>' for r in rows)
+        return f'<div class="meta">Events</div><div class="people">{chips}</div>'
+
     @app.get("/", response_class=HTMLResponse)
     def home(q: str = Query(default=""), limit: int = 120):
         con = connect()
@@ -271,10 +297,11 @@ def create_app(cfg) -> FastAPI:
                 body = ('<div class="empty"><p>Nothing indexed yet.</p>'
                         '<p><code>mediaidx add &lt;folder&gt;</code></p></div>')
             return HTMLResponse(PAGE.format(
-                title="Kuva-arkisto", q="", body=body,
+                title="Kuva-arkisto", q="", body=body, focus=" autofocus",
                 placeholder="kids on a beach at sunset"))
 
-        people = people_matching(con, q) + places_matching(con, q)
+        people = (people_matching(con, q) + places_matching(con, q)
+                  + events_matching(con, q))
 
         # "Tommi and Emmi" is a question about a pair, not about either of
         # them. If the query names more than one person, the photographs they
@@ -305,7 +332,7 @@ def create_app(cfg) -> FastAPI:
                 '<p><code>mediaidx embed</code></p></div>')
             return HTMLResponse(PAGE.format(
                 title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
-                placeholder="kids on a beach at sunset"))
+                focus=" autofocus", placeholder="kids on a beach at sunset"))
 
         vec = encoder().encode_text([q])[0]
         hits = embed.search(con, vec, limit=limit, vec_ok=state["vec_ok"])
@@ -328,7 +355,7 @@ def create_app(cfg) -> FastAPI:
                     f'</div><div class="grid">{cards}</div>')
         return HTMLResponse(PAGE.format(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
-            placeholder="kids on a beach at sunset"))
+            focus=" autofocus", placeholder="kids on a beach at sunset"))
 
     @app.get("/thumb/{size}/{content_hash}")
     def thumb(size: str, content_hash: str):
@@ -366,6 +393,7 @@ def create_app(cfg) -> FastAPI:
             row("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
             row("gps", gps),
             _place_row(con, a),
+            _event_row(con, asset_id),
             row("source", a["source_hint"]),
             row("conflict", a["conflict_note"]),
             row("hash", a["content_hash"][:24] + "..."),
@@ -405,7 +433,7 @@ def create_app(cfg) -> FastAPI:
             f'<table style="font-size:14px">{info}</table>'
             f'<div style="margin-top:14px">{paths}</div></div>')
         return HTMLResponse(PAGE.format(
-            title=f"{when} — Kuva-arkisto", q="", body=body,
+            title=f"{when} — Kuva-arkisto", q="", body=body, focus="",
             placeholder="kids on a beach at sunset"))
 
     def _place_row(con, a) -> str:
@@ -556,7 +584,7 @@ def create_app(cfg) -> FastAPI:
 
     def page(title, body):
         return HTMLResponse(PAGE.format(
-            title=title, q="", body=body,
+            title=title, q="", body=body, focus="",
             placeholder="kids on a beach at sunset"))
 
     def face_card(hash_, idx, label, href, sub="") -> str:
@@ -767,9 +795,323 @@ def create_app(cfg) -> FastAPI:
                 f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
         return page(f'{p["name"]} — Kuva-arkisto', body)
 
+    # ----------------------------------------------------------------------
+    # Events
+    # ----------------------------------------------------------------------
+
+    def _event_row(con, asset_id: int) -> str:
+        """Which event this photograph belongs to, and where its name came from."""
+        e = events_mod.for_asset(con, asset_id)
+        if e is None:
+            return ""
+        label = e["name"] or f'{e["asset_count"]:,} photographs, unnamed'
+        note = {"folder": "from the folder name",
+                "user": "you named it"}.get(e["name_source"], "grouped by time")
+        return ('<tr><td style="color:var(--ink-3);padding:3px 16px 3px 0">event</td>'
+                f'<td><a href="/event/{e["id"]}" style="color:var(--accent)">'
+                f'{html.escape(label)}</a> '
+                f'<span style="color:var(--ink-3)">&mdash; {note}</span></td></tr>')
+
+    def when_range(start: int, end: int) -> str:
+        a, b = datetime.fromtimestamp(start), datetime.fromtimestamp(end)
+        if a.date() == b.date():
+            return f"{a.day} {a:%B %Y}"
+        if (a.year, a.month) == (b.year, b.month):
+            return f"{a.day}&ndash;{b.day} {a:%B %Y}"
+        if a.year == b.year:
+            return f"{a.day} {a:%B} &ndash; {b.day} {b:%B %Y}"
+        return f"{a.day} {a:%B %Y} &ndash; {b.day} {b:%B %Y}"
+
+    @app.get("/events", response_class=HTMLResponse)
+    def events_view(unnamed: int = 0, limit: int = 400):
+        con = connect()
+        total = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        if not total:
+            return page("Events — Kuva-arkisto",
+                        '<div class="empty"><p>No events yet.</p>'
+                        '<p><code>mediaidx derive</code></p></div>')
+        named = con.execute(
+            "SELECT COUNT(*) FROM events WHERE name IS NOT NULL").fetchone()[0]
+        rows = events_mod.overview(con, limit=limit, unnamed_only=bool(unnamed))
+
+        listing = []
+        year = None
+        for r in rows:
+            y = datetime.fromtimestamp(r["start_at"]).year
+            if y != year:
+                year = y
+                listing.append(f'<div class="row" style="border:0;padding-top:18px">'
+                               f'<b style="color:var(--ink-3)">{y}</b></div>')
+            name = r["name"] or "unnamed"
+            style = "" if r["name"] else ' style="color:var(--ink-3)"'
+            listing.append(
+                f'<a href="/event/{r["id"]}"><b{style}>{html.escape(name)}</b>'
+                f'<span style="flex:1">{when_range(r["start_at"], r["end_at"])}</span>'
+                f'<span style="flex:1">{html.escape(r["place"] or "")}</span>'
+                f'<span>{r["asset_count"]:,}</span></a>')
+
+        toggle = ('<a href="/events" style="color:var(--accent)">show all</a>'
+                  if unnamed else
+                  '<a href="/events?unnamed=1" style="color:var(--accent)">'
+                  'only the unnamed</a>')
+        body = (f'<div class="meta">{total:,} events &middot; {named:,} named '
+                f'&middot; {total - named:,} not &middot; {toggle}</div>'
+                f'<div class="rows">{"".join(listing)}</div>')
+        return page("Events — Kuva-arkisto", body)
+
+    def split_form(con, e, back: str) -> str:
+        """Splitting cuts at the longest interruption inside the event, one
+        press at a time, and the cut is permanent. It is offered only where
+        there is somewhere to cut that leaves a real event on both sides --
+        an action that would silently drop a photograph out of the timeline is
+        better not drawn than explained afterwards."""
+        if events_mod.split_point(con, e["id"], cfg) is None:
+            return ""
+        return (f'<form method="post" action="/event/{e["id"]}/split">'
+                f'<input type="hidden" name="back" value="{html.escape(back)}">'
+                '<button class="ghost" type="submit">Not one event</button></form>')
+
+    def event_panel(con, e, *, back: str) -> str:
+        """Name it, split it, or say it is not worth asking about."""
+        return (
+            '<div class="panel">'
+            f'<form method="post" action="/event/{e["id"]}/name">'
+            f'<input type="hidden" name="back" value="{html.escape(back)}">'
+            f'<input type="text" name="name" style="min-width:320px" '
+            f'placeholder="what was this?" '
+            f'value="{html.escape(e["name"] or "")}" autofocus>'
+            '<button type="submit">Save</button></form>'
+            + split_form(con, e, back) +
+            f'<form method="post" action="/event/{e["id"]}/dismiss">'
+            f'<input type="hidden" name="back" value="{html.escape(back)}">'
+            '<button class="ghost" type="submit">Don&rsquo;t ask again</button>'
+            '</form></div>')
+
+    def event_facts(con, e) -> str:
+        bits = [when_range(e["start_at"], e["end_at"]),
+                f'{e["asset_count"]:,} photographs']
+        if e["place_id"]:
+            bits.append(f'<a href="/place/{e["place_id"]}" '
+                        f'style="color:var(--accent)">'
+                        f'{html.escape(e["place_path"] or e["place"])}</a>')
+        if e["folder"]:
+            bits.append(f'<span style="font-family:ui-monospace,monospace;'
+                        f'font-size:12px">{html.escape(e["folder"])}</span>')
+        who = events_mod.people_in(con, e["id"])
+        line = '<div class="meta">' + " &middot; ".join(bits) + "</div>"
+        if who:
+            chips = "".join(
+                f'<a href="/person/{p["id"]}" class="chip" '
+                f'style="margin-right:6px">{html.escape(p["name"])} '
+                f'&middot; {p["photos"]}</a>' for p in who[:8])
+            line += f'<div class="meta">Already known to be here: {chips}</div>'
+        return line
+
+    @app.get("/event/{event_id}", response_class=HTMLResponse)
+    def event_view(event_id: int, limit: int = 300):
+        con = connect()
+        e = events_mod.get(con, event_id)
+        if e is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        rows = events_mod.assets_of(con, event_id, limit)
+        title = e["name"] or f'Unnamed, {e["asset_count"]:,} photographs'
+        src = {"folder": "named by its folder", "user": "you named it"}.get(
+            e["name_source"], "grouped by time and place")
+        shown = ("" if len(rows) >= e["asset_count"]
+                 else f' &middot; showing {len(rows):,}')
+        body = (f'<div class="meta"><a href="/events" style="color:var(--accent)">'
+                f'&larr; events</a> &middot; <b>{html.escape(title)}</b> '
+                f'&middot; {src}</div>'
+                + event_facts(con, e)
+                + event_panel(con, e, back=f"/event/{event_id}")
+                + f'<div class="meta">In order{shown}</div>'
+                + f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+        return page(f"{title} — Kuva-arkisto", body)
+
+    @app.post("/event/{event_id}/name")
+    def event_name(event_id: int, name: str = Form(default=""),
+                   back: str = Form(default="/events")):
+        con = connect()
+        events_mod.set_name(con, event_id, name)
+        return RedirectResponse(_safe_back(back), status_code=303)
+
+    @app.post("/event/{event_id}/dismiss")
+    def event_dismiss(event_id: int, back: str = Form(default="/events")):
+        con = connect()
+        events_mod.dismiss(con, event_id)
+        return RedirectResponse(_safe_back(back), status_code=303)
+
+    @app.post("/event/{event_id}/split")
+    def event_split(event_id: int, back: str = Form(default="/events")):
+        con = connect()
+        at = events_mod.split(con, event_id, cfg)
+        if at is None:
+            return RedirectResponse(_safe_back(back), status_code=303)
+        # The cut is recorded against a photograph, so the grouping has to be
+        # rebuilt for it to mean anything -- and the queue with it, because
+        # every event id has just changed.
+        events_mod.run(con, cfg)
+        queue_mod.build(con, cfg)
+        con.commit()
+        if back.startswith("/event/"):
+            e = events_mod.for_asset(con, at)
+            return RedirectResponse(f'/event/{e["id"]}' if e else "/events",
+                                    status_code=303)
+        return RedirectResponse(_safe_back(back), status_code=303)
+
+    def _safe_back(back: str) -> str:
+        """Only ever redirect within this application."""
+        return back if back.startswith("/") and not back.startswith("//") else "/events"
+
+    # ----------------------------------------------------------------------
+    # Review
+    # ----------------------------------------------------------------------
+
+    # Enter is the form's own doing; Esc is not, and skipping has to be as
+    # cheap as answering or the queue does not get worked through. This is the
+    # only script on the site.
+    #
+    # The field is focused from here rather than with `autofocus`, which scrolls
+    # itself into view and slides the question's own context -- the dates, the
+    # place, the folder, who is in it -- up underneath the sticky header. On the
+    # one screen whose whole purpose is to be answered from what it shows, that
+    # is not a detail. `preventScroll` keeps the caret in the field and the page
+    # at the top.
+    KEYS = ("<script>document.addEventListener('keydown',function(e){"
+            "if(e.key==='Escape'){var f=document.getElementById('skip');"
+            "if(f){e.preventDefault();f.submit();}}});"
+            "var a=document.getElementById('answer');"
+            "if(a){a.focus({preventScroll:true});"
+            "a.setSelectionRange(a.value.length,a.value.length);}</script>")
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review():
+        con = connect()
+        c = queue_mod.counts(con)
+        item = queue_mod.next_item(con)
+        if item is None:
+            # An emptied queue and one that was never built look identical in
+            # the table, and telling somebody who has just answered the last
+            # question to go and build the queue would be absurd. The events
+            # are what tell the two apart.
+            if not con.execute("SELECT COUNT(*) FROM events").fetchone()[0]:
+                return page("Review — Kuva-arkisto",
+                            '<div class="empty"><p>Nothing in the queue.</p>'
+                            '<p><code>mediaidx derive</code> builds it.</p></div>')
+            more = (f'<p>{c["skipped"]:,} skipped; they come back after the '
+                    'next <code>mediaidx derive</code>.</p>' if c["skipped"]
+                    else '<p>Every question has an answer.</p>')
+            return page("Review — Kuva-arkisto",
+                        f'<div class="empty"><p>Nothing left to ask.</p>{more}'
+                        '<p><a href="/events" style="color:var(--accent)">'
+                        'the events</a></p></div>')
+
+        head = (f'<div class="meta"><b>{c["open"]:,} questions left</b> '
+                f'&middot; {c["events"]:,} events, {c["clusters"]:,} people '
+                f'&middot; {c["photographs"]:,} photographs waiting on an answer '
+                '&middot; largest first</div>')
+        why = ""
+        if item["rationale"]:
+            why = (f'<div class="meta">Suggested: '
+                   f'<b>{html.escape(item["suggestion"] or "")}</b> &mdash; '
+                   f'{html.escape(item["rationale"])}. '
+                   'It is a suggestion; nothing is named until you say so.</div>')
+
+        skip = (f'<form method="post" action="/review/{item["id"]}/skip" id="skip">'
+                '<button class="ghost" type="submit">Skip &nbsp;Esc</button></form>')
+
+        if item["kind"] == "event":
+            e = events_mod.get(con, item["ref_id"])
+            if e is None:                      # the queue outlived a rebuild
+                queue_mod.drop(con, item["id"])
+                return RedirectResponse("/review", status_code=303)
+            panel = (
+                '<div class="panel">'
+                f'<form method="post" action="/event/{e["id"]}/name">'
+                '<input type="hidden" name="back" value="/review">'
+                '<input type="text" name="name" id="answer" '
+                'style="min-width:340px" placeholder="what was this?" '
+                f'value="{html.escape(item["suggestion"] or "")}">'
+                '<button type="submit">Name it &nbsp;&crarr;</button></form>'
+                + split_form(con, e, "/review") + skip +
+                f'<form method="post" action="/event/{e["id"]}/dismiss">'
+                '<input type="hidden" name="back" value="/review">'
+                '<button class="ghost" type="submit">Don&rsquo;t ask again</button>'
+                '</form></div>')
+            sample = events_mod.sample(con, e["id"], limit=12)
+            body = (head + event_facts(con, e) + why + panel +
+                    f'<div class="meta">{len(sample)} of {e["asset_count"]:,}, '
+                    'spread across it &middot; '
+                    f'<a href="/event/{e["id"]}" style="color:var(--accent)">'
+                    'see all of them</a></div>'
+                    f'<div class="grid">{"".join(card(r) for r in sample)}</div>'
+                    + KEYS)
+            return page("Review — Kuva-arkisto", body)
+
+        cl = con.execute("SELECT * FROM face_clusters WHERE id = ?",
+                         (item["ref_id"],)).fetchone()
+        if cl is None or cl["person_id"]:
+            queue_mod.drop(con, item["id"])
+            return RedirectResponse("/review", status_code=303)
+        panel = (
+            '<div class="panel">'
+            f'<form method="post" action="/review/{item["id"]}/person">'
+            '<input type="text" name="name" id="answer" '
+            'style="min-width:340px" placeholder="who is this?" '
+            f'value="{html.escape(item["suggestion"] or "")}">'
+            '<button type="submit">Name them &nbsp;&crarr;</button></form>'
+            f'<a href="/cluster/{cl["id"]}" class="chip" style="padding:9px 14px">'
+            'Open the cluster to merge</a>'
+            + skip +
+            f'<form method="post" action="/review/{item["id"]}/ignore">'
+            '<button class="ghost" type="submit">Not a person</button></form>'
+            '</div>')
+        faces_rows = cluster.representatives(con, cl["id"], limit=12)
+        cards = "".join(
+            face_card(r["content_hash"], r["idx"],
+                      datetime.fromtimestamp(r["taken_at"]).strftime("%Y")
+                      if r["taken_at"] else "",
+                      f'/photo/{r["asset_id"]}') for r in faces_rows)
+        body = (head +
+                f'<div class="meta">Cluster #{cl["id"]} &middot; '
+                f'{cl["size"]:,} faces in {item["priority"]:,} photographs</div>'
+                + why + panel +
+                f'<div class="faces">{cards}</div>' + KEYS)
+        return page("Review — Kuva-arkisto", body)
+
+    @app.post("/review/{queue_id}/skip")
+    def review_skip(queue_id: int):
+        con = connect()
+        queue_mod.skip(con, queue_id)
+        return RedirectResponse("/review", status_code=303)
+
+    @app.post("/review/{queue_id}/person")
+    def review_person(queue_id: int, name: str = Form(default="")):
+        con = connect()
+        item = queue_mod.get(con, queue_id)
+        if item and name.strip():
+            cluster.set_person(con, item["ref_id"], name)
+            queue_mod.drop(con, queue_id)
+        return RedirectResponse("/review", status_code=303)
+
+    @app.post("/review/{queue_id}/ignore")
+    def review_ignore(queue_id: int):
+        con = connect()
+        item = queue_mod.get(con, queue_id)
+        if item:
+            cluster.set_status(con, item["ref_id"], "ignored")
+            queue_mod.drop(con, queue_id)
+        return RedirectResponse("/review", status_code=303)
+
     return app
 
 
 def run(cfg, host: str = "127.0.0.1", port: int = 8710) -> None:
     import uvicorn
+    # A database indexed before this milestone has no events tables at all, and
+    # the Events and Review screens would answer 500 rather than "nothing yet".
+    # Migration is idempotent; doing it here covers both `serve` and `review`.
+    con = db.connect(cfg.database, create=False)
+    db.migrate(con)
+    con.close()
     uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")

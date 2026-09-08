@@ -7,8 +7,9 @@ Full design: [spec.md](spec.md).
 
 ## Status
 
-**M4a complete** — the library is searchable by free text, by who is in the
-photograph, and by where it was taken.
+**M4b complete** — the library is searchable by free text, by who is in the
+photograph, by where it was taken and by what was happening, and there is a
+finite queue of questions to work through.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -17,7 +18,7 @@ photograph, and by where it was taken.
 | M3a | Faces: detection, embeddings, face crops | **done** |
 | M3b | Clustering, naming, people UI | **done** |
 | M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
-| M4b | Events, review queue | |
+| M4b | Events, review queue, review UI | **done** |
 | M5 | Captions | |
 | M6 | Video | deferred |
 
@@ -55,6 +56,55 @@ Helsinki without anyone naming a single region.
 Measured on the reference library: 22,830 of 39,884 photographs placed across 39
 countries in 11 seconds — 20,402 by coordinate and 2,428 more from 35 folder
 labels, of which five are wrong and waiting to be rejected.
+
+## Events
+
+`mediaidx derive` works out what happened, from three kinds of evidence and in
+this order.
+
+A **folder somebody labelled** has the last word. `2019 07 Alicante` is one
+holiday, not eleven separate afternoons, however long the gaps inside it — and
+the label reaches down into subfolders, so scans filed under
+`2001 01 Thaimaa\skannatut` are part of the same trip.
+
+Otherwise the **clock**: inside a bare month folder a gap longer than four hours
+ends the event. This is what covers the twelve years of the archive with no GPS
+at all. And where two photographs both carry a coordinate, the **map** refines
+it — a jump of more than 25 km ends the event too, so an afternoon in Helsinki
+and an evening in Tampere are not one thing.
+
+An event's place is not simply the commonest one among its photographs. A week
+driving through Spain is in Spain, not in whichever village produced the most
+pictures, so the answer is the deepest place that most of them share — and one
+stray coordinate at an airport cannot drag the whole event down to nothing.
+
+Everything is rebuilt from scratch each time, so no event id is stable and
+nothing you decide is stored on one. A name you type and a split you make are
+keyed to a *photograph* instead, which survives every rebuild. Measured, the
+whole of `derive` — places, events and the queue over 39,884 photographs — is
+**2.3 seconds**.
+
+## The review queue
+
+`mediaidx review` asks the questions worth asking, largest first, so the first
+one covers the most photographs. Each shows twelve pictures spread across the
+event, the dates, the place, the folder, and who is already known to be in it.
+Where the database knows enough it proposes a name and says exactly what the
+proposal rests on — *Ansku in 22 of 30 photographs; 28 of 30 placed in Alicante
+by coordinate* — because correcting a proposal is far less work than composing
+one. Where it does not, it offers nothing rather than a date dressed up as a
+name. Type, Enter to accept; Esc skips, and a skipped question comes back after
+the next `derive`, when the neighbouring events have names and it is easier.
+
+**Being an event and being a question are two different things.** Measured on
+this archive the grouping finds 1,374 events, 1,209 of them with no folder
+label — twenty-eight years of ordinary photography really is that many separate
+afternoons, and no threshold makes it fewer. Asking 1,209 questions is not a
+finite queue, it is a second job. So everything of five photographs or more is
+an event and appears in the timeline, and only the substantial ones are asked
+about: **314 questions, covering 7,726 photographs**. The floors are
+`queue_min_assets` and `queue_min_faces` in your config, and the rest is never
+lost — it is in the Events and People views whenever you want it.
 
 ## People
 
@@ -156,6 +206,11 @@ mediaidx people                       who is named, and how much of the library
 mediaidx places                       put photographs on the map
 mediaidx places --load                rebuild the gazetteer from the extract first
 mediaidx places --rejected            the folder matches you threw out
+mediaidx derive                       rebuild places, events and the queue
+mediaidx derive --no-places           only the events and the queue
+mediaidx events                       what happened, and when
+mediaidx events --unnamed             only the ones still without a name
+mediaidx review                       work through the questions, largest first
 mediaidx meta                         re-read metadata whose stage version is behind
 mediaidx search "a phrase"            free-text search from the terminal
 mediaidx serve                        the local UI, http://localhost:8710
@@ -186,11 +241,13 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-181 tests covering date resolution, filename and folder parsing, the sanity bounds
+237 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, GPS hemispheres, scope
 containment, the read-only guarantee, face storage and crop geometry, clustering,
-naming, merging and searching by person, the gazetteer and both ways into it, and
-the separation between shipped defaults and library-specific configuration.
+naming, merging and searching by person, the gazetteer and both ways into it, event
+grouping and every boundary in it, what survives a rebuild and what deliberately
+does not, the review queue and its screen, and the separation between shipped
+defaults and library-specific configuration.
 
 The face *model* is not exercised there — it needs a GPU, 300 MB of weights and a
 photograph of a real person. `mediaidx doctor` covers that end instead, and it
