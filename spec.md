@@ -1623,7 +1623,35 @@ is desktop-only and bound to `127.0.0.1`.
 
 ## 13. Open questions
 
-None blocking. Work can begin on M1.
+None blocking.
+
+### Open
+
+- **A map on the photograph page.** Asked for 2026-09-09, deferred. It would show where a
+  photograph was taken, and it would apply to the **20,427 of 39,884** that carry a coordinate —
+  just over half the library. The data is already there, and §4.3 stores a representative `lat`/`lon`
+  on every place against exactly this.
+
+  What makes it a question rather than a task is §10.4, which says no item of metadata is ever
+  transmitted anywhere, *without qualification*. A coordinate is metadata, and it is the most
+  sensitive item in the index: taken together these points are where this family lives, where the
+  children went to school, and when the house was empty. Any map drawn by somebody else's service
+  means sending it to them. Four ways to go, cheapest first:
+
+  1. **Link out, on a click.** Nothing is sent until the user asks for it, one photograph at a time,
+     and the choice of service is theirs. §10.4 stays true of the application and gains a precise
+     sentence about a link the user may follow.
+  2. **Embedded tiles.** A coordinate goes out every time a photograph is opened, wanted or not.
+     This would make §10.4 false as written, and the section already records one earlier claim that
+     had to be corrected for less than this.
+  3. **Offline tiles.** Keeps the principle whole. A world tileset is far too large, but a bounded
+     extract covering the regions this archive actually visits is tractable — and is a project in
+     its own right, not a feature of the photograph page.
+  4. **No map.** The coordinate is shown and copyable, which is what happens today.
+
+  Recommendation is (1): it is a few lines, it keeps the decision with the person looking at the
+  photograph, and it is the only option whose privacy cost is visible at the moment it is paid.
+  Whichever is chosen, §10.4 is amended in the same commit rather than quietly outgrown.
 
 ### Resolved
 
