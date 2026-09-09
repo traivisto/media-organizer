@@ -11,6 +11,8 @@ one vector. Browsing touches only photos.db and the thumbnail cache.
 from __future__ import annotations
 
 import html
+import json
+import mimetypes
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
                                Response)
 
 from . import cluster
+from . import corrections
 from . import config as config_mod
 from . import db, embed, images
 from . import events as events_mod
@@ -156,6 +159,30 @@ details.filters input, details.filters select {{ padding:6px 9px; font-size:14px
   border-radius:3px; background:var(--surface); color:var(--ink-2);
   font-size:14px; }}
 .more a:hover {{ border-color:var(--accent); color:var(--accent); }}
+/* Everyone in one photograph, each with the means to say otherwise. Bigger
+   than the review grid: this is one picture being looked at carefully, not a
+   wall of faces being scanned. */
+.mugs {{ display:flex; gap:12px; flex-wrap:wrap; margin:16px 0 20px; }}
+.mug {{ margin:0; width:170px; background:var(--surface);
+  border:1px solid var(--rule); border-radius:4px; padding:9px; }}
+.mug img {{ display:block; width:100%; aspect-ratio:1; object-fit:cover;
+  border-radius:3px; background:var(--rule); }}
+.mug figcaption {{ display:block; padding:7px 1px 8px; font-size:13px; }}
+.mug figcaption b {{ font-weight:600; }}
+.mug figcaption span {{ display:block; color:var(--ink-3); font-size:11px; }}
+.mug form {{ display:flex; gap:5px; margin:0; }}
+.mug input[type=text] {{ min-width:0; flex:1; padding:5px 7px; font-size:13px;
+  color:var(--ink); background:var(--ground); border:1px solid var(--rule);
+  border-radius:3px; }}
+.mug button {{ padding:5px 8px; font-size:12px; }}
+/* The correction sitting under the fact it corrects, quiet until wanted. */
+.fix {{ margin-top:5px; }}
+.fix form {{ display:flex; gap:6px; margin:0; max-width:none; }}
+.fix input[type=text] {{ padding:5px 9px; font-size:13px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
+.fix button {{ padding:5px 11px; font-size:12px; }}
+tr:not(:hover) .fix {{ opacity:.35; }}
+.fix:focus-within {{ opacity:1 !important; }}
 </style></head><body>
 <header><form action="/" method="get">
   <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
@@ -747,96 +774,316 @@ def create_app(cfg) -> FastAPI:
         return FileResponse(p, media_type="image/webp",
                             headers={"Cache-Control": "public, max-age=604800"})
 
+    def _reachable(con, asset_id: int):
+        """The first path holding this photograph that is actually there.
+
+        An asset has as many paths as copies of it, and a NAS that is asleep,
+        unplugged or renamed has none of them. Trying each in turn and saying
+        plainly when none answers is better than a broken image and a guess.
+        """
+        for f in con.execute("SELECT path FROM files WHERE asset_id = ? "
+                             "ORDER BY missing_since IS NOT NULL, path",
+                             (asset_id,)):
+            try:
+                if Path(pathutil.long_path(f["path"])).exists():
+                    return f["path"]
+            except OSError:
+                continue
+        return None
+
+    @app.get("/full/{asset_id}")
+    def full(asset_id: int, download: int = 0):
+        """The original, at full size, from wherever it actually lives.
+
+        Browsing never pulls a full-size file across the network (§7.5); a
+        deliberate click is not browsing. It is served rather than linked as
+        `file://`, which browsers refuse to follow from a served page.
+        """
+        con = connect()
+        path = _reachable(con, asset_id)
+        if path is None:
+            row = con.execute("SELECT id FROM assets WHERE id = ?",
+                              (asset_id,)).fetchone()
+            if row is None:
+                return HTMLResponse("<p>not found</p>", status_code=404)
+            return HTMLResponse(
+                "<p>Not reachable. Every known copy of this photograph is on "
+                "a drive that is not answering.</p>", status_code=503)
+        kind, _ = mimetypes.guess_type(path)
+        name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+        return FileResponse(
+            pathutil.long_path(path), media_type=kind or "image/jpeg",
+            filename=name if download else None)
+
+    def _fact(k, v, *, note="", edit="") -> str:
+        if v in (None, "") and not edit:
+            return ""
+        return (f'<tr><td style="color:var(--ink-3);padding:5px 16px 5px 0;'
+                f'vertical-align:top;white-space:nowrap">{k}</td>'
+                f'<td style="padding:5px 0">{v}'
+                + (f' <span style="color:var(--ink-3)">&mdash; {note}</span>'
+                   if note else "")
+                + (f'<div class="fix">{edit}</div>' if edit else "")
+                + '</td></tr>')
+
+    def _fix_form(asset_id, kind, back, *, value="", placeholder="", extra="",
+                  wide=260) -> str:
+        return (
+            f'<form method="post" action="/photo/{asset_id}/{kind}">'
+            f'<input type="hidden" name="back" value="{html.escape(back)}">'
+            f'{extra}'
+            f'<input type="text" name="value" value="{html.escape(value)}" '
+            f'placeholder="{html.escape(placeholder)}" '
+            f'style="min-width:{wide}px">'
+            '<button type="submit">put it right</button></form>')
+
+    def _undo_form(asset_id, kind, back, *, idx=None) -> str:
+        return (f'<form method="post" action="/photo/{asset_id}/uncorrect">'
+                f'<input type="hidden" name="back" value="{html.escape(back)}">'
+                f'<input type="hidden" name="kind" value="{kind}">'
+                + (f'<input type="hidden" name="idx" value="{idx}">'
+                   if idx is not None else "")
+                + '<button class="ghost" type="submit">undo</button></form>')
+
+    def _questions(con, asset_id: int) -> str:
+        """Anything in the queue that this photograph is waiting on.
+
+        A photograph belongs to an event and its faces to clusters, and any of
+        them may be a question nobody has answered yet. Reaching them from here
+        saves hunting for the one that mentions this picture.
+        """
+        rows = con.execute(
+            """SELECT q.id, q.kind, q.suggestion FROM review_queue q
+                WHERE q.status = 'open' AND (
+                  (q.kind = 'event' AND q.ref_id IN (
+                      SELECT event_id FROM event_assets WHERE asset_id = ?))
+               OR (q.kind = 'face_cluster' AND q.ref_id IN (
+                      SELECT cluster_id FROM faces
+                       WHERE asset_id = ? AND cluster_id IS NOT NULL)))""",
+            (asset_id, asset_id)).fetchall()
+        if not rows:
+            return ""
+        what = ("one open question" if len(rows) == 1
+                else f"{len(rows)} open questions")
+        return ('<div class="meta" style="padding-left:0">'
+                f'<a href="/review" style="color:var(--accent)">{what}</a> '
+                'about this photograph</div>')
+
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
-    def photo(asset_id: int, back: str = Query(default="/")):
+    def photo(asset_id: int, back: str = Query(default="/"),
+              msg: str = Query(default="")):
         con = connect()
         a = con.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
         if a is None:
             return HTMLResponse("<p>not found</p>", status_code=404)
+        back = safe_back(back)
+        h = a["content_hash"]
+        fixed = {(r["kind"], r["face_idx"]): r
+                 for r in corrections.for_asset(con, h)}
+
         files = con.execute(
             "SELECT path FROM files WHERE asset_id = ? ORDER BY path",
             (asset_id,)).fetchall()
 
-        def row(k, v):
-            return (f'<tr><td style="color:var(--ink-3);padding:3px 16px 3px 0">{k}</td>'
-                    f'<td>{html.escape(str(v))}</td></tr>') if v not in (None, "") else ""
-
-        when = "unknown"
+        when, typed = "unknown", ""
         if a["taken_at"]:
-            _d = datetime.fromtimestamp(a["taken_at"])
-            when = f"{_d.day} {_d:%B %Y}, {_d:%H:%M}"
-        gps = (f'{a["gps_lat"]:.5f}, {a["gps_lon"]:.5f}'
-               if a["gps_lat"] is not None else "")
-        info = "".join([
-            row("taken", f'{when}  ({a["taken_at_source"]}, {a["taken_at_precision"]})'),
-            row("camera", " ".join(filter(None, [a["camera_make"], a["camera_model"]]))),
-            row("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
-            row("gps", gps),
-            _place_row(con, a),
-            _event_row(con, asset_id),
-            row("source", a["source_hint"]),
-            row("conflict", a["conflict_note"]),
-            row("hash", a["content_hash"][:24] + "..."),
-        ])
-        paths = "".join(
-            f'<div style="color:var(--ink-3);font-size:12px;'
-            f'font-family:ui-monospace,monospace;padding:1px 0">'
-            f'{html.escape(f["path"])}</div>' for f in files)
+            d = datetime.fromtimestamp(a["taken_at"])
+            p = a["taken_at_precision"]
+            when = (f"{d:%Y}" if p == "year" else f"{d:%B %Y}" if p == "month"
+                    else f"{d.day} {d:%B %Y}" if p == "day"
+                    else f"{d.day} {d:%B %Y}, {d:%H:%M}")
+            typed = f"{d:%Y-%m-%d}"
 
-        # Who is in it: named people first, then a count of the rest, so a
-        # photograph says what is known without pretending to know more.
+        # Every fact says where it came from. A date and a place are guesses of
+        # very different quality, and one that arrived from a folder name should
+        # never read like one measured by a satellite (§8.2).
+        date_note = f'{a["taken_at_source"]}, {a["taken_at_precision"]}'
+        if ("date", -1) in fixed:
+            date_note = "put right by hand"
+        info = "".join([
+            _fact("taken", html.escape(when), note=date_note,
+                  edit=(_undo_form(asset_id, "date", back)
+                        if ("date", -1) in fixed else
+                        _fix_form(asset_id, "date", back, value=typed,
+                                  placeholder="1998-07, or kesä 1998"))),
+            _fact("camera", html.escape(" ".join(filter(
+                None, [a["camera_make"], a["camera_model"]])))),
+            _fact("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
+            _fact("gps", (f'{a["gps_lat"]:.5f}, {a["gps_lon"]:.5f}'
+                          if a["gps_lat"] is not None else "")),
+            _place_fact(con, a, asset_id, back, ("place", -1) in fixed),
+            _event_row(con, asset_id),
+            _fact("source", html.escape(a["source_hint"] or "")),
+            _fact("conflict", html.escape(a["conflict_note"] or "")),
+            _fact("hash", h[:24] + "&hellip;"),
+        ])
+
+        # Who is in it, and the means to say otherwise. Correcting a face here
+        # is one row and outranks the clusterer for good (§4.7).
         in_photo = con.execute(
-            """SELECT fa.id, fa.idx, fa.cluster_id, p.id AS pid, p.name
+            """SELECT fa.idx, fa.cluster_id, p.id AS pid, p.name
                FROM faces fa LEFT JOIN persons p ON p.id = fa.person_id
-               WHERE fa.asset_id = ? ORDER BY p.name IS NULL, fa.idx""",
+               WHERE fa.asset_id = ? ORDER BY fa.idx""",
             (asset_id,)).fetchall()
         who = ""
         if in_photo:
-            chips = []
+            cards = []
             for f in in_photo:
-                href = (f'/person/{f["pid"]}' if f["pid"]
-                        else (f'/cluster/{f["cluster_id"]}' if f["cluster_id"] else None))
-                label = f["name"] or "unnamed"
-                chip = (f'<img src="/face/{a["content_hash"]}/{f["idx"]}" '
-                        f'style="width:34px;height:34px;border-radius:50%;'
-                        f'object-fit:cover;vertical-align:middle;margin-right:6px">'
-                        f'<span class="chip">{html.escape(label)}</span>')
-                chips.append(f'<a href="{href}">{chip}</a>' if href else chip)
-            who = ('<div style="margin:14px 0;display:flex;gap:14px;'
-                   'align-items:center;flex-wrap:wrap">' + "".join(chips) + '</div>')
+                fix = fixed.get(("person", f["idx"]))
+                name = fix["value"] if fix else f["name"]
+                href = (f'/person/{f["pid"]}' if f["pid"] and not fix else
+                        (f'/cluster/{f["cluster_id"]}' if f["cluster_id"]
+                         and not fix else None))
+                label = html.escape(name or "not named")
+                if href:
+                    label = f'<a href="{href}">{label}</a>'
+                cards.append(
+                    '<figure class="mug">'
+                    f'<img src="/face/{h}/{f["idx"]}" alt="">'
+                    f'<figcaption><b>{label}</b>'
+                    + ('<span>by hand</span>' if fix else "")
+                    + '</figcaption>'
+                    + (_undo_form(asset_id, "person", back, idx=f["idx"]) if fix
+                       else _fix_form(asset_id, "person", back,
+                                      placeholder="who is this?", wide=150,
+                                      extra=f'<input type="hidden" name="idx" '
+                                            f'value="{f["idx"]}">'))
+                    + '</figure>')
+            who = f'<div class="mugs">{"".join(cards)}</div>'
+
+        paths = "".join(
+            f'<div style="color:var(--ink-3);font-size:12px;'
+            f'font-family:ui-monospace,monospace;padding:1px 0;'
+            f'word-break:break-all">{html.escape(f["path"])}</div>'
+            for f in files)
+
+        note = (f'<div class="offer" style="padding-left:0">{html.escape(msg)}</div>'
+                if msg else "")
         body = (
-            f'<div style="max-width:1100px;margin:0 auto;padding:20px">'
-            f'<a href="{html.escape(safe_back(back))}" '
-            f'style="color:var(--accent)">&larr; back</a>'
-            f'<img src="/thumb/m/{a["content_hash"]}" '
-            f'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
-            f'{who}'
-            f'<table style="font-size:14px">{info}</table>'
+            '<div style="max-width:1100px;margin:0 auto;padding:20px">'
+            f'<a href="{html.escape(back)}" style="color:var(--accent)">'
+            '&larr; back</a>'
+            f'<img src="/thumb/m/{h}" '
+            'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
+            '<div class="more" style="padding:0 0 14px">'
+            f'<a href="/full/{asset_id}">see the original</a>'
+            f'<a href="/full/{asset_id}?download=1">download it</a>'
+            '</div>'
+            + note + _questions(con, asset_id) + who
+            + f'<table style="font-size:14px">{info}</table>'
             f'<div style="margin-top:14px">{paths}</div></div>')
         return HTMLResponse(PAGE.format(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus="",
             placeholder="kids on a beach at sunset"))
 
-    def _place_row(con, a) -> str:
+    def _hash_of(con, asset_id: int):
+        r = con.execute("SELECT content_hash FROM assets WHERE id = ?",
+                        (asset_id,)).fetchone()
+        return None if r is None else r["content_hash"]
+
+    def _back_to(asset_id, back, msg="") -> RedirectResponse:
+        to = f"/photo/{asset_id}?back={quote_plus(back)}"
+        if msg:
+            to += f"&msg={quote_plus(msg)}"
+        return RedirectResponse(to, status_code=303)
+
+    @app.post("/photo/{asset_id}/date")
+    def fix_date(asset_id: int, value: str = Form(default=""),
+                 back: str = Form(default="/")):
+        con = connect()
+        h = _hash_of(con, asset_id)
+        if h is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        text = value.strip()
+        if text and query.parse_date(text) is None:
+            return _back_to(asset_id, back,
+                            f"{text!r} is not a date I can read. "
+                            "Try 1998, 1998-07, or kesä 1998.")
+        corrections.record(con, "date", h, text or None)
+        con.commit()
+        return _back_to(asset_id, back)
+
+    @app.post("/photo/{asset_id}/place")
+    def fix_place(asset_id: int, value: str = Form(default=""),
+                  back: str = Form(default="/")):
+        con = connect()
+        h = _hash_of(con, asset_id)
+        if h is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        text = value.strip()
+        path = None
+        if text:
+            # Whichever place of that name this library knows best, which is the
+            # same rule the search box uses (§7.1).
+            counts = subtree_counts(con)
+            found = sorted(places_mod.lookup(con, text, limit=12),
+                           key=lambda r: -counts.get(r["id"], 0))
+            if not found:
+                return _back_to(asset_id, back,
+                                f"No place called {text!r} in the gazetteer.")
+            path = found[0]["path"]
+        corrections.record(con, "place", h, path)
+        con.commit()
+        return _back_to(asset_id, back)
+
+    @app.post("/photo/{asset_id}/person")
+    def fix_person(asset_id: int, idx: int = Form(...),
+                   value: str = Form(default=""), back: str = Form(default="/")):
+        con = connect()
+        h = _hash_of(con, asset_id)
+        if h is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        row = con.execute("SELECT bbox FROM faces WHERE asset_id = ? AND idx = ?",
+                          (asset_id, idx)).fetchone()
+        if row is None:
+            return HTMLResponse("<p>no such face</p>", status_code=404)
+        name = value.strip()
+        if name:
+            cluster.person_id_for(con, name)     # creates the person if new
+        corrections.record(con, "person", h, name or None, face_idx=idx,
+                           face_bbox=json.loads(row["bbox"]))
+        con.commit()
+        return _back_to(asset_id, back)
+
+    @app.post("/photo/{asset_id}/uncorrect")
+    def uncorrect(asset_id: int, kind: str = Form(...),
+                  idx: int = Form(default=-1), back: str = Form(default="/")):
+        con = connect()
+        h = _hash_of(con, asset_id)
+        if h is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        corrections.clear(con, kind, h, face_idx=idx)
+        con.commit()
+        return _back_to(
+            asset_id, back,
+            "Withdrawn. The application's own answer comes back the next time "
+            "it works one out.")
+
+    def _place_fact(con, a, asset_id, back, corrected: bool) -> str:
         """Where this was taken, and -- always -- on what evidence.
 
-        A coordinate and a folder name are not the same kind of claim, and the
-        page says which one it is rather than letting a guess look like a
-        measurement.
+        A coordinate and a folder name are not the same kind of claim, and a
+        third kind arrives once somebody says so themselves. The row names which
+        it is rather than letting a guess look like a measurement.
         """
-        if not a["place_id"]:
-            return ""
-        p = con.execute("SELECT id, name, path FROM places WHERE id = ?",
-                        (a["place_id"],)).fetchone()
-        if p is None:
-            return ""
-        where = " · ".join(reversed(p["path"].split("/")))
-        note = ("from the coordinate" if a["place_source"] == "gps"
-                else "from the folder name")
-        return ('<tr><td style="color:var(--ink-3);padding:3px 16px 3px 0">place</td>'
-                f'<td><a href="/place/{p["id"]}" style="color:var(--accent)">'
-                f'{html.escape(where)}</a> '
-                f'<span style="color:var(--ink-3)">&mdash; {note}</span></td></tr>')
+        where, note = "", ""
+        if a["place_id"]:
+            p = con.execute("SELECT id, name, path FROM places WHERE id = ?",
+                            (a["place_id"],)).fetchone()
+            if p is not None:
+                trail = " · ".join(reversed(p["path"].split("/")))
+                where = (f'<a href="/place/{p["id"]}" style="color:var(--accent)">'
+                         f'{html.escape(trail)}</a>')
+                note = {"gps": "from the coordinate",
+                        "folder": "from the folder name",
+                        "corrected": "put right by hand"}.get(
+                            a["place_source"], a["place_source"] or "")
+        elif corrected:
+            where, note = "nowhere", "put right by hand"
+        edit = (_undo_form(asset_id, "place", back) if corrected else
+                _fix_form(asset_id, "place", back,
+                          placeholder="a town, or empty for nowhere"))
+        return _fact("place", where, note=note, edit=edit)
 
     # ----------------------------------------------------------------------
     # Places

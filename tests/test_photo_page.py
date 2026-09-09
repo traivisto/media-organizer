@@ -1,0 +1,194 @@
+"""The photograph screen: what it says, and putting it right (spec §8.2).
+
+This is where the archive is checked against somebody's memory, so the tests are
+about two things. Every fact must say where it came from -- a date read off a
+folder name should never look like one measured by a camera -- and every one a
+person disagrees with must be correctable from the place it is displayed.
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from mediaidx import corrections, db, faces, serve
+from mediaidx.config import Config
+
+
+def cfg_for(tmp_path, dbp) -> Config:
+    return Config(database=dbp, thumbnails=tmp_path / "thumbs", logs=tmp_path,
+                  names_export=None)
+
+
+@pytest.fixture
+def client(tmp_path):
+    """One photograph, two faces, a wrong place and a doubtful date."""
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) VALUES "
+                "(1, 'locality', 'Alicante', 'Spain/Valencia/Alicante', 900)")
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) VALUES "
+                "(2, 'locality', 'Hartola', 'Finland/Paijat-Hame/Hartola', 90)")
+    for pid, norm in ((1, "alicante"), (2, "hartola")):
+        con.execute("INSERT INTO place_names (place_id, norm, own) "
+                    "VALUES (?,?,1)", (pid, norm))
+
+    aid = db.insert_asset(con, "a" * 64, {
+        "format": "jpeg", "taken_at": 1_020_000_000, "width": 4272,
+        "height": 2848, "camera_make": "Canon", "camera_model": "EOS 400D",
+        "taken_at_source": "folder", "taken_at_precision": "month",
+        "date_conflict": 1, "conflict_note": "exif 2002-05 vs folder 2002-04"})
+    con.execute("UPDATE assets SET place_id = 1, place_source = 'folder' "
+                "WHERE id = ?", (aid,))
+    con.execute("""INSERT INTO files (path, asset_id, size_bytes, mtime,
+                                      first_seen, last_seen)
+                   VALUES ('\\\\nas\\Pictures\\2002\\IMG_1.jpg',?,1,1,1,1)""",
+                (aid,))
+
+    rng = np.random.default_rng(5)
+    for i in range(2):
+        v = rng.normal(size=faces.DIM)
+        v = (v / np.linalg.norm(v)).astype(np.float32)
+        con.execute(
+            """INSERT INTO faces (asset_id, idx, bbox, det_score, blur_score,
+                                  embedding)
+               VALUES (?,?,?,0.9,9.0,?)""",
+            (aid, i, json.dumps([0.1 + 0.4 * i, 0.1, 0.2, 0.2]),
+             faces.pack(v)))
+    con.execute("INSERT INTO persons (id, name, source, created_at) "
+                "VALUES (1, 'Ansku', 'manual', 0)")
+    con.execute("UPDATE faces SET person_id = 1 WHERE asset_id = ? AND idx = 0",
+                (aid,))
+    con.commit()
+    con.close()
+    return TestClient(serve.create_app(cfg_for(tmp_path, dbp))), aid
+
+
+# --------------------------------------------------------------------------
+# Saying what it knows
+# --------------------------------------------------------------------------
+
+def test_every_fact_names_its_source(client):
+    """A folder-derived date must not read like a measured one."""
+    c, aid = client
+    body = c.get(f"/photo/{aid}").text
+    assert "folder, month" in body
+    assert "from the folder name" in body
+    assert "exif 2002-05 vs folder 2002-04" in body
+
+
+def test_it_says_who_is_in_it_and_who_is_not_named(client):
+    c, aid = client
+    body = c.get(f"/photo/{aid}").text
+    assert "Ansku" in body
+    assert "not named" in body
+
+
+def test_the_original_is_offered_but_never_loaded_for_browsing(client):
+    """Browsing must not pull a full-size file across the network (§7.5)."""
+    c, aid = client
+    body = c.get(f"/photo/{aid}").text
+    assert f'href="/full/{aid}"' in body           # a deliberate click
+    assert f'src="/full/{aid}"' not in body        # never the page's own image
+    assert "/thumb/m/" in body
+
+
+def test_an_unreachable_original_says_so(client):
+    """The fixture's path is a NAS that does not exist on this machine."""
+    c, aid = client
+    r = c.get(f"/full/{aid}")
+    assert r.status_code == 503
+    assert "not answering" in r.text
+
+
+# --------------------------------------------------------------------------
+# Putting it right
+# --------------------------------------------------------------------------
+
+def test_a_date_can_be_corrected_where_it_is_shown(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/date", data={"value": "1998-07", "back": "/"})
+    body = c.get(f"/photo/{aid}").text
+    assert "July 1998" in body
+    assert "put right by hand" in body
+    assert "exif 2002-05" not in body, "the conflict outlived its settlement"
+
+
+def test_a_date_it_cannot_read_is_refused_with_an_explanation(client):
+    c, aid = client
+    r = c.post(f"/photo/{aid}/date", data={"value": "last summer", "back": "/"},
+               follow_redirects=True)
+    assert "not a date I can read" in r.text
+    assert "2002" in r.text, "the original date was thrown away anyway"
+
+
+def test_a_place_can_be_corrected_by_name(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/place", data={"value": "Hartola", "back": "/"})
+    body = c.get(f"/photo/{aid}").text
+    assert "Hartola" in body
+    assert "put right by hand" in body
+
+
+def test_a_place_nobody_has_heard_of_is_refused(client):
+    c, aid = client
+    r = c.post(f"/photo/{aid}/place", data={"value": "Narnia", "back": "/"},
+               follow_redirects=True)
+    assert "No place called" in r.text
+
+
+def test_a_photograph_can_be_said_to_be_nowhere(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/place", data={"value": "", "back": "/"})
+    body = c.get(f"/photo/{aid}").text
+    assert "nowhere" in body
+
+
+def test_a_face_can_be_given_the_right_name(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/person",
+           data={"idx": "1", "value": "Tommi", "back": "/"})
+    body = c.get(f"/photo/{aid}").text
+    assert "Tommi" in body
+    assert "by hand" in body
+
+
+def test_correcting_a_face_records_its_box_not_just_its_index(client, tmp_path):
+    """`idx` is the detector's output order and means nothing between runs."""
+    c, aid = client
+    c.post(f"/photo/{aid}/person",
+           data={"idx": "1", "value": "Tommi", "back": "/"})
+    con = db.connect(tmp_path / "photos.db")
+    row = corrections.for_asset(con, "a" * 64)[0]
+    assert json.loads(row["face_bbox"])[0] == pytest.approx(0.5)
+
+
+def test_a_correction_can_be_withdrawn(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/date", data={"value": "1998-07", "back": "/"})
+    r = c.post(f"/photo/{aid}/uncorrect",
+               data={"kind": "date", "idx": "-1", "back": "/"},
+               follow_redirects=True)
+    assert "Withdrawn" in r.text
+    assert "comes back the next time" in r.text
+
+
+def test_the_way_back_is_carried_through_a_correction(client):
+    c, aid = client
+    r = c.post(f"/photo/{aid}/date",
+               data={"value": "1998-07", "back": "/?q=Ansku"},
+               follow_redirects=False)
+    assert "back=%2F%3Fq%3DAnsku" in r.headers["location"]
+
+
+def test_the_way_back_through_a_correction_stays_local(client):
+    c, aid = client
+    c.post(f"/photo/{aid}/date",
+           data={"value": "1998-07", "back": "https://example.com/"})
+    body = c.get(f"/photo/{aid}", params={"back": "https://example.com/"}).text
+    assert "example.com" not in body
