@@ -17,7 +17,7 @@ import sqlite3
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from fastapi import FastAPI, Form, Query
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
@@ -129,6 +129,11 @@ nav a:hover {{ color:var(--accent); }}
   overflow:hidden; background:var(--surface); max-width:620px;
   scroll-margin-top:110px; }}
 #where {{ scroll-margin-top:110px; }}
+/* Previous and next, sitting with the way back. */
+.walk {{ display:inline-flex; gap:14px; align-items:center; margin-left:20px;
+  font-size:13px; }}
+.walk a {{ color:var(--ink-2); }}
+.walk a:hover {{ color:var(--accent); }}
 .map iframe {{ display:block; width:100%; height:300px; border:0; }}
 /* What the box understood. These are the interface, not decoration: each one
    states a criterion and carries the link that removes it, so the whole thing
@@ -302,6 +307,23 @@ def create_app(cfg) -> FastAPI:
         return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def subtree_counts(con) -> dict:
+        """Cached, because it is now asked on every page rather than per search.
+
+        The walk from one photograph to the next resolves the query again each
+        time, and this recursive count was the largest part of that: 202 ms a
+        photograph against 16 ms for a page that does not need it. The count of
+        placed photographs is the key, so `places` or `derive` putting anything
+        anywhere new invalidates it, and a stale answer cannot outlive a change.
+        """
+        placed = con.execute(
+            "SELECT COUNT(*) FROM assets WHERE place_id IS NOT NULL").fetchone()[0]
+        if state.get("counts_at") == placed:
+            return state["counts"]
+        got = _subtree_counts(con)
+        state["counts_at"], state["counts"] = placed, got
+        return got
+
+    def _subtree_counts(con) -> dict:
         """photographs in each place *and everything under it*.
 
         Counted upwards from the places actually used, so this walks a few
@@ -417,11 +439,16 @@ def create_app(cfg) -> FastAPI:
                               (t.ref_id,)).fetchone()
             if row is None:
                 continue
-            # Naming any level matches everything beneath it, with one indexed
-            # comparison and no recursion (§7.2).
+            # Naming any level matches everything beneath it (§7.2). As a range
+            # rather than as `LIKE 'X/%'`, which cannot use the index on `path`
+            # -- LIKE is case-insensitive by default, so SQLite scans all
+            # 285,144 places instead. That showed up walking a result: four such
+            # scans a photograph, 200 ms each time. '/' is 0x2F and '0' is 0x30,
+            # so everything under "X/" sorts between "X/" and "X0" and nothing
+            # else does.
             preds.append("""a.place_id IN (SELECT id FROM places
-                             WHERE path = ? OR path LIKE ? ESCAPE '\\')""")
-            args.extend([row["path"], _like(row["path"]) + "/%"])
+                             WHERE path = ? OR (path > ? AND path < ?))""")
+            args.extend([row["path"], row["path"] + "/", row["path"] + "0"])
 
         for t in r.events:
             # Matched by name, not by id: three separate holidays are called
@@ -638,7 +665,7 @@ def create_app(cfg) -> FastAPI:
                 f"SELECT COUNT(*) FROM assets a{clause}", args).fetchone()[0]
             rows = con.execute(
                 f"SELECT {cols} FROM assets a{clause} "
-                "ORDER BY a.taken_at DESC LIMIT ? OFFSET ?",
+                "ORDER BY a.taken_at DESC, a.id DESC LIMIT ? OFFSET ?",
                 [*args, PAGE_SIZE, page * PAGE_SIZE]).fetchall()
             # Genuinely nothing indexed -- not merely nothing matching, which a
             # filter can produce on a full library and which must not be
@@ -812,7 +839,8 @@ def create_app(cfg) -> FastAPI:
                        (SELECT f.size_bytes FROM files f WHERE f.asset_id = a.id
                          ORDER BY f.missing_since IS NOT NULL, f.path LIMIT 1) AS size
                   FROM assets a{f" WHERE {where}" if where else ""}
-                 ORDER BY a.taken_at DESC LIMIT ?""", [*args, limit]).fetchall()
+                 ORDER BY a.taken_at DESC, a.id DESC LIMIT ?""",
+            [*args, limit]).fetchall()
         seen: dict = {}
         out = []
         for r in rows:
@@ -1100,6 +1128,133 @@ def create_app(cfg) -> FastAPI:
                 f'<a href="/review" style="color:var(--accent)">{what}</a> '
                 'about this photograph</div>')
 
+    def _search_from(back: str):
+        """The search a photograph was opened from, read back out of `back`.
+
+        The way back already carries the whole question -- the words, the
+        filters, whether the weaker results were being shown. Reading it again
+        here is what lets the arrows follow that result rather than some other
+        order, and it means nothing has to be remembered between requests.
+        """
+        parts = urlparse(back or "/")
+        if parts.path not in ("", "/"):
+            return None                      # opened from a person, place, event
+        qs = parse_qs(parts.query)
+
+        def one(k):
+            return (qs.get(k) or [""])[0].strip()
+
+        return (one("q"), {k: one(k) for k in FILTERS},
+                1 if one("more") in ("1", "true") else 0)
+
+    def _ranked_ids(con, key, r, where, args, more):
+        """The ranked result, in order, kept for as long as it is being walked.
+
+        Arrowing through fifty photographs would otherwise encode the query and
+        search the index fifty times over for an answer that cannot have
+        changed. One entry is enough: a person looks at one result set at a time.
+        """
+        if state.get("ranked_key") == key:
+            return state["ranked_ids"]
+        cand = None
+        if where:
+            cand = [x[0] for x in con.execute(
+                f"SELECT a.id FROM assets a WHERE {where}", args)]
+            if not cand:
+                return []
+        vec = encoder().encode_text([r.text])[0]
+        hits = embed.search(con, vec, limit=MAX_RANKED,
+                            vec_ok=state["vec_ok"], candidate_ids=cand)
+        keep = hits if more else hits[:embed.cut([s for _, s in hits])]
+        ids = [a for a, _ in keep]
+        state["ranked_key"], state["ranked_ids"] = key, ids
+        return ids
+
+    def _neighbours(con, asset_id: int, back: str):
+        """(previous, next, position, total) within the result this came from.
+
+        An exact result is ordered by date, so its neighbours are two indexed
+        comparisons rather than a list -- the whole 39,884 need not be built to
+        find the one photograph either side. A ranked result has no such
+        shortcut, its order being the scores themselves, so that one is
+        recomputed and held.
+        """
+        got = _search_from(back)
+        if got is None:
+            return None
+        q, f, more = got
+        r = query.resolve(con, q, place_counts=subtree_counts(con))
+        where, args = _where(con, r, f)
+        pred = f" AND {where}" if where else ""
+
+        if not r.text:
+            cur = con.execute(
+                "SELECT COALESCE(taken_at, 0) t, id FROM assets WHERE id = ?",
+                (asset_id,)).fetchone()
+            if cur is None:
+                return None
+            key = (cur["t"], cur["id"])
+            # Ordered by date and then id: a burst shares a second, and without
+            # the id the order is not total and the walk could loop.
+            nxt = con.execute(
+                f"""SELECT a.id FROM assets a
+                     WHERE (COALESCE(a.taken_at,0), a.id) < (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) DESC, a.id DESC LIMIT 1""",
+                [*key, *args]).fetchone()
+            prv = con.execute(
+                f"""SELECT a.id FROM assets a
+                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) ASC, a.id ASC LIMIT 1""",
+                [*key, *args]).fetchone()
+            before = con.execute(
+                f"""SELECT COUNT(*) FROM assets a
+                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}""",
+                [*key, *args]).fetchone()[0]
+            total = con.execute(
+                f"SELECT COUNT(*) FROM assets a"
+                + (f" WHERE {where}" if where else ""), args).fetchone()[0]
+            return (prv["id"] if prv else None, nxt["id"] if nxt else None,
+                    before + 1, total)
+
+        ids = _ranked_ids(con, (q, tuple(sorted(f.items())), more),
+                          r, where, args, more)
+        if asset_id not in ids:
+            return None
+        i = ids.index(asset_id)
+        return (ids[i - 1] if i > 0 else None,
+                ids[i + 1] if i + 1 < len(ids) else None,
+                i + 1, len(ids))
+
+    def _walk(con, asset_id, back) -> str:
+        """Previous and next, following whatever brought the reader here."""
+        got = _neighbours(con, asset_id, back)
+        if got is None:
+            return ""
+        prv, nxt, at, total = got
+        b = quote_plus(back)
+
+        def step(aid, label, side):
+            if aid is None:
+                return f'<span class="rest" style="opacity:.35">{label}</span>'
+            return (f'<a href="/photo/{aid}?back={b}" id="go-{side}" '
+                    f'rel="{side}">{label}</a>')
+
+        return ('<div class="walk">'
+                + step(prv, "&lsaquo; previous", "prev")
+                + f'<span class="rest">{at:,} of {total:,}</span>'
+                + step(nxt, "next &rsaquo;", "next")
+                + '</div>')
+
+    # Arrow keys, because a result set is walked rather than clicked through.
+    # The same handful of lines as the review screen's Escape: no framework,
+    # and the links work without it.
+    WALK_KEYS = (
+        "<script>document.addEventListener('keydown',function(e){"
+        "if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;"
+        "var k=e.key==='ArrowLeft'?'go-prev':e.key==='ArrowRight'?'go-next':0;"
+        "if(!k)return;var a=document.getElementById(k);"
+        "if(a){e.preventDefault();a.click();}});</script>")
+
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
     def photo(asset_id: int, back: str = Query(default="/"),
               msg: str = Query(default=""), map: int = 0):
@@ -1194,7 +1349,8 @@ def create_app(cfg) -> FastAPI:
             '<div style="max-width:1100px;margin:0 auto;padding:20px">'
             f'<a href="{html.escape(back)}" style="color:var(--accent)">'
             '&larr; back</a>'
-            f'<img src="/thumb/m/{h}" '
+            + _walk(con, asset_id, back)
+            + f'<img src="/thumb/m/{h}" '
             'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
             '<div class="more" style="padding:0 0 14px">'
             f'<a href="/full/{asset_id}">see the original</a>'
@@ -1202,7 +1358,8 @@ def create_app(cfg) -> FastAPI:
             '</div>'
             + note + _questions(con, asset_id) + who
             + f'<table style="font-size:14px">{info}</table>'
-            f'<div style="margin-top:14px">{paths}</div></div>')
+            f'<div style="margin-top:14px">{paths}</div></div>'
+            + WALK_KEYS)
         return HTMLResponse(PAGE.format(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus="",
             placeholder="kids on a beach at sunset"))

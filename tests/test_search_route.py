@@ -267,3 +267,90 @@ def test_a_filter_matching_nothing_is_not_an_empty_archive(client):
     """150 photographs are indexed; none has exactly two faces."""
     body = client.get("/", params={"who": "2"}).text
     assert "Nothing indexed yet" not in body
+
+
+# --------------------------------------------------------------------------
+# Walking the result
+# --------------------------------------------------------------------------
+
+def _ids_on(client, **params):
+    body = client.get("/", params=params).text
+    import re
+    return [int(m) for m in re.findall(r'href="/photo/(\d+)\?back=', body)]
+
+
+def test_the_arrows_follow_the_result_that_led_here(client):
+    """Not the whole library, and not the database's own order."""
+    ids = _ids_on(client, q="Alicante")
+    back = "/?q=Alicante"
+    body = client.get(f"/photo/{ids[1]}", params={"back": back}).text
+    assert f'/photo/{ids[0]}?back=' in body        # previous
+    assert f'/photo/{ids[2]}?back=' in body        # next
+    assert "2 of 75" in body
+
+
+def test_the_first_has_no_previous_and_the_last_no_next(client):
+    ids = _ids_on(client, q="Alicante")
+    first = client.get(f"/photo/{ids[0]}", params={"back": "/?q=Alicante"}).text
+    assert "1 of 75" in first
+    assert 'id="go-prev"' not in first
+    assert 'id="go-next"' in first
+
+
+def test_a_filter_narrows_what_the_arrows_walk(client):
+    back = "/?q=Alicante&cam=K-70"
+    ids = _ids_on(client, q="Alicante", cam="K-70")
+    body = client.get(f"/photo/{ids[0]}", params={"back": back}).text
+    assert f"of {len(ids)}" in body
+    assert "of 75" not in body
+
+
+def test_the_walk_crosses_a_page_boundary(client):
+    """A result of 150 pages at 120; the arrows must not stop at the seam."""
+    ids = _ids_on(client, page=0)
+    last_on_page = ids[-1]
+    body = client.get(f"/photo/{last_on_page}", params={"back": "/?page=0"}).text
+    assert "120 of 150" in body
+    assert 'id="go-next"' in body, "the walk stopped at the end of the page"
+
+
+def test_a_photograph_opened_from_elsewhere_has_no_arrows(client):
+    """Arriving from a person or a place is not a search to walk."""
+    ids = _ids_on(client)
+    body = client.get(f"/photo/{ids[0]}", params={"back": "/person/1"}).text
+    assert 'id="go-next"' not in body
+    assert "of 150" not in body
+
+
+def test_the_ranked_result_is_walked_in_its_own_order(client):
+    ids = _ids_on(client, q="text:whatever")
+    back = "/?q=text%3Awhatever"
+    body = client.get(f"/photo/{ids[1]}", params={"back": back}).text
+    assert f'/photo/{ids[0]}?back=' in body
+    assert f'/photo/{ids[2]}?back=' in body
+    assert "2 of 15" in body, "the cut should bound the walk too"
+
+
+def test_showing_the_weaker_results_lengthens_the_walk(client):
+    ids = _ids_on(client, q="text:whatever", more=1)
+    back = "/?q=text%3Awhatever&more=1"
+    body = client.get(f"/photo/{ids[0]}", params={"back": back}).text
+    assert "1 of 150" in body
+
+
+def test_the_arrows_carry_the_way_back_onward(client):
+    ids = _ids_on(client, q="Alicante")
+    body = client.get(f"/photo/{ids[0]}", params={"back": "/?q=Alicante"}).text
+    assert "back=%2F%3Fq%3DAlicante" in body
+
+
+def test_the_place_counts_are_not_recomputed_for_every_photograph(client):
+    """The walk resolves the query again per photograph; this dominated it."""
+    ids = _ids_on(client, q="Alicante")
+    for i in ids[:3]:
+        client.get(f"/photo/{i}", params={"back": "/?q=Alicante"})
+    # A cache that never invalidates is worse than none: placing a photograph
+    # somewhere new must be visible at once.
+    import sqlite3
+    body = client.get("/", params={"q": "Alicante"}).text
+    assert "75 photographs" in body
