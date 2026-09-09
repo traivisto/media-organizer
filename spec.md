@@ -1722,6 +1722,22 @@ None blocking.
 - **Person-folder genitive mapping** — removed rather than answered. The application no longer
   reads person names out of folder names; `add --person` states the name explicitly, so
   `Anskun → Anski` never needs inverting.
+- **Whether a name may be typed inflected** — no. Decided 2026-09-09: a name, a place and an event
+  are matched exactly, and Finnish case endings are not stripped. `Anskun` does not find Ansku.
+
+  What *is* still exact, and stays: case and diacritics fold, so `AAKKONEN` and `aakkonen` both find
+  Ääkkönen; one word of a name resolves where it names only one person; and an administrative area
+  answers to the settlement it wraps. Each of those is an exact match on a normalised form or on a
+  whole name-word. Stripping an inflection is not — it is a guess about morphology, and a cheap one
+  goes wrong immediately: accepting up to three trailing letters would make a person called `Kai`
+  match `kaikki`, an ordinary Finnish word.
+
+  **The cost is that being one letter wrong is silent.** The suggestion strip looks for the query
+  *inside* a name, so a longer query matches nothing at all: `Anskun` produces no chip, no
+  suggestion and no explanation, and the word goes to the encoder as a description. Exactness is a
+  reasonable rule only if the interface says when a word came close, so the strip should also match
+  the other way round — a suggestion, not a fuzzy resolution, and the chips stay exact.
+
 - **How mixed criteria are entered** — resolved chips (§7.1), over a field per aspect, a sigil
   syntax, or a language model parsing the query. Chips need nothing learned and are the only one
   of the four that makes a *misreading* visible and correctable, which this library needs: it
