@@ -129,8 +129,10 @@ Embeddings are stored. Re-clustering, merging identities, or changing search str
 require re-reading the NAS.
 
 **P6 — The index is disposable.**
-Deleting the database and rebuilding must lose nothing except user-supplied names, which are
-exportable and re-importable.
+Deleting the database and rebuilding must lose nothing except what a person supplied by hand —
+names and corrections (§4.7) — which are exportable and re-importable, and which P8 requires be kept
+through every lesser operation as well. Everything else is derived, and derived data is never the
+record of a human decision.
 
 **P7 — The application knows nothing about any particular drive.**
 It indexes exactly the folders it is given, and no others. No host, share, folder name or naming
@@ -139,6 +141,17 @@ specific to a library — where it lives, how its folders are named, which folde
 person — arrives as a command argument or a config entry supplied by the user. Pointing the
 application at a second NAS, a local drive or an external disk requires no code change, and a
 library that follows no convention at all still indexes correctly, just with less metadata.
+
+**P8 — Nothing done by hand is ever lost.**
+A name, a merge, a rejection, a correction — anything a person supplied — survives every operation
+the application can perform on itself: re-scanning a folder, re-reading metadata, re-detecting faces,
+re-clustering, rebuilding the derived tables, or deleting the database and building it again. Human
+effort is the only input that cannot be recomputed, so it is anchored to the *content* of a
+photograph and never to a row id, a path, or an ordering that a re-run may reassign. Where an
+operation cannot preserve it, the operation is wrong and not the expectation. This is why corrections
+are consulted where values are derived rather than stamped on afterwards (§4.7), and why a face is
+re-identified by where it sits in the frame rather than by its position in a detector's output
+(§5.2).
 
 ---
 
@@ -523,7 +536,77 @@ from there, and a row that is neither is simply gone. `skipped` is the one
 status worth keeping, and only until the next `derive` — which is precisely
 what skipping means.
 
-### 4.7 Storage budget
+### 4.7 Corrections
+
+Everything in §4.3–§4.6 is derived, and `mediaidx derive` rebuilds it from nothing. So a correction
+made by hand cannot be an edit of those tables — the next rebuild would silently revert it — but an
+**input consulted while they are rebuilt**. This is the rule that already governs a rejected
+folder-place match (§6.3), generalised to everything a person can put right by hand.
+
+```sql
+CREATE TABLE corrections (
+  id           INTEGER PRIMARY KEY,
+  kind         TEXT NOT NULL,     -- date | place | person
+  content_hash TEXT NOT NULL,     -- the photograph; never assets.id
+  face_idx     INTEGER,           -- kind = person: which face within it; otherwise NULL
+  face_bbox    TEXT,              -- kind = person: the durable anchor; see below
+  value        TEXT,              -- the correct answer; NULL asserts that none is right
+  note         TEXT,              -- optional, in the user's own words
+  created_at   INTEGER NOT NULL,
+  UNIQUE (kind, content_hash, face_idx)
+);
+```
+
+**Keyed by content hash, never by row id.** `assets.id` and `faces.id` are regenerated whenever a
+stage is re-run, so a correction stored by id would come back pointing at something unrelated — which
+is exactly why place rejections are keyed by path. The content hash identifies the photograph itself
+and survives a move, a rename, a re-scan, a re-add, and a database built from nothing.
+
+**A face is anchored by its box, not by its index.** `faces.idx` is the detector's output order
+(§5.2), and stage 2 replaces every face row for a photograph when it re-runs, so `idx = 2` after a
+re-detection may be a different person entirely. The bounding box is stored as fractions of the
+image rather than pixels (§4.4), which makes it stable across a re-detection and a resize alike, so
+a correction re-attaches to whichever new face overlaps its recorded box most — and to none, if the
+detector no longer finds a face there. `face_idx` is kept as the fast path for the common case where
+nothing has been re-detected; `face_bbox` is what makes the correction survive when it has (P8).
+
+**The boundary.** A correction is tied to the bytes of a photograph. Re-encoding, rotating or
+re-saving the file produces a different content hash and therefore a different photograph, and the
+correction does not follow it. This is a deliberate limit rather than an oversight: at that point the
+application cannot tell a re-saved original from a different picture, and inventing a link between
+them would be a guess presented as a record. Under P1 the archive is read-only, so nothing the
+application does can trigger this — only an edit made elsewhere.
+
+| Kind | Corrects | Consulted by |
+|---|---|---|
+| `date` | `assets.taken_at`, where EXIF, folder and filename disagree | stage 1, `events` |
+| `place` | `assets.place_id` for one photograph | `places` |
+| `person` | `faces.person_id` for one face | `faces cluster`, both build and assign |
+
+**Consulted where the value is derived, never stamped on afterwards.** Each of these reads
+`corrections` at the point it computes the column, in the same way `places.run` already reads its
+rejection and block sets. The alternative — one pass that overwrites the derived tables after the
+fact — was considered and rejected, because it is only correct if every path runs it. `mediaidx
+places` recomputes `place_id` for the whole library outside `derive`, and `mediaidx meta` prints
+advice to run exactly that; under a single pass, following the application's own instructions would
+silently revert every place correction until the next `derive`. A correction that depends on the
+order commands were run in is not a correction (P8).
+
+**A person correction outranks the vote.** A rebuild re-derives each cluster's identity by majority
+vote among its members' previous names (§6.1). A single corrected face is one vote inside a cluster
+whose majority is the person it was wrongly grouped with, so it would lose that vote every time. An
+overridden face therefore does not vote, and its correction is re-applied after the count. Incremental
+`assign` skips corrected faces outright.
+
+**What a person correction does not do.** It fixes that face, and with it the photograph and every
+search that joins through `faces.person_id`. It teaches the clusterer nothing: the next rebuild groups
+by appearance exactly as before and the correction is re-applied on top. Constrained clustering is out
+of scope.
+
+**Corrections are irreplaceable.** With names, they are the only content a rebuild cannot recreate
+(P6), and they leave and re-enter the database by the same export.
+
+### 4.8 Storage budget
 
 | Content | Size |
 |---|---|
@@ -709,6 +792,17 @@ behind the current version, headers only, at ~37 files/s against the ~3.2 of a h
 by the link. As with stage 3, the model is several times faster than the pipeline can feed it,
 so inference runs on a single thread and reader threads are the only lever that matters.
 
+**Re-detection must not lose an identity (P8).** A re-run replaces every face row for a photograph,
+and `idx` is only the detector's output order, so nothing that matters may be keyed to it. Before the
+old rows go, the name and any `person` correction on each of them are held with their bounding boxes;
+after the new rows are written, each is re-attached to the new face whose box overlaps it most, above
+a minimum overlap. A face the detector no longer finds keeps nothing — there is nothing left to keep
+it on — and that is reported rather than passed over in silence.
+
+This has not yet bitten, because stage 2's version has never been raised. It would take every one of
+the **19,232 named faces** with it the first time it were, which is why it is stated here as a
+requirement on the stage rather than left as a property of how it happens to be invoked today.
+
 ### 5.3 Stage 3 — Search vector
 
 - **Model:** SigLIP (SO400M class) preferred; OpenCLIP ViT-L/14 (`laion2b_s32b_b82k`) as the
@@ -765,7 +859,9 @@ Runs over embeddings in the database; touches no files.
    as unclustered and are re-clustered when enough have gathered.
 4. **Full rebuild:** `mediaidx faces cluster --rebuild` recomputes from scratch, preserving
    `person` assignments by majority vote of each old cluster's members. Cheap, because embeddings
-   were kept (P5).
+   were kept (P5). A face carrying a `person` correction (§4.7) is excluded from the vote and has
+   its correction re-applied afterwards, because a hand-corrected face is by definition in the
+   minority of the cluster it was wrongly placed in.
 
 **Measured, 2026-09-07.** The full library: **45,648 faces into 737 clusters in 19 minutes**,
 covering 54% of faces, with 20,774 left as noise rather than forced into a cluster. (An earlier
@@ -967,7 +1063,71 @@ obvious on the second.
 
 ## 7. Search
 
-A single query box accepting mixed criteria, resolved as follows:
+One box. A person should be able to ask for *Ansku in Alicante in 2019 on a beach* without knowing
+that four different mechanisms answer it, and without learning a syntax to say so.
+
+### 7.1 One box, and what it understood
+
+Each token of the query is resolved against what the database already knows — named people, place
+names, event names, and date expressions — before anything reaches the encoder. What matched is shown
+back as a row of **chips** above the results, and everything that matched nothing is the scene text:
+
+> `Ansku ×` `Alicante ×` `2019 ×` — and *"beach"* as the description
+
+This is the whole interface. It is preferred over the alternatives for specific reasons:
+
+* **Against a field per aspect** — one box stays one box. A two-term question should not cost five
+  tab stops, and most questions are two terms.
+* **Against sigils** (`@Ansku`, `place:Alicante`) — nothing to memorise, and it does not require the
+  user to know which *kind* of thing a word is. That is the application's job, not theirs.
+* **Against parsing the query with a language model** — resolution is a table lookup: instant,
+  deterministic, and identical every time. A model in the search box buys nothing here and costs
+  latency and reproducibility on the control touched most often.
+
+**One word of a name is a name.** Nobody types "Anne Raivisto" to look for Anne, so a person resolves
+from any single word of their name as well as from the whole of it — but only where that word belongs
+to exactly one person, since a chip that silently picks between two people is worse than no chip.
+Where it is shared, the word resolves to nobody and the suggestion strip offers the candidates
+instead. The whole name is always tried first, which is what makes `Reetta` resolve to Reetta rather
+than to Reetta P. Measured 2026-09-09: of 79 named people, exactly one name-word is shared, and it is
+a whole name as well, so the exact match settles it. A word shorter than three characters is not
+indexed — otherwise "Reetta P" would make a stray `p` into a person.
+
+**Ambiguity is the reason chips exist.** This library contains folder labels that are also people,
+and place names that are also ordinary words — `Vaja`, `Kia`, `Loon` are all on record as wrong
+matches (§6.3). A token that resolves two ways is shown as the reading the application chose, and
+clicking it off picks the other. No other design makes a misreading *visible*, and a misreading the
+user cannot see is one they cannot fix.
+
+**Forcing a reading.** A prefix — `place:Vaja`, `person:Kia`, `text:Loon` — overrides resolution for
+one token. This is an escape hatch for the ambiguous cases, not the way the box is meant to be used,
+and it is never required.
+
+**Offered, not applied.** The gazetteer holds 285,144 places and a great many of them are ordinary
+words: `Sunset`, `Beach` and `On` are all towns carrying their own primary names. Nothing about the
+*name* separates those from `Alicante` — only this library does, and where it can, the separation is
+wide: measured 2026-09-09, Alicante holds 142 photographs, Helsinki 164 and Tenerife 162, while Beach
+and On hold none. A place is therefore ranked by how much of *this* library sits beneath it rather
+than by the gazetteer's own significance. Ranking the other way and then keeping the first candidate
+with any photographs at all is worse than not filtering: for `sunset` it walks past the well-known
+Sunsets and lands on the one obscure town the archive holds a single picture of.
+
+One case survives that and cannot be settled by any rule over a name. `Sunset` resolves to Shandon,
+California, where this archive genuinely holds **five** photographs — so the reading is not wrong,
+merely unlikely, and somebody typing "sunset" almost always means the light. Rather than choose
+silently, a place holding fewer than **25** photographs is *offered* beside the results instead of
+being applied, and its words stay in the description until the offer is taken:
+
+> "sunset" is also Shandon · California, where you have 5. Searching the words instead.
+
+Below **5** it is not mentioned at all. An explicit `place:` prefix is never second-guessed. The
+thresholds are calibrated against one library and are configuration, not architecture.
+
+**Asking in a sentence** is a later layer, not part of this: once a language model is present for
+captions (M5), a question in plain Finnish or English may *produce a chip set*, which the user then
+edits exactly as if they had typed it. The chips remain the truth of what is being searched.
+
+Each chip resolves by its own mechanism:
 
 | Input | Mechanism |
 |---|---|
@@ -977,8 +1137,8 @@ A single query box accepting mixed criteria, resolved as follows:
 | Date expression (`kesä 2019`, `2019-06`) | range over `assets.taken_at` |
 | Place name (`Helsinki`, `Finland`) | join through `places`, **including descendants** |
 
-Results merge by reciprocal rank fusion across the mechanisms that matched, so a query naming both
-a person and a scene ranks photographs satisfying both above either alone.
+Where two or more mechanisms rank rather than filter, results merge by reciprocal rank fusion, so a
+query naming both a person and a scene ranks photographs satisfying both above either alone.
 
 **Place queries resolve down the tree.** Because `places` stores a materialised path
 (§4.3), naming any level matches everything beneath it with one indexed comparison
@@ -992,23 +1152,72 @@ So `Finland` returns Helsinki, Turku and everywhere else in the country, while
 `Helsinki` returns only Helsinki. The user never has to know which level a name sits
 at, and adding `Espoo` under Uusimaa later needs no change to existing rows.
 
-**Mixed place and scene queries.** A query naming a known place and describing a
-scene — `swimming pool in Tenerife` — splits: the place term becomes a filter, the
-remainder ranks by vector similarity within it. Place names are matched against
-`places.name` as whole tokens before the query reaches the encoder, so ordinary
-searches are unaffected. If no place matches, the whole string goes to the encoder
-as before.
+### 7.2 Narrow, then rank
 
-**Filters** (independent of the query): date range, person, place, event, camera, has-caption,
-has-faces, date-source (useful for auditing the 1998–2008 material), place-source
+**Chips filter; the description ranks.** A query naming a known place and describing a scene —
+`swimming pool in Tenerife` — splits: the place becomes a filter, the remainder ranks by vector
+similarity *within it*. Place names are matched against `places.name` as whole tokens before the
+query reaches the encoder, so ordinary searches are unaffected. If nothing resolves, the whole string
+goes to the encoder as before.
+
+**The order is not an optimisation, it is the correctness condition.** Vector search returns a global
+top-*k*: ranking first and filtering afterwards would take the 120 best matches in the whole library
+and then discard the ones outside Tenerife, commonly leaving nothing, and never leaving the *best*
+matches in Tenerife. The candidate set must be narrowed by every chip before similarity is computed
+over what remains. Where the narrowed set is small, this is also far cheaper than the global search.
+
+### 7.3 Where the results stop
+
+Two separate faults are corrected here: results are shown that plainly do not match, and results are
+cut off at a fixed count with no way to see the rest.
+
+**The cut is relative to the best match, not a threshold.** Cosine similarity is not calibrated
+across queries — measured on this library, rank one scores 0.181 for *kids on a beach at sunset* and
+0.132 for *a dog* — so one fixed cutoff over-trims some queries and under-trims others. What is
+comparable within a query is how far a result has fallen behind that query's own best, so every
+photograph scoring at least **90% of the top score** is an answer.
+
+**The obvious rule was tried first, and the measurement overturned it.** It was to find the largest
+fall between neighbouring scores and cut at the cliff, on the assumption that answers end at one.
+They do not. Measured 2026-09-09, *snow* runs from 0.146 at rank 1 to 0.113 at rank 600, decaying
+smoothly the whole way, and every query behaves alike: there is no gap anywhere to find, and the rule
+cut nothing at all. It could be made to fire only by measuring each fall against its neighbour above,
+which explodes wherever the scores pass through zero — putting the cut in the middle of the noise,
+which is precisely where there is nothing to find.
+
+**Measured at 90%, 2026-09-09.** *snow* 71 photographs, *birthday cake* 30, *rippijuhlat* 23, *a dog*
+14, *underwater* 8 — the right shape for an archive that has seen a great deal of snow and very
+little diving.
+
+* Never fewer than **12** results, whatever the scores say. A near-empty page for a reasonable
+  question reads as a broken application, not as an honest answer.
+* Never a discard: everything below the cut stays one **show more** away, and the count is stated.
+* A query resolving only to chips, with no description, has no scores and no cut — a filter is exact,
+  and every photograph matching it is a result.
+
+**Paging.** Results page at a fixed size with a **next page** control, and the total is always the
+total, never the length of one page. The vector search takes `k = offset + limit`; at this library's
+scale that is cheap, and the brute-force path computes every similarity regardless.
+
+### 7.4 Filters
+
+Independent of the query, and collapsed by default: date range, person, place, event, camera,
+has-caption, has-faces, date-source (useful for auditing the 1998–2008 material), place-source
 (coordinates versus folder name).
+
+These are deliberately *not* chips. A chip answers "what am I looking for"; these answer "what do I
+want to check", and most are auditing tools rather than searches — nobody types *place-source is a
+folder name* as a question. They belong on a row that stays out of the way until wanted.
 
 **Views:** grid, timeline by year and month, people, events, places (browsable as the
 tree: country → region → locality, with counts).
 
-**Thumbnails.** Generated on first access into a local cache directory — never the NAS — at
+### 7.5 Thumbnails
+
+Generated on first access into a local cache directory — never the NAS — at
 320 px and 1024 px, WebP, keyed by content hash. Browsing must never pull full-size files across
-the network. Cache is disposable and rebuildable.
+the network; a full-size original is fetched only when a person explicitly asks for one (§8.2).
+Cache is disposable and rebuildable.
 
 ---
 
@@ -1069,8 +1278,8 @@ framework — the UI is a small part of the work and should stay that way.
 
 | Screen | Purpose |
 |---|---|
-| Search | Query box, filters, result grid |
-| Photo | Full view, metadata, faces, caption, event, all known paths |
+| Search | Query box, chips, collapsed filter row, result grid |
+| Photo | Everything known about one photograph, and how to correct it |
 | People | Person list, cluster review, merge and split |
 | Events | Event list and timeline |
 | Review | The queue: one question at a time, largest first |
@@ -1085,6 +1294,33 @@ it deserves more design attention than the pipeline does.
 - Actions: **name all**, **not one event** (split), **skip**, **ignore permanently**.
 - Fully keyboard-driven: type, Enter to accept, Esc to skip.
 - Answering advances immediately to the next item; the count of remaining questions is visible.
+
+**Photo screen requirements.** This is where the archive is checked against memory, so it must say
+everything it knows and let a person put it right.
+
+- **Every fact names its source.** The place row already does this — "from the coordinate" against
+  "from the folder name" — and the rule extends to all of them, the date most of all: 1,294
+  photographs carry a date conflict, and a date is not worth reading without knowing where it came
+  from.
+- Shows date, camera, dimensions, coordinates, place, event, caption (M5), people, source hint,
+  conflict note, and every known path the file lives at.
+- **Corrections in place** (§4.7): the date, the place, and the person on any one face. Each is
+  editable where it is displayed, not on a separate screen.
+- **Open questions about this photograph** link through to the review queue — a photograph belongs
+  to an event and its faces to clusters, and any of them may be waiting on an answer.
+- **The original**, at full resolution, behind an explicit link (see below), plus its path as
+  copyable text.
+
+**The full-size rule.** Browsing never pulls a full-size file across the network (§7.5); a deliberate
+click is not browsing. The original is served by the application rather than linked as `file://`,
+which browsers refuse to follow from a served page. An asset has several paths, so the route serves
+the first that is reachable and says so plainly when none is.
+
+**Downloads.** The same route serves the original as a download. A whole result set may be taken as a
+zip, with a guard rail nothing else in the UI needs: it is the only feature that reads many originals
+from the NAS on demand, over the link that is already the slowest thing here (§1.2). So the count and
+total size are stated before it starts, the number of files is capped, and the archive is streamed
+rather than assembled in memory. Low priority; the single-file download is most of the value.
 
 ---
 
@@ -1341,11 +1577,20 @@ Required tests:
 | **M3b** | Clustering, people UI, naming | Faces named, searchable by person. **Database and local crops only; no NAS access, so it is re-runnable whenever a threshold changes.** |
 | **M4a** | Places: gazetteer, geocoding, hierarchy, UI, search | Location shown and searchable at any level. **Database-only — no file access; 22 s to load the gazetteer, 11 s to place the library.** |
 | **M4b** | Events, review queue, review UI | Unattended indexing plus a finite question queue. **Database-only; the whole `derive` is 2.3 s. 1,374 events over 86% of the library, and 314 questions covering 7,726 photographs.** |
+| **M4c** | Unified search (§7), the photo screen, corrections (§4.7), and the identity re-attachment P8 requires of stage 2 (§5.2) | One box answering across people, places, dates and scene; every photograph correctable, and no handmade answer lost to a re-run. **Database-only.** |
 | **M5** | Stage 4 captions | Descriptions and tags. |
 | **M6** | Video | See §12. |
 
 M1 and M2 together are the recommended first slice: a couple of hours of indexing and free-text
 search works across all 46,423 images, with no face or caption work done at all.
+
+**M4c comes before M5, deliberately.** The queue is not a backlog that empties — new photographs
+arrive, `derive` re-runs, and skipped questions return by design (§6.4) — so the interface for
+answering it is a tool in permanent use, and every improvement to it is repaid on every future
+question. Captions then make the queue *busier*, being its third suggestion source (§6.4), and M5 is
+the long pass; the tool should be worth using before the volume goes up. M4c needs no file access and
+no FTS: chips resolve names already in the database, and FTS adds the exact-term mechanism to §7.1
+whenever it is built.
 
 ---
 
@@ -1399,3 +1644,16 @@ None blocking. Work can begin on M1.
 - **Person-folder genitive mapping** — removed rather than answered. The application no longer
   reads person names out of folder names; `add --person` states the name explicitly, so
   `Anskun → Anski` never needs inverting.
+- **How mixed criteria are entered** — resolved chips (§7.1), over a field per aspect, a sigil
+  syntax, or a language model parsing the query. Chips need nothing learned and are the only one
+  of the four that makes a *misreading* visible and correctable, which this library needs: it
+  contains folder labels that are also people and place names that are also ordinary words.
+- **How a correction reaches the derived tables** — consulted at each point the value is computed,
+  not applied as a pass afterwards (§4.7). A single pass is tidier and is wrong the moment a
+  subcommand recomputes a column on its own, which `mediaidx places` does and `mediaidx meta`
+  recommends. This generalised into P8.
+- **Correcting a wrongly identified face** — in scope, as a `person` correction (§4.7). It was
+  nearly deferred as hard, and is not: the write is one row. What makes it non-trivial is that a
+  rebuild would vote it away, which the same durable-key mechanism as `date` and `place`
+  corrections solves. Teaching the clusterer from corrections — constrained clustering — stays
+  out of scope; a correction is re-applied over each rebuild rather than changing it.

@@ -19,6 +19,7 @@ finite queue of questions to work through.
 | M3b | Clustering, naming, people UI | **done** |
 | M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
 | M4b | Events, review queue, review UI | **done** |
+| M4c | Unified search, photo screen, corrections | next |
 | M5 | Captions | |
 | M6 | Video | deferred |
 
