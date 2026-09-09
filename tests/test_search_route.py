@@ -254,3 +254,16 @@ def test_the_other_reading_promises_what_it_delivers(tmp_path):
     assert "No photograph has" in body
     assert "4 photographs" in body           # what the link gives
     assert "30 photograph" not in body       # not what the place holds
+
+
+def test_how_many_people_are_in_it(client):
+    """"Just the two of them" is a different question from "the two of them"."""
+    body = client.get("/", params={"who": "2"}).text
+    assert "1 on" in body                    # the filter registers as set
+    assert 'value="2" selected' in body
+
+
+def test_a_filter_matching_nothing_is_not_an_empty_archive(client):
+    """150 photographs are indexed; none has exactly two faces."""
+    body = client.get("/", params={"who": "2"}).text
+    assert "Nothing indexed yet" not in body

@@ -343,7 +343,7 @@ def create_app(cfg) -> FastAPI:
     PAGE_SIZE = 120
     MAX_RANKED = 600
 
-    FILTERS = ("from", "to", "cam", "faces", "dsrc", "psrc")
+    FILTERS = ("from", "to", "cam", "faces", "who", "dsrc", "psrc")
 
     def _qs(q: str, f: dict, **over) -> str:
         """A link back to this search with something changed."""
@@ -413,6 +413,19 @@ def create_app(cfg) -> FastAPI:
             preds.append("EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
         elif f.get("faces") == "n":
             preds.append("NOT EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
+        if f.get("who"):
+            # How many people are in it, which is a different question from
+            # which people are in it: the chips say who, this says how many, and
+            # together they ask for the two of them and nobody else. Counted
+            # from detected faces, so somebody turned away is not among them.
+            n = f["who"]
+            if n == "3":
+                preds.append("(SELECT COUNT(*) FROM faces x "
+                             "WHERE x.asset_id = a.id) >= 3")
+            elif n in ("1", "2"):
+                preds.append("(SELECT COUNT(*) FROM faces x "
+                             "WHERE x.asset_id = a.id) = ?")
+                args.append(int(n))
         if f.get("dsrc"):
             preds.append("a.taken_at_source = ?")
             args.append(f["dsrc"])
@@ -523,6 +536,11 @@ def create_app(cfg) -> FastAPI:
             opt("faces", "", "any", f.get("faces")),
             opt("faces", "y", "with faces", f.get("faces")),
             opt("faces", "n", "without", f.get("faces"))])
+        sel_who = "".join([
+            opt("who", "", "any number", f.get("who")),
+            opt("who", "1", "one alone", f.get("who")),
+            opt("who", "2", "just two", f.get("who")),
+            opt("who", "3", "three or more", f.get("who"))])
         sel_dsrc = "".join([
             opt("dsrc", "", "any", f.get("dsrc")),
             opt("dsrc", "exif", "EXIF", f.get("dsrc")),
@@ -544,6 +562,7 @@ def create_app(cfg) -> FastAPI:
             '<label>camera<input type="text" name="cam" placeholder="any" '
             f'value="{html.escape(f.get("cam", ""))}"></label>'
             f'<label>faces<select name="faces">{sel_faces}</select></label>'
+            f'<label>people in it<select name="who">{sel_who}</select></label>'
             f'<label>date from<select name="dsrc">{sel_dsrc}</select></label>'
             f'<label>place from<select name="psrc">{sel_psrc}</select></label>'
             '<button type="submit">Apply</button>'
@@ -555,11 +574,12 @@ def create_app(cfg) -> FastAPI:
     def home(q: str = Query(default=""), page: int = 0, more: int = 0,
              date_from: str = Query(default="", alias="from"),
              to: str = Query(default=""), cam: str = Query(default=""),
-             faces: str = Query(default=""), dsrc: str = Query(default=""),
-             psrc: str = Query(default="")):
+             faces: str = Query(default=""), who: str = Query(default=""),
+             dsrc: str = Query(default=""), psrc: str = Query(default="")):
         con = connect()
         f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
-             "faces": faces.strip(), "dsrc": dsrc.strip(), "psrc": psrc.strip()}
+             "faces": faces.strip(), "who": who.strip(),
+             "dsrc": dsrc.strip(), "psrc": psrc.strip()}
         page = max(0, page)
         total_all = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         embedded = con.execute(
@@ -585,7 +605,10 @@ def create_app(cfg) -> FastAPI:
                 f"SELECT {cols} FROM assets a{clause} "
                 "ORDER BY a.taken_at DESC LIMIT ? OFFSET ?",
                 [*args, PAGE_SIZE, page * PAGE_SIZE]).fetchall()
-            if not rows and not q:
+            # Genuinely nothing indexed -- not merely nothing matching, which a
+            # filter can produce on a full library and which must not be
+            # reported as an empty archive.
+            if not total_all:
                 return HTMLResponse(PAGE.format(
                     title="Kuva-arkisto", q="", focus=" autofocus",
                     placeholder="kids on a beach at sunset",
@@ -596,8 +619,11 @@ def create_app(cfg) -> FastAPI:
                 # was asked for and, where a word read two ways, that the other
                 # reading is a link away -- which is the whole of the Hartola
                 # case: three photographs as an event, 1,286 as a municipality.
+                # A filter alone leaves no chips to name, so there is nothing
+                # to list back and the sentence has to stand without one.
                 names = [html.escape(t.label) for t in r.terms]
-                asked = (names[0] if len(names) < 2 else
+                asked = ("all of that" if not names else names[0] if
+                         len(names) == 1 else
                          ", ".join(names[:-1]) + " and " + names[-1])
                 body = (head + '<div class="empty">'
                         f'<p>No photograph has {asked or "all of that"}.</p>'

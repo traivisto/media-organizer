@@ -1183,6 +1183,19 @@ So `Finland` returns Helsinki, Turku and everywhere else in the country, while
 `Helsinki` returns only Helsinki. The user never has to know which level a name sits
 at, and adding `Espoo` under Uusimaa later needs no change to existing rows.
 
+**A city-state answers to its city's name.** The gazetteer files a city-state's districts as
+*siblings* of a locality bearing the city's name, so nothing called Berlin is an ancestor of
+Tiergarten. Measured 2026-09-09: this archive's 868 Berlin photographs sit under Mitte (297),
+Tiergarten (240), Kreuzberg (64) and thirty more, while the locality called Berlin holds 40 — so
+`Ansku in Berlin` found neither Tiergarten nor 95% of Berlin. An administrative area whose name
+*wraps* a settlement — `State of Berlin`, `City of X` — therefore answers to the bare name as well.
+
+Only leading wrappers count, and deliberately. A suffix names something larger than the place it is
+named after: `Helsinki sub-region` reaches Espoo and Vantaa, `Berat County` is not the town of Berat,
+`Provincia de Alicante` takes in Torrevieja. Folding those in would answer a question about a city
+with a question about a region. Measured after the change: Berlin 868 rather than 40, while Helsinki
+(164), Alicante and Tenerife are untouched.
+
 ### 7.2 Narrow, then rank
 
 **Chips filter; the description ranks.** A query naming a known place and describing a scene —
@@ -1232,9 +1245,15 @@ scale that is cheap, and the brute-force path computes every similarity regardle
 
 ### 7.4 Filters
 
-Independent of the query, and collapsed by default: date range, person, place, event, camera,
-has-caption, has-faces, date-source (useful for auditing the 1998–2008 material), place-source
-(coordinates versus folder name).
+Independent of the query, and collapsed by default: date range, camera, has-faces, **how many people
+are in it**, date-source (useful for auditing the 1998–2008 material), place-source (coordinates
+versus folder name). Person, place and event are chips rather than filters, being what the box is
+for.
+
+**How many people is not which people.** The chips say who is in a photograph; this says how many,
+and the two together ask for *just* the two of them rather than the two of them among a crowd —
+measured on this library, Tommi and Ansku appear together in 850 photographs and alone in 246. It
+counts detected faces, so somebody turned away from the camera is not among them.
 
 These are deliberately *not* chips. A chip answers "what am I looking for"; these answer "what do I
 want to check", and most are auditing tools rather than searches — nobody types *place-source is a

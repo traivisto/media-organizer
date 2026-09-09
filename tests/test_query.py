@@ -351,3 +351,37 @@ def test_one_event_of_a_name_still_links_to_itself(con):
     _event(con, 2, "Alicante", 400)
     r = query.resolve(con, "Alicante", place_counts={10: 142})
     assert r.terms[0].ref_id == 2
+
+
+def test_a_city_state_is_reachable_by_the_city_name(con):
+    """`Berlin` must find Tiergarten, which is not beneath any node so named.
+
+    The gazetteer files a city-state's districts as siblings of a locality
+    bearing the city's name: this archive's Berlin photographs sit under Mitte,
+    Tiergarten and thirty more, while the locality called Berlin holds 40.
+    """
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) VALUES "
+                "(30, 'admin1', 'State of Berlin', 'Germany/State of Berlin', 9)")
+    con.execute("INSERT INTO places (id, parent_id, kind, name, path, rank_pop) "
+                "VALUES (31, 30, 'locality', 'Berlin', "
+                "'Germany/State of Berlin/Berlin', 900)")
+    con.execute("INSERT INTO place_names (place_id, norm, own) "
+                "VALUES (31, 'berlin', 1)")
+    r = query.resolve(con, "Berlin", place_counts={31: 40, 30: 868})
+    assert r.terms[0].label.startswith("State of Berlin")
+    assert r.terms[0].held == 868
+
+
+def test_a_region_named_after_a_city_is_not_the_city(con):
+    """Only leading wrappers fold in. `Helsinki sub-region` reaches Espoo."""
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) VALUES "
+                "(32, 'admin2', 'Helsinki sub-region', 'Finland/Helsinki sub-region', 9)")
+    con.execute("INSERT INTO places (id, parent_id, kind, name, path, rank_pop) "
+                "VALUES (33, 32, 'locality', 'Helsinki', "
+                "'Finland/Helsinki sub-region/Helsinki', 900)")
+    con.execute("INSERT INTO place_names (place_id, norm, own) "
+                "VALUES (33, 'helsinki', 1)")
+    r = query.resolve(con, "Helsinki", place_counts={33: 164, 32: 400})
+    assert r.terms[0].label.startswith("Helsinki ·") or \
+           r.terms[0].label == "Helsinki"
+    assert r.terms[0].held == 164

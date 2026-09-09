@@ -355,6 +355,33 @@ PLACE_MIN_ASSETS = 5        # below this, not even worth mentioning
 PLACE_SURE_ASSETS = 25      # at or above this, applied as a chip without asking
 
 
+# Administrative names that wrap a settlement without naming anything else: the
+# State of Berlin *is* Berlin. The gazetteer files a city-state's districts as
+# siblings of a locality bearing the city's name, so this archive's 870 Berlin
+# photographs sit under Mitte (297), Tiergarten (240), Kreuzberg (64) and thirty
+# more, while the locality called Berlin holds 40. Nothing named Berlin is an
+# ancestor of Tiergarten, and "Ansku in Berlin" therefore missed her in Berlin.
+#
+# Only *leading* wrappers are listed, and deliberately. A suffix names something
+# larger than the place it is named after -- "Helsinki sub-region" reaches Espoo
+# and Vantaa, "Berat County" is not the town of Berat, "Provincia de Alicante"
+# takes in Torrevieja -- and folding those in would answer a question about a
+# city with a question about a region.
+_ADMIN_WRAPPERS = ("state of {}", "city of {}", "free state of {}",
+                   "free hanseatic city of {}", "federal city of {}",
+                   "capital city of {}")
+
+
+def _wrapping_admin(con, key: str) -> list:
+    """Admin areas that are this place under an administrative name."""
+    wanted = [w.format(key) for w in _ADMIN_WRAPPERS]
+    marks = ",".join("?" * len(wanted))
+    return list(con.execute(
+        f"""SELECT p.id, p.path, p.rank_pop, 1 AS own FROM places p
+             WHERE p.kind IN ('admin1', 'admin2')
+               AND lower(p.name) IN ({marks})""", wanted))
+
+
 def _place_term(con, span: str, counts) -> Term | None:
     """The place answering to this span that this library knows best.
 
@@ -367,11 +394,13 @@ def _place_term(con, span: str, counts) -> Term | None:
     if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='places'").fetchone():
         return None
-    rows = con.execute(
+    key = norm(span)
+    rows = list(con.execute(
         """SELECT p.id, p.path, p.rank_pop, n.own FROM place_names n
              JOIN places p ON p.id = n.place_id
             WHERE n.norm = ? ORDER BY p.rank_pop DESC LIMIT 12""",
-        (norm(span),)).fetchall()
+        (key,)))
+    rows += _wrapping_admin(con, key)
     if not rows:
         return None
 
