@@ -603,8 +603,18 @@ search that joins through `faces.person_id`. It teaches the clusterer nothing: t
 by appearance exactly as before and the correction is re-applied on top. Constrained clustering is out
 of scope.
 
+**Consulted when derived, and written through when given.** Consultation alone is not enough for
+every kind: a date is decided once, when the photograph is first indexed, so a correction made
+afterwards would sit in the table doing nothing until a re-index that never comes. A correction is
+therefore also applied to the row it corrects the moment it is made. The two together are what
+"corrected" means — right immediately, and right again after every rebuild. Withdrawing a correction
+does not restore the machine's answer; that returns at the next derivation, because knowing an answer
+is wrong is not the same as knowing the right one.
+
 **Corrections are irreplaceable.** With names, they are the only content a rebuild cannot recreate
-(P6), and they leave and re-enter the database by the same export.
+(P6), and they leave and re-enter the database by the same export. `mediaidx corrections` lists them
+and `--export` writes them out, because something that must be backed up should be something you can
+look at.
 
 ### 4.8 Storage budget
 

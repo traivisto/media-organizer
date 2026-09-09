@@ -232,3 +232,73 @@ def test_overlap_is_measured_as_a_share_of_the_union():
     assert corrections.bbox_iou((0, 0, 1, 1), (0, 0, 1, 1)) == 1.0
     assert corrections.bbox_iou((0, 0, 1, 1), (2, 2, 1, 1)) == 0.0
     assert 0.3 < corrections.bbox_iou((0, 0, 1, 1), (0.5, 0, 1, 1)) < 0.4
+
+
+# --------------------------------------------------------------------------
+# Surviving the commands that recompute the value
+# --------------------------------------------------------------------------
+
+def _place(con, pid, path):
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) "
+                "VALUES (?,?,?,?,0)", (pid, "locality", path.split("/")[-1], path))
+
+
+def test_a_date_correction_takes_effect_at_once(built):
+    """Indexing decides the date once, so a correction cannot wait for it."""
+    con, hashes = built
+    corrections.record(con, "date", hashes[0], "1998-07")
+    row = con.execute("SELECT taken_at, taken_at_precision, taken_at_source, "
+                      "date_conflict FROM assets WHERE content_hash = ?",
+                      (hashes[0],)).fetchone()
+    from datetime import datetime
+    assert datetime.fromtimestamp(row["taken_at"]).year == 1998
+    assert row["taken_at_precision"] == "month"
+    assert row["taken_at_source"] == "corrected"
+    assert row["date_conflict"] == 0
+
+
+def test_a_place_correction_outlives_mediaidx_places(built, tmp_path):
+    """`mediaidx places` recomputes place_id for the whole library.
+
+    It runs outside `derive`, and `mediaidx meta` prints advice to run it. A
+    correction that did not survive it would be undone by following the
+    application's own instructions (spec 4.7).
+    """
+    from mediaidx import places
+    con, hashes = built
+    _place(con, 1, "Finland/Uusimaa/Helsinki")
+    _place(con, 2, "Spain/Valencia/Alicante")
+    con.execute("INSERT INTO gazetteer_state (version, loaded_at, places, "
+                "names, source) VALUES (1,0,2,2,'test')")
+    # The machine's own guess, which is wrong.
+    con.execute("UPDATE assets SET place_id = 2, place_source = 'gps' "
+                "WHERE content_hash = ?", (hashes[0],))
+    corrections.record(con, "place", hashes[0], "Finland/Uusimaa/Helsinki")
+    con.commit()
+
+    cfg = _cfg(tmp_path)
+    places.run(con, cfg)
+    con.commit()
+
+    row = con.execute(
+        """SELECT p.path, a.place_source FROM assets a
+             JOIN places p ON p.id = a.place_id
+            WHERE a.content_hash = ?""", (hashes[0],)).fetchone()
+    assert row["path"] == "Finland/Uusimaa/Helsinki"
+    assert row["place_source"] == "corrected"
+
+
+def test_a_place_correction_can_say_nowhere(built, tmp_path):
+    from mediaidx import places
+    con, hashes = built
+    _place(con, 1, "Spain/Valencia/Alicante")
+    con.execute("INSERT INTO gazetteer_state (version, loaded_at, places, "
+                "names, source) VALUES (1,0,1,1,'test')")
+    con.execute("UPDATE assets SET place_id = 1, place_source = 'folder' "
+                "WHERE content_hash = ?", (hashes[0],))
+    corrections.record(con, "place", hashes[0], None, note="not Alicante")
+    con.commit()
+    places.run(con, _cfg(tmp_path))
+    con.commit()
+    assert con.execute("SELECT place_id FROM assets WHERE content_hash = ?",
+                       (hashes[0],)).fetchone()["place_id"] is None

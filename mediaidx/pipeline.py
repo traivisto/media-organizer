@@ -20,6 +20,7 @@ from datetime import datetime
 
 import blake3
 
+from . import corrections
 from . import db, dates, exif, walker
 from . import paths as pathutil
 
@@ -223,6 +224,14 @@ def _create_asset(con, c: walker.Candidate, digest: str, m: dict,
         "conflict_note": r.conflict_note,
         "source_hint": fn.hint if fn else None,
     })
+    # A date somebody settled by hand outranks anything the file says, and has
+    # to be re-read here because indexing is where the date is decided (P8).
+    fixed = corrections.date_for(con, digest)
+    if fixed:
+        fields.update({"taken_at": fixed[0], "taken_at_precision": fixed[1],
+                       "taken_at_source": "corrected", "date_conflict": 0,
+                       "conflict_note": None})
+
     if not fields.get("format"):
         fields["format"] = os.path.splitext(c.name)[1].lstrip(".").lower()
 

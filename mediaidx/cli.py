@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+import pathlib
 import sys
 import time
 from datetime import datetime
@@ -286,6 +287,14 @@ def cmd_status(args) -> int:
                   "   `mediaidx review`")
     elif has_events:
         print("\nevents\n  none yet   `mediaidx derive`")
+
+    fixed = one("SELECT COUNT(*) FROM corrections")
+    if fixed:
+        by = ", ".join(
+            f"{r['n']:,} {r['kind']}" for r in con.execute(
+                "SELECT kind, COUNT(*) AS n FROM corrections GROUP BY kind"))
+        print(f"\ncorrected by hand\n  {fixed:>10,}   {by}"
+              "   `mediaidx corrections`")
 
     errs = one("SELECT COUNT(*) FROM scan_errors")
     if errs:
@@ -618,6 +627,58 @@ def cmd_people(args) -> int:
     return 0
 
 
+def cmd_corrections(args) -> int:
+    """What has been put right by hand, and where it goes when exported.
+
+    Kept visible from the terminal because these rows and the names are the only
+    content in the database a rebuild cannot recreate (P6, P8), and something
+    that must be backed up should be something you can look at.
+    """
+    from . import corrections
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    rows = list(con.execute(
+        """SELECT c.*, (SELECT f.path FROM files f
+                          JOIN assets a ON a.id = f.asset_id
+                         WHERE a.content_hash = c.content_hash
+                         ORDER BY f.path LIMIT 1) AS path
+             FROM corrections c ORDER BY c.kind, c.created_at"""))
+    if args.export:
+        import json
+        out = pathlib.Path(args.export)
+        out.write_text(json.dumps(
+            [{k: r[k] for k in r.keys() if k != "id"} for r in rows],
+            indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"{len(rows):,} corrections -> {out}")
+        return 0
+
+    if not rows:
+        print("nothing corrected yet -- `mediaidx serve`, then any photograph")
+        return 0
+    counts = corrections.count(con)
+    for kind in corrections.KINDS:
+        if kind not in counts:
+            continue
+        print(f"\n{kind}  ({counts[kind]:,})")
+        for r in rows:
+            if r["kind"] != kind:
+                continue
+            where = pathutil_basename(r["path"]) if r["path"] else r["content_hash"][:12]
+            face = f" face {r['face_idx']}" if r["face_idx"] >= 0 else ""
+            value = r["value"] if r["value"] is not None else "(nothing is right)"
+            note = f"   {r['note']}" if r["note"] else ""
+            print(f"  {where:<44}{face:<8} {value}{note}")
+    print(f"\n  {len(rows):,} in all. These and the names are the only things "
+          "here a rebuild cannot recreate.")
+    print("  `mediaidx corrections --export <file>` writes them out")
+    return 0
+
+
+def pathutil_basename(path: str) -> str:
+    return path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+
+
 def cmd_search(args) -> int:
     from . import embed as embed_mod
     cfg, con = _open(args, create=False)
@@ -854,6 +915,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     pe = sub.add_parser("people", help="who has been named, and how much of the library")
     pe.set_defaults(func=cmd_people)
+
+    cr = sub.add_parser("corrections",
+                        help="what has been put right by hand")
+    cr.add_argument("--export", metavar="FILE",
+                    help="write them out as json")
+    cr.set_defaults(func=cmd_corrections)
 
     q = sub.add_parser("search", help="search from the terminal")
     q.add_argument("query", nargs="+")

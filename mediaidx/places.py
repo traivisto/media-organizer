@@ -308,6 +308,7 @@ class PlaceStats:
     labels: int = 0
     labels_matched: int = 0
     folder_placed: int = 0
+    corrected: int = 0            # put back by hand after the machine's guess
     started: float = field(default_factory=time.time)
 
     @property
@@ -580,6 +581,11 @@ def run(con, cfg, *, progress=None) -> PlaceStats:
         con.execute("UPDATE assets SET place_id = NULL, place_source = NULL")
         geocode(con, st, progress=progress)
         match_folders(con, cfg, st)
+        # Inside the run, not in its callers: `mediaidx places` recomputes the
+        # whole library outside `derive`, and a correction that depended on
+        # which command was used would not be one (spec 4.7).
+        from . import corrections as corrections_mod
+        st.corrected = corrections_mod.apply_places(con)
         con.execute("COMMIT")
     except Exception:
         con.execute("ROLLBACK")
