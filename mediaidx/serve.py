@@ -452,7 +452,20 @@ def create_app(cfg) -> FastAPI:
                         'as the description</span>')
         return f'<div class="chips">{"".join(bits)}</div>' if bits else ""
 
-    def offer_row(r, f) -> str:
+    def _count_for(con, raw: str, f: dict) -> int:
+        """How many photographs another reading of the query would find.
+
+        Only the chips are counted. Where the query also carries a description
+        this is the size of the set the ranking would run inside, which is the
+        honest thing to promise: how many the search would then choose from.
+        """
+        alt = query.resolve(con, raw, place_counts=subtree_counts(con))
+        where, args = _where(con, alt, f)
+        clause = f" WHERE {where}" if where else ""
+        return con.execute(f"SELECT COUNT(*) FROM assets a{clause}",
+                           args).fetchone()[0]
+
+    def offer_row(con, r, f) -> str:
         """A reading that was plausible but not acted on (§7.1).
 
         Shown rather than applied, because the archive holding a handful of
@@ -474,11 +487,20 @@ def create_app(cfg) -> FastAPI:
         # unexplained empty page.
         for t in r.terms:
             for alt in t.also:
-                take = _qs(r.raw.replace(t.span, f"{alt.kind}:{t.span}"), f)
-                held = f' ({alt.held:,} photographs)' if alt.held else ""
+                other = r.raw.replace(t.span, f"{alt.kind}:{t.span}")
+                take = _qs(other, f)
+                # The count has to be the count *this link would give*, which
+                # is the whole query read the other way -- not how much the
+                # place holds by itself. Hartola the municipality holds 1,286
+                # photographs and shares 20 of them with Tommi and Ansku;
+                # offering the larger number answers a question nobody asked.
+                would = _count_for(con, other, f)
+                says = (f' &mdash; {would:,} photograph'
+                        f'{"" if would == 1 else "s"}' if would else
+                        ", which finds nothing either")
                 bits.append(
                     f'&ldquo;{html.escape(t.span)}&rdquo; is also a {alt.kind}, '
-                    f'<a href="{take}">{html.escape(alt.label)}</a>{held}.')
+                    f'<a href="{take}">{html.escape(alt.label)}</a>{says}.')
         return f'<div class="offer">{" ".join(bits)}</div>' if bits else ""
 
     def filter_row(q: str, f: dict) -> str:
@@ -545,7 +567,7 @@ def create_app(cfg) -> FastAPI:
         # This exact page, so a photograph opened from it can lead back here
         # rather than to the front -- including the page number and the filters.
         here = _qs(q, f, page=page or None, more=more or None)
-        head = chip_row(r, f) + offer_row(r, f) + filter_row(q, f)
+        head = chip_row(r, f) + offer_row(con, r, f) + filter_row(q, f)
 
         cols = ("a.id, a.content_hash, a.taken_at, a.taken_at_precision, "
                 "a.camera_model")
