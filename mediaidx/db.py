@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -267,6 +267,33 @@ CREATE INDEX IF NOT EXISTS idx_places_name   ON places(name);
 CREATE INDEX IF NOT EXISTS idx_places_parent ON places(parent_id);
 CREATE INDEX IF NOT EXISTS idx_place_names   ON place_names(norm);
 
+-- What a person put right by hand (spec 4.7). Everything else in this schema
+-- is derived and `derive` rebuilds it from nothing, so a correction cannot be
+-- an edit of those tables -- the next rebuild would revert it -- but an input
+-- consulted while they are rebuilt.
+--
+-- Keyed by content hash, never by row id: assets.id and faces.id are both
+-- regenerated when a stage re-runs, and a correction stored by id would come
+-- back pointing at something unrelated. `face_bbox` is the durable anchor for
+-- a face, since `idx` is only the detector's output order and stage 2 hands
+-- out new ones every time it runs (5.2).
+--
+-- `face_idx` is -1 rather than NULL for the kinds that are not about a face,
+-- because SQLite counts NULLs as distinct in a UNIQUE constraint and would
+-- happily store the same date correction twice.
+CREATE TABLE IF NOT EXISTS corrections (
+  id           INTEGER PRIMARY KEY,
+  kind         TEXT NOT NULL,             -- date | place | person
+  content_hash TEXT NOT NULL,
+  face_idx     INTEGER NOT NULL DEFAULT -1,
+  face_bbox    TEXT,                      -- json [x, y, w, h], fractions
+  value        TEXT,                      -- NULL asserts that no value is right
+  note         TEXT,
+  created_at   INTEGER NOT NULL,
+  UNIQUE (kind, content_hash, face_idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_corrections_hash ON corrections(content_hash);
 CREATE INDEX IF NOT EXISTS idx_faces_asset   ON faces(asset_id);
 CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_faces_person  ON faces(person_id);

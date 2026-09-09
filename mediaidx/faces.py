@@ -201,15 +201,24 @@ def replace_for_asset(con, asset_id: int, faces: list[DetectedFace], *,
     is what names its cropped thumbnail on disk, so the crop stays valid across
     a re-run that hands out different row ids.
     """
-    old = [r[0] for r in con.execute(
-        "SELECT id FROM faces WHERE asset_id = ?", (asset_id,))]
+    import json
+    from . import corrections as corrections_mod
+
+    # Whose faces these were. `person_id` lives on the rows about to be deleted,
+    # so without this a re-run of the stage would take every name in the library
+    # with it -- 19,232 of them here, and weeks of somebody's evenings. Identity
+    # is carried across by where a face sits in the frame, because `idx` is only
+    # the detector's output order and means nothing between runs (P8, spec 5.2).
+    old = [dict(r) for r in con.execute(
+        "SELECT id, idx, bbox, person_id, cluster_id FROM faces "
+        "WHERE asset_id = ?", (asset_id,))]
     if old:
         con.execute("DELETE FROM faces WHERE asset_id = ?", (asset_id,))
         if vec_ok:
             con.executemany("DELETE FROM vec_faces WHERE face_id = ?",
-                            [(i,) for i in old])
+                            [(r["id"],) for r in old])
 
-    import json
+    new_boxes = []
     for idx, f in enumerate(faces):
         cur = con.execute(
             """INSERT INTO faces
@@ -220,3 +229,35 @@ def replace_for_asset(con, asset_id: int, faces: list[DetectedFace], *,
         if vec_ok:
             con.execute("INSERT INTO vec_faces (face_id, embedding) VALUES (?,?)",
                         (cur.lastrowid, pack_f32(f.embedding)))
+        new_boxes.append((idx, list(f.bbox)))
+
+    carried = lost = 0
+    named = [r for r in old if r["person_id"] or r["cluster_id"]]
+    if named:
+        taken: set = set()
+        for r in named:
+            box = json.loads(r["bbox"])
+            best, best_iou = None, corrections_mod.MIN_IOU
+            for idx, nb in new_boxes:
+                if idx in taken:
+                    continue
+                score = corrections_mod.bbox_iou(box, nb)
+                if score >= best_iou:
+                    best, best_iou = idx, score
+            if best is None:
+                # The detector no longer finds a face there, so there is nothing
+                # left to hold the name on. Counted, never passed over silently.
+                lost += 1
+                continue
+            taken.add(best)
+            con.execute(
+                "UPDATE faces SET person_id = ?, cluster_id = ? "
+                "WHERE asset_id = ? AND idx = ?",
+                (r["person_id"], r["cluster_id"], asset_id, best))
+            carried += 1
+
+    h = con.execute("SELECT content_hash FROM assets WHERE id = ?",
+                    (asset_id,)).fetchone()
+    if h is not None:
+        corrections_mod.reanchor_faces(con, h["content_hash"], new_boxes)
+    return carried, lost

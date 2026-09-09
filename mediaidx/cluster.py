@@ -100,6 +100,15 @@ def build(con, cfg, *, rebuild: bool = False) -> ClusterStats:
         previous = {r[0]: r[1] for r in con.execute(
             "SELECT id, person_id FROM faces WHERE person_id IS NOT NULL")}
 
+    # A face somebody corrected by hand does not vote, and has its answer put
+    # back after the count (spec 4.7). It is by definition in the minority of
+    # the cluster it was wrongly placed in -- that is what made it wrong -- so
+    # letting it vote would only lose it, every single rebuild.
+    from . import corrections as corrections_mod
+    fixed = corrections_mod.corrected_face_ids(con)
+    for fid in fixed:
+        previous.pop(fid, None)
+
     labels = HDBSCAN(min_cluster_size=min_size, metric="euclidean",
                      copy=False).fit_predict(mat)
 
@@ -137,6 +146,10 @@ def build(con, cfg, *, rebuild: bool = False) -> ClusterStats:
             con.executemany(
                 "UPDATE faces SET cluster_id = ?, person_id = ? WHERE id = ?",
                 [(cid, person_id, int(f)) for f in members])
+            for f in members:
+                if int(f) in fixed:
+                    con.execute("UPDATE faces SET person_id = ? WHERE id = ?",
+                                (fixed[int(f)], int(f)))
             st.clusters += 1
             st.clustered += len(members)
         con.execute("COMMIT")
@@ -156,6 +169,7 @@ def assign(con, cfg) -> int:
     a named cluster is invisible until someone browses that person and finds
     them there.
     """
+    from . import corrections as corrections_mod
     threshold = float(cfg.faces.get("assign_threshold", ASSIGN_THRESHOLD))
 
     crows = con.execute(
@@ -181,11 +195,17 @@ def assign(con, cfg) -> int:
     try:
         pairs = [(int(cids[best[i]]), int(ids[i]))
                  for i in range(len(ids)) if take[i]]
+        # A corrected face keeps its answer: joining a cluster tells us where it
+        # looks like it belongs, not who it is.
+        fixed = corrections_mod.corrected_face_ids(con)
         con.executemany(
             """UPDATE faces SET cluster_id = ?,
                  person_id = (SELECT person_id FROM face_clusters WHERE id = ?)
                WHERE id = ?""",
-            [(c, c, f) for c, f in pairs])
+            [(c, c, f) for c, f in pairs if f not in fixed])
+        con.executemany(
+            "UPDATE faces SET cluster_id = ? WHERE id = ?",
+            [(c, f) for c, f in pairs if f in fixed])
         for cid in {c for c, _ in pairs}:
             refresh(con, cid)
         con.execute("COMMIT")
