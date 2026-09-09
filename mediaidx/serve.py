@@ -123,6 +123,11 @@ nav a:hover {{ color:var(--accent); }}
 .crumb {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; font-size:13px;
   color:var(--ink-3); }}
 .crumb a {{ color:var(--accent); }}
+/* The map, when it has been asked for. Nothing is written into the page until
+   then, which is the whole of the privacy argument (10.4). */
+.map {{ margin:10px 0 4px; border:1px solid var(--rule); border-radius:4px;
+  overflow:hidden; background:var(--surface); max-width:620px; }}
+.map iframe {{ display:block; width:100%; height:300px; border:0; }}
 /* What the box understood. These are the interface, not decoration: each one
    states a criterion and carries the link that removes it, so the whole thing
    works as plain anchors with no script on the page. */
@@ -983,29 +988,60 @@ def create_app(cfg) -> FastAPI:
     MAP_URL = ("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}"
                "#map=15/{lat}/{lon}")
 
-    def _map_link(lat, lon) -> str:
-        """A link out, never a request this page makes by itself (§10.4).
+    # The same map, drawn in the page rather than in another tab. A frame is
+    # only ever written into the HTML when the URL asks for one, so the page as
+    # it normally stands still fetches nothing from anywhere (§10.4).
+    MAP_EMBED = ("https://www.openstreetmap.org/export/embed.html"
+                 "?bbox={w},{s},{e},{n}&layer=mapnik&marker={lat},{lon}")
 
-        Nothing is sent until the link is followed, one photograph at a time,
-        and following it puts this coordinate in somebody else's server log --
-        so the link says so rather than leaving it to be discovered. `noreferrer`
-        keeps even the fact of this application out of it.
-        """
-        url = str(cfg.ui.get("map_url") or MAP_URL).format(
-            lat=f"{lat:.6f}", lon=f"{lon:.6f}")
+    # How much ground the frame shows around the point, in degrees. Roughly a
+    # kilometre across, which is close enough to recognise a beach by and wide
+    # enough not to look like surveillance.
+    MAP_SPAN = 0.006
+
+    def _map_host(url: str) -> str:
         host = (url.split("/")[2] if "//" in url else url)
-        host = host[4:] if host.startswith("www.") else host
-        return (f' &middot; <a href="{html.escape(url)}" target="_blank" '
-                f'rel="noreferrer noopener" style="color:var(--accent)">'
-                f'see it on a map</a>'
-                f'<span style="color:var(--ink-3)"> &mdash; sends this '
-                f'coordinate to {html.escape(host)}</span>')
+        return host[4:] if host.startswith("www.") else host
 
-    def _gps_fact(a) -> str:
+    def _gps_fact(a, asset_id, back, shown: bool) -> str:
+        """The coordinate, and the map only once somebody has asked for one.
+
+        Showing it in the page rather than in another tab costs nothing extra in
+        privacy, because the deciding property is *when* anything is fetched,
+        not where it is drawn: the frame exists only on the request that asks
+        for it. What it saves is the place in the archive -- the photograph is
+        still there behind the map, and going back is not a browser button.
+        """
         if a["gps_lat"] is None:
             return ""
-        return (f'{a["gps_lat"]:.5f}, {a["gps_lon"]:.5f}'
-                + _map_link(a["gps_lat"], a["gps_lon"]))
+        lat, lon = a["gps_lat"], a["gps_lon"]
+        out = f"{lat:.5f}, {lon:.5f}"
+        away = str(cfg.ui.get("map_url") or MAP_URL).format(
+            lat=f"{lat:.6f}", lon=f"{lon:.6f}")
+        host = _map_host(away)
+
+        if not shown:
+            here = (f"/photo/{asset_id}?map=1&back={quote_plus(back)}")
+            return (out + f' &middot; <a href="{here}" '
+                    'style="color:var(--accent)">see it on a map</a>'
+                    f'<span style="color:var(--ink-3)"> &mdash; loads a map '
+                    f'from {html.escape(host)}, which means sending it this '
+                    'coordinate</span>')
+
+        embed = str(cfg.ui.get("map_embed_url") or MAP_EMBED).format(
+            lat=f"{lat:.6f}", lon=f"{lon:.6f}",
+            w=f"{lon - MAP_SPAN:.6f}", e=f"{lon + MAP_SPAN:.6f}",
+            s=f"{lat - MAP_SPAN:.6f}", n=f"{lat + MAP_SPAN:.6f}")
+        gone = f"/photo/{asset_id}?back={quote_plus(back)}"
+        return (out
+                + f' &middot; <a href="{gone}" style="color:var(--ink-3)">'
+                'hide the map</a>'
+                + f' &middot; <a href="{html.escape(away)}" target="_blank" '
+                'rel="noreferrer noopener" style="color:var(--ink-3)">'
+                f'open it at {html.escape(host)}</a>'
+                f'<div class="map"><iframe src="{html.escape(embed)}" '
+                'loading="lazy" referrerpolicy="no-referrer" '
+                'title="where this was taken"></iframe></div>')
 
     def _fact(k, v, *, note="", edit="") -> str:
         if v in (None, "") and not edit:
@@ -1063,7 +1099,7 @@ def create_app(cfg) -> FastAPI:
 
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
     def photo(asset_id: int, back: str = Query(default="/"),
-              msg: str = Query(default="")):
+              msg: str = Query(default=""), map: int = 0):
         con = connect()
         a = con.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
         if a is None:
@@ -1101,7 +1137,7 @@ def create_app(cfg) -> FastAPI:
             _fact("camera", html.escape(" ".join(filter(
                 None, [a["camera_make"], a["camera_model"]])))),
             _fact("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
-            _fact("gps", _gps_fact(a)),
+            _fact("gps", _gps_fact(a, asset_id, back, bool(map))),
             _place_fact(con, a, asset_id, back, ("place", -1) in fixed),
             _event_row(con, asset_id),
             _fact("source", html.escape(a["source_hint"] or "")),

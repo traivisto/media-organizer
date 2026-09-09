@@ -1524,16 +1524,24 @@ large enough that fixing the link before the first full run is worth an evening'
 ever transmitted anywhere by the application.** All inference runs on the local GPU. This is the
 point of the system.
 
-**One qualification, added deliberately and visibly.** The photograph page offers a link to a map,
-because half this library carries a coordinate and a coordinate on its own tells you nothing. The
-application never follows that link, requests a tile, or loads anything remote: the page contains no
-remote image, script, stylesheet or frame, and a test asserts it. Following the link is the user's
-own act, one photograph at a time, and it puts that one coordinate in the map service's logs. The
-link says so where it sits — *sends this coordinate to openstreetmap.org* — rather than leaving it to
-be discovered, and `[ui] map_url` points it elsewhere or, left unset with the link unused, nowhere
-at all. This is option 1 of the four weighed in §13; the alternative that would have made the
-sentence above false as written is embedded tiles, which send a coordinate every time a photograph
-is opened, wanted or not.
+**One qualification, added deliberately and visibly.** The photograph page can show a map, because
+half this library carries a coordinate and a coordinate on its own tells you nothing.
+
+**The deciding property is *when* anything is fetched, not where it is drawn.** A photograph opened
+normally reaches nowhere at all: the page carries no remote image, script, stylesheet or frame, and a
+test asserts every one of those. A map frame is written into the HTML only on the request that asks
+for one — `?map=1`, reached by clicking *see it on a map* — and that click puts that one coordinate
+in the map service's logs. The link says so where it sits, rather than leaving it to be discovered.
+
+Drawing the map *in the page* rather than in another tab was chosen once the timing was settled,
+because it costs nothing further and saves the reader's place: the photograph is still there behind
+the map, and going back is a link rather than a browser button. `[ui] map_url` and
+`[ui] map_embed_url` point both elsewhere; the frame is told `referrerpolicy="no-referrer"`, so the
+map learns the coordinate and not where it came from.
+
+This is §13's option 1 with its rendering changed, and specifically **not** option 2: embedded tiles
+loaded with the photograph would send a coordinate every time one was opened, wanted or not, and
+would make the paragraph above false as written.
 
 Network access is limited to two things, and both are one-time downloads of software:
 
@@ -1712,8 +1720,10 @@ None blocking.
 
 ### Open
 
-- **A map on the photograph page.** Asked for 2026-09-09 and **resolved the same day: option 1, a
-  link out on a click** (§10.4). What follows is the reasoning as it stood when it was decided.
+- **A map on the photograph page.** Asked for 2026-09-09 and **resolved the same day** (§10.4):
+  option 1's timing — nothing fetched until asked — with option 2's rendering, the map drawn in the
+  page rather than in another tab. The two turned out to be separable, and only the timing was ever
+  the privacy question. What follows is the reasoning as it stood when it was decided.
 
 - ~~**A map on the photograph page.**~~ It would show where a
   photograph was taken, and it would apply to the **20,427 of 39,884** that carry a coordinate —

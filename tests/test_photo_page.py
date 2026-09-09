@@ -198,41 +198,64 @@ def test_the_way_back_through_a_correction_stays_local(client):
 # The map link
 # --------------------------------------------------------------------------
 
-def test_a_coordinate_offers_a_map_and_says_what_that_costs(tmp_path):
+def _with_gps(tmp_path, h="b"):
     dbp = tmp_path / "photos.db"
     con = db.connect(dbp)
     db.migrate(con)
-    aid = db.insert_asset(con, "b" * 64, {"format": "jpeg",
-                                          "taken_at": 1_600_000_000})
+    aid = db.insert_asset(con, h * 64, {"format": "jpeg",
+                                        "taken_at": 1_600_000_000})
     con.execute("UPDATE assets SET gps_lat = 61.4978, gps_lon = 23.7610 "
                 "WHERE id = ?", (aid,))
     con.commit()
     con.close()
-    c = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
+    return TestClient(serve.create_app(cfg_for(tmp_path, dbp))), aid
+
+
+def test_a_coordinate_offers_a_map_and_says_what_that_costs(tmp_path):
+    c, aid = _with_gps(tmp_path)
     body = c.get(f"/photo/{aid}").text
-
     assert "see it on a map" in body
-    assert "61.497800" in body and "23.761000" in body
+    assert "61.49780" in body
     # The cost is stated where the link is, not buried in a document.
-    assert "sends this coordinate to openstreetmap.org" in body
-    assert 'rel="noreferrer noopener"' in body
+    assert "loads a map from openstreetmap.org" in body
+    assert "sending it this coordinate" in body
 
 
-def test_the_page_never_fetches_a_map_itself(tmp_path):
-    """A link followed by hand is not the page reaching out on its own (§10.4)."""
-    dbp = tmp_path / "photos.db"
-    con = db.connect(dbp)
-    db.migrate(con)
-    aid = db.insert_asset(con, "c" * 64, {"format": "jpeg", "taken_at": 1})
-    con.execute("UPDATE assets SET gps_lat = 61.0, gps_lon = 23.0 WHERE id = ?",
-                (aid,))
-    con.commit()
-    con.close()
-    body = TestClient(serve.create_app(cfg_for(tmp_path, dbp))).get(
-        f"/photo/{aid}").text
-    for tag in ('<img src="http', '<script src="http', '<iframe',
-                '<link rel="stylesheet" href="http'):
-        assert tag not in body, f"the page loads something remote: {tag}"
+def test_nothing_remote_is_in_the_page_until_the_map_is_asked_for(tmp_path):
+    """The deciding property is *when* anything is fetched (§10.4).
+
+    A photograph opened normally must reach nowhere at all, however many
+    coordinates it carries. This is the assertion the whole privacy argument
+    rests on, so it checks every way a page can pull something in.
+    """
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}").text
+    for tag in ("<iframe", '<img src="http', "<script src=", "href=\"http"):
+        assert tag not in body, f"the page reaches out on its own: {tag}"
+
+
+def test_the_map_appears_in_the_page_when_it_is(tmp_path):
+    """Drawn here rather than in another tab, so the photograph is still there."""
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}", params={"map": 1}).text
+    assert "<iframe" in body
+    assert "openstreetmap.org/export/embed.html" in body
+    assert "marker=61.497800,23.761000" in body
+    assert "hide the map" in body
+
+
+def test_hiding_the_map_is_a_link_back_to_the_photograph(tmp_path):
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}", params={"map": 1}).text
+    assert f'href="/photo/{aid}?back=' in body
+    assert "<iframe" not in c.get(f"/photo/{aid}").text
+
+
+def test_the_frame_is_told_to_send_no_referrer(tmp_path):
+    """The map learns the coordinate. It need not also learn where from."""
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}", params={"map": 1}).text
+    assert 'referrerpolicy="no-referrer"' in body
 
 
 def test_a_photograph_with_no_coordinate_offers_no_map(tmp_path):
@@ -242,9 +265,10 @@ def test_a_photograph_with_no_coordinate_offers_no_map(tmp_path):
     aid = db.insert_asset(con, "d" * 64, {"format": "jpeg", "taken_at": 1})
     con.commit()
     con.close()
-    body = TestClient(serve.create_app(cfg_for(tmp_path, dbp))).get(
-        f"/photo/{aid}").text
-    assert "see it on a map" not in body
+    c = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
+    assert "see it on a map" not in c.get(f"/photo/{aid}").text
+    # Nor does asking for one conjure a map of nowhere.
+    assert "<iframe" not in c.get(f"/photo/{aid}", params={"map": 1}).text
 
 
 def test_the_map_service_is_configurable(tmp_path):
@@ -258,7 +282,10 @@ def test_the_map_service_is_configurable(tmp_path):
     con.commit()
     con.close()
     cfg = cfg_for(tmp_path, dbp)
-    cfg.ui["map_url"] = "https://kartta.example/{lat},{lon}"
-    body = TestClient(serve.create_app(cfg)).get(f"/photo/{aid}").text
+    cfg.ui["map_embed_url"] = "https://kartta.example/{lat},{lon}"
+    cfg.ui["map_url"] = "https://kartta.example/at/{lat},{lon}"
+    c = TestClient(serve.create_app(cfg))
+    assert "kartta.example" in c.get(f"/photo/{aid}").text
+    body = c.get(f"/photo/{aid}", params={"map": 1}).text
     assert "kartta.example/61.000000,23.000000" in body
     assert "openstreetmap.org" not in body
