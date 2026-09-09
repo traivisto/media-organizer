@@ -1379,8 +1379,22 @@ the first that is reachable and says so plainly when none is.
 **Downloads.** The same route serves the original as a download. A whole result set may be taken as a
 zip, with a guard rail nothing else in the UI needs: it is the only feature that reads many originals
 from the NAS on demand, over the link that is already the slowest thing here (§1.2). So the count and
-total size are stated before it starts, the number of files is capped, and the archive is streamed
-rather than assembled in memory. Low priority; the single-file download is most of the value.
+total size are stated before it starts, the number of files is capped at **500**, and the archive is
+streamed rather than assembled in memory.
+
+The estimate costs nothing to produce: sizes are already in the index, so what a download will weigh
+is known without touching a single file. Following the link therefore never begins a transfer — it
+opens a page saying what the transfer would be, and a second click starts it.
+
+Streaming falls out of the format. Given a stream it cannot seek in, `zipfile` writes each entry's
+size and checksum *after* its data, in a descriptor; those descriptors are both what makes the
+archive streamable and the evidence that nothing was built in memory first. Entries are stored, not
+compressed, because a JPEG does not compress twice.
+
+**Measured, 2026-09-09.** A 20-photograph result came back as 62 MB in 1.3 seconds — around 48 MB/s,
+which is several times what §1.2's 100 Mbps assumption predicts, and worth re-measuring before that
+number is relied on again. A copy that has gone missing is skipped rather than failing the archive,
+and two files of one name in different folders both survive, the later numbered.
 
 ---
 

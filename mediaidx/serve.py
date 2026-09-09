@@ -14,13 +14,14 @@ import html
 import json
 import mimetypes
 import sqlite3
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
 from fastapi import FastAPI, Form, Query
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
-                               Response)
+                               Response, StreamingResponse)
 
 from . import cluster
 from . import corrections
@@ -762,6 +763,12 @@ def create_app(cfg) -> FastAPI:
             first = page * size + 1
             bits.append(f'<span class="rest">{first:,}&ndash;'
                         f'{min(total, (page + 1) * size):,} of {total:,}</span>')
+        if total:
+            # Deliberately last and deliberately plain: it is the one control
+            # here that reaches across the network for originals.
+            bits.append(f'<a href="{_qs(q, f).replace("/?", "/zip?", 1)}" '
+                        'class="rest" style="border:0;padding:9px 4px">'
+                        'take these as a zip</a>')
         return f'<div class="more">{"".join(bits)}</div>' if bits else ""
 
     @app.get("/thumb/{size}/{content_hash}")
@@ -773,6 +780,159 @@ def create_app(cfg) -> FastAPI:
             return Response(status_code=404)
         return FileResponse(p, media_type="image/webp",
                             headers={"Cache-Control": "public, max-age=604800"})
+
+    # A result set taken away as one file. This is the only thing in the
+    # application that reads many originals from the NAS on demand, over the
+    # link that is already the slowest part of the whole system (§1.2), so it
+    # is the only thing that asks first.
+    ZIP_MAX_FILES = 500
+
+    # Measured on this link: ~3.2 photographs a second at roughly 3.5 MB each.
+    # Used to turn a size into a wait, because "1.7 GB" means less to a person
+    # standing at a laptop than "about four minutes".
+    LINK_MB_PER_S = 11.0
+
+    def _zip_items(con, where, args, limit=ZIP_MAX_FILES) -> list:
+        """(asset_id, path, size, name) for a result set, newest first.
+
+        Sizes come from the index, not from the disk, so the total can be shown
+        before anything is fetched -- the point of asking at all.
+        """
+        rows = con.execute(
+            f"""SELECT a.id, a.taken_at,
+                       (SELECT f.path FROM files f WHERE f.asset_id = a.id
+                         ORDER BY f.missing_since IS NOT NULL, f.path LIMIT 1) AS path,
+                       (SELECT f.size_bytes FROM files f WHERE f.asset_id = a.id
+                         ORDER BY f.missing_since IS NOT NULL, f.path LIMIT 1) AS size
+                  FROM assets a{f" WHERE {where}" if where else ""}
+                 ORDER BY a.taken_at DESC LIMIT ?""", [*args, limit]).fetchall()
+        seen: dict = {}
+        out = []
+        for r in rows:
+            if not r["path"]:
+                continue
+            name = r["path"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+            # Two folders may hold the same filename; inside one archive they
+            # cannot, so the later one is numbered rather than overwritten.
+            n = seen.get(name.lower(), 0)
+            seen[name.lower()] = n + 1
+            if n:
+                stem, _, ext = name.rpartition(".")
+                name = f"{stem}-{n}.{ext}" if stem else f"{name}-{n}"
+            out.append((r["id"], r["path"], r["size"] or 0, name))
+        return out
+
+    def _size_words(n: int) -> str:
+        mb = n / (1024 * 1024)
+        return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:,.0f} MB"
+
+
+    class _Sink:
+        """Somewhere for zipfile to write that is a stream, not a file.
+
+        Given something it cannot seek in, zipfile writes each entry's size and
+        checksum *after* the data, in a descriptor, which is exactly what makes
+        a zip streamable. So the archive is never assembled anywhere -- it is
+        handed out in pieces as the originals are read.
+        """
+
+        def __init__(self):
+            self.buf = bytearray()
+            self.pos = 0
+
+        def write(self, b) -> int:
+            self.buf += b
+            self.pos += len(b)
+            return len(b)
+
+        def tell(self) -> int:
+            return self.pos
+
+        def flush(self) -> None:
+            pass
+
+        def seekable(self) -> bool:
+            return False
+
+        def take(self) -> bytes:
+            b = bytes(self.buf)
+            self.buf.clear()
+            return b
+
+    @app.get("/zip")
+    def zip_results(q: str = Query(default=""), go: int = 0,
+                    date_from: str = Query(default="", alias="from"),
+                    to: str = Query(default=""), cam: str = Query(default=""),
+                    faces: str = Query(default=""), who: str = Query(default=""),
+                    dsrc: str = Query(default=""), psrc: str = Query(default="")):
+        con = connect()
+        f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
+             "faces": faces.strip(), "who": who.strip(),
+             "dsrc": dsrc.strip(), "psrc": psrc.strip()}
+        r = query.resolve(con, q, place_counts=subtree_counts(con))
+        where, args = _where(con, r, f)
+        items = _zip_items(con, where, args)
+
+        total = con.execute(
+            f"SELECT COUNT(*) FROM assets a{f' WHERE {where}' if where else ''}",
+            args).fetchone()[0]
+        bytes_ = sum(s for _, _, s, _ in items)
+
+        if not go:
+            if not items:
+                return HTMLResponse(PAGE.format(
+                    title="Download — Kuva-arkisto", q=html.escape(q), focus="",
+                    placeholder="kids on a beach at sunset",
+                    body='<div class="empty"><p>Nothing to download.</p></div>'))
+            minutes = bytes_ / (1024 * 1024) / LINK_MB_PER_S / 60
+            capped = ("" if total <= ZIP_MAX_FILES else
+                      f'<p>That search matches {total:,}; the first '
+                      f'{ZIP_MAX_FILES:,} are taken, newest first. Narrow it '
+                      'to reach the rest.</p>')
+            wait = ("under a minute" if minutes < 1
+                    else f"about {minutes:.0f} minutes")
+            body = (
+                '<div class="empty" style="max-width:620px;text-align:left">'
+                f'<p><b>{len(items):,} photographs, {_size_words(bytes_)}.</b></p>'
+                f'{capped}'
+                '<p>These come from the archive itself rather than from the '
+                f'thumbnail cache, so they cross the network: {wait} at the '
+                'speed this link has been measured at. Nothing else in the '
+                'application reads originals in bulk, which is why this asks '
+                'first.</p>'
+                f'<p><a href="{_qs(q, f, go=1).replace("/?", "/zip?")}" '
+                'style="color:var(--accent)"><b>Start the download</b></a>'
+                f' &nbsp; <a href="{_qs(q, f)}">go back</a></p></div>')
+            return HTMLResponse(PAGE.format(
+                title="Download — Kuva-arkisto", q=html.escape(q), body=body,
+                focus="", placeholder="kids on a beach at sunset"))
+
+        def stream():
+            sink = _Sink()
+            with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as z:
+                for _, path, _, name in items:
+                    try:
+                        src = open(pathutil.long_path(path), "rb")
+                    except OSError:
+                        continue          # a copy that has gone; the rest still go
+                    with src, z.open(name, "w") as dst:
+                        while True:
+                            chunk = src.read(1 << 20)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                            if sink.buf:
+                                yield sink.take()
+                    if sink.buf:
+                        yield sink.take()
+            if sink.buf:
+                yield sink.take()
+
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        return StreamingResponse(
+            stream(), media_type="application/zip",
+            headers={"Content-Disposition":
+                     f'attachment; filename="kuva-arkisto-{stamp}.zip"'})
 
     def _reachable(con, asset_id: int):
         """The first path holding this photograph that is actually there.

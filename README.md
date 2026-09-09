@@ -7,9 +7,11 @@ Full design: [spec.md](spec.md).
 
 ## Status
 
-**M4b complete** — the library is searchable by free text, by who is in the
-photograph, by where it was taken and by what was happening, and there is a
-finite queue of questions to work through.
+**M4c complete** — one search box answers across people, places, dates and what
+a photograph shows, all at once; every photograph says what is known about it and
+on what evidence; and anything the application got wrong can be put right in a
+way no rebuild can undo. There is also a finite queue of questions to work
+through.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -19,7 +21,7 @@ finite queue of questions to work through.
 | M3b | Clustering, naming, people UI | **done** |
 | M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
 | M4b | Events, review queue, review UI | **done** |
-| M4c | Unified search, photo screen, corrections | next |
+| M4c | Unified search, photo screen, corrections | **done** |
 | M5 | Captions | |
 | M6 | Video | deferred |
 
