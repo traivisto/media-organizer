@@ -279,3 +279,75 @@ def test_a_stray_letter_is_not_a_person(con):
     _person(con, 5, "Reetta P")
     r = query.resolve(con, "p", place_counts=ALL_PLACES)
     assert r.terms == []
+
+
+def _event(c, eid, name, count):
+    c.execute("""INSERT INTO events (id, name, name_source, start_at, end_at,
+                                     asset_count) VALUES (?,?,'folder',0,0,?)""",
+              (eid, name, count))
+
+
+def test_the_heavier_reading_wins(con):
+    """`Hartola` is an occasion of three and a municipality of 1,286.
+
+    Precedence alone read it as the occasion and then said nothing when the
+    answer came back empty, which is what sent a real query to no photographs.
+    """
+    _event(con, 2, "Hartola", 3)
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) "
+                "VALUES (20, 'locality', 'Hartola', 'Finland/Hartola', 500)")
+    con.execute("INSERT INTO place_names (place_id, norm, own) "
+                "VALUES (20, 'hartola', 1)")
+    r = query.resolve(con, "Hartola", place_counts={20: 1286})
+    assert r.terms[0].kind == "place"
+    assert [a.kind for a in r.terms[0].also] == ["event"]
+
+
+def test_a_tie_keeps_what_the_user_named(con):
+    """Kia, Loon and Vaja tie exactly: the place came from the same label.
+
+    A tie is the signature of that failure rather than a coincidence, so the
+    event stays on top and the wrong town does not take its place.
+    """
+    _event(con, 2, "Vaja", 27)
+    r = query.resolve(con, "Vaja", place_counts={11: 27})
+    assert r.terms[0].kind == "event"
+
+
+def test_a_person_is_never_outweighed_by_a_place(con):
+    """22 of this library's 79 people share a name with the gazetteer.
+
+    Several hold few photographs -- Marko 4, Reno 15 -- and this archive has
+    driven the American west, so counting would answer a question about a
+    friend with a question about a city.
+    """
+    _person(con, 7, "Reno")
+    con.execute("INSERT INTO places (id, kind, name, path, rank_pop) "
+                "VALUES (21, 'locality', 'Reno', 'USA/Nevada/Reno', 900)")
+    con.execute("INSERT INTO place_names (place_id, norm, own) "
+                "VALUES (21, 'reno', 1)")
+    r = query.resolve(con, "Reno", place_counts={21: 5000})
+    assert r.terms[0].kind == "person"
+
+
+def test_a_name_shared_by_several_events_means_all_of_them(con):
+    """Three separate holidays are called Alicante, two called West Coast.
+
+    Keeping whichever row the table yielded first made `Alicante` a search of
+    one holiday out of three, silently, and left the weight against the place
+    a third of what it should have been. Measured: 50 of 168 named events share
+    a name with another.
+    """
+    _event(con, 2, "Alicante", 121)
+    _event(con, 3, "Alicante", 132)
+    _event(con, 4, "Alicante", 139)
+    r = query.resolve(con, "Alicante", place_counts={10: 142})
+    assert r.terms[0].kind == "event"          # 392 together, beating 142
+    assert r.terms[0].held == 392
+    assert r.terms[0].ref_id is None           # no single event to link to
+
+
+def test_one_event_of_a_name_still_links_to_itself(con):
+    _event(con, 2, "Alicante", 400)
+    r = query.resolve(con, "Alicante", place_counts={10: 142})
+    assert r.terms[0].ref_id == 2

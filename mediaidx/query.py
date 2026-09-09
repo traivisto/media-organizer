@@ -5,16 +5,23 @@ This module is where that string becomes a set of chips -- a person, a place, an
 event, a date range -- plus whatever is left over, which is the description the
 vector search actually ranks by.
 
-Two rules do most of the work:
+Three rules do most of the work:
 
 * **Longest span first.** "New York" is looked up before "New", and "Kesa 2019"
   before "2019", so the most specific reading of a phrase wins and the words it
   used are not available to anything else.
-* **Named things before found things.** Within one span, a person or an event
-  beats a place, because people and event names are what *this* user typed into
-  *this* library, while place names come from a 285,144-row gazetteer that is
-  exactly where the accidental matches come from -- `Kia`, `Loon` and `Vaja` are
-  all on record as folder labels wrongly resolved to towns (§6.3).
+* **A person is never outweighed.** A name the user gave is an assertion; a
+  gazetteer hit is a guess, and no number of photographs makes the guess the
+  better reading. 22 of this library's 79 people share a name with the
+  gazetteer, several of them holding very few pictures.
+* **Between an event and a place, the heavier reading wins**, those two being
+  the same kind of evidence -- both are what a folder label became. Where they
+  are level the event stays on top, since a tie is the signature of a place
+  derived from that very label and holding the same photographs: `Kia`, `Loon`
+  and `Vaja` are all on record as folder labels wrongly resolved to towns
+  (§6.3), and each ties exactly.
+
+See `_resolve_span` for the measurements all of that rests on.
 
 Nothing here reads a photograph or runs a model. Resolution is table lookup, so
 it costs a few hundred microseconds and gives the same answer every time; that
@@ -268,15 +275,24 @@ def _tokens(q: str) -> list:
 
 
 def _named_events(con) -> dict:
-    """Named events by match key. Unnamed ones cannot be asked for by name."""
+    """Named events by match key, gathered across every event of that name.
+
+    Names repeat: measured 2026-09-09, **50 of this library's 168 named events
+    share a name with another** -- three holidays called Alicante, two called
+    West Coast, fifteen called TBD. A name is therefore a group, not a row, and
+    both the filter and the weight against a place read the whole of it.
+    """
     if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='events'").fetchone():
         return {}
-    out = {}
+    out: dict = {}
     for r in con.execute(
             "SELECT id, name, start_at, asset_count FROM events "
             "WHERE name IS NOT NULL AND name != ''"):
-        out.setdefault(norm(r["name"]), r)
+        e = out.setdefault(norm(r["name"]),
+                           {"name": r["name"], "ids": [], "held": 0})
+        e["ids"].append(r["id"])
+        e["held"] += r["asset_count"]
     return out
 
 
@@ -300,7 +316,11 @@ def _people_index(con) -> tuple[dict, dict]:
     faces to count them: whether a name is *understood* is a different question
     from how many photographs it will find.
     """
-    rows = list(con.execute("SELECT id, name FROM persons"))
+    rows = list(con.execute("""
+        SELECT p.id, p.name,
+               (SELECT COUNT(DISTINCT f.asset_id) FROM faces f
+                 WHERE f.person_id = p.id) AS held
+          FROM persons p"""))
     by_name: dict = {}
     for r in rows:
         by_name.setdefault(norm(r["name"]), r)
@@ -373,7 +393,47 @@ def _place_term(con, span: str, counts) -> Term | None:
 
 
 def _resolve_span(con, span, people, first_names, events, counts, force=None):
-    """Every reading of one span, best first. Precedence is the order here."""
+    """Every reading of one span, best first.
+
+    Best is the one with the most photographs behind it, and where two readings
+    are level the order below decides -- what the user named, before what the
+    gazetteer found. Weight of evidence beats precedence because precedence
+    alone reads `Hartola` as an occasion of three photographs rather than as the
+    municipality of 1,286, and then says nothing when the answer comes back
+    empty.
+
+    Measured on this library, 2026-09-09, over every label that reads two ways:
+
+        label         event   place
+        West Coast    1,200     624   event, and the place is New Zealand
+        USA             256       8   event
+        Alicante        392     142   event
+        Hartola           3   1,286   place
+        Tenerife          0     162   place
+        Kia / Loon /
+        Vaja        5/76/27  5/76/27   level -- precedence keeps the event
+
+    The last three are the wrong folder matches (§6.3), and they tie *exactly*
+    because the place was derived from the same folder label as the event and
+    holds the very same photographs. A tie is therefore not a coincidence to be
+    broken arbitrarily: it is the signature of that failure, and precedence is
+    what keeps the honest reading on top when it happens.
+
+    **Only an event and a place are weighed against each other**, because only
+    those two are the same kind of evidence: both are what a folder label was
+    turned into. A person is not comparable and always comes first. Measured the
+    same day, **22 of this library's 79 people carry names the gazetteer also
+    knows** -- Marko, Helena, Reno, Anton, Paul, Scott, Kia, Luka and more --
+    and several hold few photographs: Marko 4, Helena 12, Reno 15. This archive
+    has driven the American west, so Reno, Nevada could easily hold more pictures
+    than Reno the person, and counting would then answer a question about a
+    friend with a question about a city. A name the user gave is an assertion;
+    a gazetteer hit is a guess, and no number makes the guess the better one.
+
+    Dates take no part either. A range is not a named thing with photographs
+    behind it, and counting one would read an event called "Kesa 2019" as every
+    photograph taken that summer.
+    """
     found = []
     key = norm(span)
 
@@ -381,14 +441,27 @@ def _resolve_span(con, span, people, first_names, events, counts, force=None):
         # The whole name first, so `reetta` is Reetta rather than Reetta P.
         r = people.get(key) or first_names.get(key)
         if r is not None:
-            found.append(Term("person", r["name"], span, ref_id=r["id"]))
+            found.append(Term("person", r["name"], span, ref_id=r["id"],
+                              held=r["held"]))
+    # These two are weighed against each other; the person above is not.
+    weighed = []
     if force in (None, "event") and key in events:
-        r = events[key]
-        found.append(Term("event", r["name"], span, ref_id=r["id"]))
+        e = events[key]
+        # One trip or five, the name means all of them. Keeping whichever row
+        # the table happened to yield first made `Alicante` a search of one
+        # holiday out of three, and said nothing about the other two.
+        weighed.append(Term("event", e["name"], span,
+                            ref_id=e["ids"][0] if len(e["ids"]) == 1 else None,
+                            held=e["held"]))
     if force in (None, "place"):
         t = _place_term(con, span, counts)
         if t:
-            found.append(t)
+            weighed.append(t)
+    # Stable, so a tie leaves the event on top -- which is the signature of a
+    # place derived from the same folder label, holding the same photographs.
+    weighed.sort(key=lambda t: -(t.held or 0))
+    found.extend(weighed)
+
     if force in (None, "date"):
         d = parse_date(span)
         if d:

@@ -1084,6 +1084,37 @@ This is the whole interface. It is preferred over the alternatives for specific 
   deterministic, and identical every time. A model in the search box buys nothing here and costs
   latency and reproducibility on the control touched most often.
 
+**When a word reads more than one way, weight of evidence decides — with one exception.** A person is
+never outweighed: a name the user gave is an assertion, a gazetteer hit is a guess, and no number of
+photographs makes the guess the better reading. Measured 2026-09-09, **22 of this library's 79 people
+share a name with the gazetteer** — Marko, Helena, Reno, Anton, Kia, Luka among them — and several
+hold very few pictures (Marko 4, Reno 15). This archive has driven the American west, so Reno, Nevada
+could easily outnumber Reno the person, and counting would answer a question about a friend with a
+question about a city.
+
+An **event and a place** are weighed against each other, being the same kind of evidence: both are
+what a folder label became. Where they are level the event stays on top, because a tie is not a
+coincidence — it is the signature of a place derived from that very label, holding the same
+photographs. Measured over every label in this library that reads two ways:
+
+| Label | Event | Place | Taken as |
+|---|---|---|---|
+| West Coast | 1,200 | 624 | event — the place is New Zealand |
+| USA | 256 | 8 | event |
+| Alicante | 392 | 142 | event |
+| Hartola | 3 | 1,286 | **place** |
+| Tenerife | 0 | 162 | place |
+| Kia / Loon / Vaja | 5 / 76 / 27 | 5 / 76 / 27 | event, on the tie |
+
+Precedence alone read `Hartola` as an occasion of three photographs rather than as the municipality
+of 1,286, so `hartola tommi ansku` returned nothing at all where the other reading returns twenty.
+
+**An event name means every event of that name.** Names repeat: **50 of 168 named events share a name
+with another** — three holidays called Alicante, two called West Coast, fifteen called TBD. Taking
+whichever row the table yielded first made `Alicante` a search of one holiday out of three, silently,
+and left its weight against the place a third of what it should be. The filter matches on the name
+and the weight sums across the group; the chip links to a single event only where the name means one.
+
 **One word of a name is a name.** Nobody types "Anne Raivisto" to look for Anne, so a person resolves
 from any single word of their name as well as from the whole of it — but only where that word belongs
 to exactly one person, since a chip that silently picks between two people is worse than no chip.

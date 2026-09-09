@@ -389,9 +389,12 @@ def create_app(cfg) -> FastAPI:
             args.extend([row["path"], _like(row["path"]) + "/%"])
 
         for t in r.events:
-            preds.append(
-                "a.id IN (SELECT asset_id FROM event_assets WHERE event_id = ?)")
-            args.append(t.ref_id)
+            # Matched by name, not by id: three separate holidays are called
+            # Alicante, and asking for Alicante means all three (§7.1).
+            preds.append("""a.id IN (SELECT ea.asset_id FROM event_assets ea
+                                       JOIN events e ON e.id = ea.event_id
+                                      WHERE e.name = ?)""")
+            args.append(t.label)
 
         for t in r.dates:
             preds.append("(a.taken_at >= ? AND a.taken_at < ?)")

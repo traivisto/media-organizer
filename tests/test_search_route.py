@@ -209,12 +209,13 @@ def test_an_empty_answer_names_what_was_asked_for(client):
     assert "most recent first" not in body
 
 
-def test_the_other_reading_promises_what_it_delivers(tmp_path, monkeypatch):
-    """The Hartola case: the count must be the one the link gives.
+def test_the_other_reading_promises_what_it_delivers(tmp_path):
+    """The count offered must be the one the link gives.
 
-    The municipality holds 1,286 photographs and shares 20 of them with the two
-    people also asked for. Offering 1,286 answers a question nobody asked, and
-    the click that follows it is a disappointment.
+    The event is the larger reading here and so is chosen, but it holds nobody
+    the query also asked for. The place reading holds four of them. Offering
+    the place's own total instead would answer a question nobody asked, and the
+    click that follows could only disappoint.
     """
     dbp = tmp_path / "photos.db"
     con = db.connect(dbp)
@@ -225,29 +226,31 @@ def test_the_other_reading_promises_what_it_delivers(tmp_path, monkeypatch):
                 "VALUES (1, 'hartola', 1)")
     con.execute("""INSERT INTO events (id, name, name_source, start_at, end_at,
                                        asset_count) VALUES
-                   (1, 'Hartola', 'folder', 0, 0, 3)""")
+                   (1, 'Hartola', 'folder', 0, 0, 40)""")
     con.execute("INSERT INTO persons (id, name, source, created_at) "
                 "VALUES (1, 'Tommi', 'manual', 0)")
 
-    # Thirty in the municipality; four of them with Tommi. The event holds
-    # three, and none of those has him in it.
-    for i in range(30):
+    # Forty in the event, none of them Tommi; thirty in the municipality, four
+    # of them Tommi. The event is larger, so it is the reading taken.
+    for i in range(70):
         aid = db.insert_asset(con, f"{i:064d}",
                               {"format": "jpeg", "taken_at": 1_600_000_000})
-        con.execute("UPDATE assets SET place_id = 1 WHERE id = ?", (aid,))
-        if i < 4:
-            con.execute(
-                """INSERT INTO faces (asset_id, idx, bbox, det_score,
-                                      embedding, person_id)
-                   VALUES (?,0,'[0,0,1,1]',0.9,X'00',1)""", (aid,))
-        if i >= 27:
+        if i < 40:
             con.execute("INSERT INTO event_assets (event_id, asset_id) "
                         "VALUES (1, ?)", (aid,))
+        else:
+            con.execute("UPDATE assets SET place_id = 1 WHERE id = ?", (aid,))
+            if i < 44:
+                con.execute(
+                    """INSERT INTO faces (asset_id, idx, bbox, det_score,
+                                          embedding, person_id)
+                       VALUES (?,0,'[0,0,1,1]',0.9,X'00',1)""", (aid,))
     con.commit()
     con.close()
 
     client = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
     body = client.get("/", params={"q": "hartola tommi"}).text
+    assert "<i>event</i>" in body            # the larger reading was taken
     assert "No photograph has" in body
-    assert "4 photographs" in body        # what the link gives
-    assert "30 photograph" not in body    # not what the place holds
+    assert "4 photographs" in body           # what the link gives
+    assert "30 photograph" not in body       # not what the place holds
