@@ -105,6 +105,22 @@ def load_vec_extension(con) -> bool:
         return False
 
 
+def vec_index_ready(con) -> bool:
+    """Whether the ANN index can actually be queried.
+
+    The extension loading and the index existing are two different facts, and
+    only the pair of them makes `search` safe: a database embedded before
+    sqlite-vec was available holds its vectors in `image_vectors` with no
+    `vec_images` beside them, and asking the index for them raises rather than
+    falling back. The numpy path answers such a database perfectly well.
+    """
+    if not load_vec_extension(con):
+        return False
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'vec_images'").fetchone() \
+        is not None
+
+
 def ensure_vec_table(con) -> bool:
     if not load_vec_extension(con):
         return False
@@ -126,9 +142,49 @@ def store(con, asset_id: int, model: str, vec: np.ndarray, *, vec_ok: bool) -> N
                     (asset_id, pack_f32(vec)))
 
 
+# SQLite's default ceiling on host parameters is 999, so a candidate set is
+# read back in chunks rather than as one enormous IN clause.
+_CHUNK = 900
+
+
+def _subset(con, ids) -> tuple[np.ndarray, np.ndarray]:
+    """Vectors for a given set of assets, in no particular order."""
+    got_ids, blobs = [], []
+    ids = list(ids)
+    for i in range(0, len(ids), _CHUNK):
+        chunk = ids[i:i + _CHUNK]
+        for r in con.execute(
+                "SELECT asset_id, embedding FROM image_vectors "
+                f"WHERE asset_id IN ({','.join('?' * len(chunk))})", chunk):
+            got_ids.append(r[0])
+            blobs.append(r[1])
+    if not got_ids:
+        return np.empty(0, dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+    mat = np.frombuffer(b"".join(blobs), dtype=np.float16)
+    mat = mat.reshape(len(got_ids), -1).astype(np.float32)
+    return np.asarray(got_ids, dtype=np.int64), mat
+
+
 def search(con, query_vec: np.ndarray, limit: int = 60, *,
-           vec_ok: bool) -> list[tuple[int, float]]:
-    """Return (asset_id, similarity) best first."""
+           vec_ok: bool, candidate_ids=None) -> list[tuple[int, float]]:
+    """Return (asset_id, similarity) best first.
+
+    `candidate_ids` narrows the search *before* it ranks, which is a
+    correctness condition and not an optimisation (spec §7.2). The index
+    returns a global top-k; ranking first and filtering afterwards would take
+    the best matches in the whole library and then throw away the ones outside
+    the filter, commonly leaving nothing and never leaving the best matches
+    within it. Restricting the candidate set is also the cheaper direction --
+    fewer vectors to multiply than the unfiltered path reads.
+    """
+    if candidate_ids is not None:
+        ids, mat = _subset(con, candidate_ids)
+        if len(ids) == 0:
+            return []
+        sims = mat @ query_vec.astype(np.float32)
+        top = np.argsort(-sims)[:limit]
+        return [(int(ids[i]), float(sims[i])) for i in top]
+
     if vec_ok:
         rows = con.execute(
             """SELECT asset_id, distance FROM vec_images
@@ -148,3 +204,60 @@ def search(con, query_vec: np.ndarray, limit: int = 60, *,
     top = np.argpartition(-sims, min(limit, len(sims) - 1))[:limit]
     top = top[np.argsort(-sims[top])]
     return [(int(ids[i]), float(sims[i])) for i in top]
+
+
+# --------------------------------------------------------------------------
+# Where the results stop
+# --------------------------------------------------------------------------
+
+# Never show fewer than this, whatever the scores say. A page holding two
+# photographs for a reasonable question reads as a broken application rather
+# than as an honest answer, and the cost of a few weak extras is far lower
+# than the cost of looking empty.
+MIN_RESULTS = 12
+
+# How close to the best match a photograph has to score to be called an answer.
+#
+# Chosen by measurement, and the measurement overturned the first design. That
+# was to find the largest fall between neighbouring scores and cut there, on the
+# assumption that answers end at a cliff. Real scores have no cliff. Measured
+# over this library, 2026-09-09: "snow" runs 0.146 at rank 1 to 0.113 at rank
+# 600, decaying smoothly the whole way, and every other query behaves the same.
+# There is no gap anywhere to find, so that rule cut nothing at all.
+#
+# What does separate them is distance from the top, taken as a share so it stays
+# comparable across queries whose best scores differ (0.181 for "kids on a beach
+# at sunset", 0.132 for "a dog"). At 0.90 this library answers "snow" with 71
+# photographs, "birthday cake" with 30, "rippijuhlat" with 23 and "underwater"
+# with 8 -- which is the right shape for an archive that has seen a great deal
+# of snow and very little diving.
+KEEP_FRACTION = 0.90
+
+
+def cut(scores, *, floor: int = MIN_RESULTS,
+        fraction: float = KEEP_FRACTION) -> int:
+    """How many of these results are answers (spec §7.3).
+
+    A fixed similarity threshold cannot do this job: the scores are not
+    calibrated across queries, so a strong match for an unusual description can
+    sit below a weak match for a common one, and one cutoff would over-trim some
+    queries while under-trimming others. What is comparable within a query is
+    how far each result has fallen behind the best one, and that is what this
+    measures.
+
+    Returns the number to show. The remainder is never discarded, only held
+    behind "show more".
+    """
+    n = len(scores)
+    if n <= floor:
+        return n
+    top = float(scores[0])
+    if top <= 0:                    # nothing resembles the query at all
+        return n
+    bar = top * fraction
+    keep = 0
+    for s in scores:
+        if float(s) < bar:
+            break
+        keep += 1
+    return max(keep, floor)

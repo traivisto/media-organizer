@@ -14,6 +14,7 @@ import html
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from fastapi import FastAPI, Form, Query
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
@@ -25,6 +26,7 @@ from . import db, embed, images
 from . import events as events_mod
 from . import paths as pathutil
 from . import places as places_mod
+from . import query
 from . import queue as queue_mod
 
 PAGE = """<!doctype html>
@@ -117,6 +119,43 @@ nav a:hover {{ color:var(--accent); }}
 .crumb {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; font-size:13px;
   color:var(--ink-3); }}
 .crumb a {{ color:var(--accent); }}
+/* What the box understood. These are the interface, not decoration: each one
+   states a criterion and carries the link that removes it, so the whole thing
+   works as plain anchors with no script on the page. */
+.chips {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; display:flex;
+  gap:8px; align-items:center; flex-wrap:wrap; }}
+.crit {{ display:inline-flex; gap:8px; align-items:center; padding:5px 6px 5px 11px;
+  background:var(--surface); border:1px solid var(--rule); border-radius:14px;
+  font-size:13px; color:var(--ink); }}
+.crit i {{ font-style:normal; color:var(--ink-3); font-size:11.5px;
+  text-transform:uppercase; letter-spacing:.04em; }}
+.crit a {{ color:var(--ink); }}
+.crit a:hover {{ color:var(--accent); }}
+.crit a.x {{ color:var(--ink-3); padding:0 5px; border-radius:9px;
+  font-size:14px; line-height:1; }}
+.crit a.x:hover {{ background:var(--rule); color:var(--ink); }}
+.rest {{ color:var(--ink-3); font-size:13px; }}
+.rest b {{ color:var(--ink-2); font-weight:500; }}
+/* An unsure reading: shown, never applied. */
+.offer {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; font-size:13px;
+  color:var(--ink-3); }}
+.offer a {{ color:var(--accent); }}
+details.filters {{ max-width:1500px; margin:0 auto; padding:8px 20px 0;
+  font-size:13px; color:var(--ink-3); }}
+details.filters summary {{ cursor:pointer; color:var(--ink-3); }}
+details.filters form {{ display:flex; gap:14px; align-items:flex-end;
+  flex-wrap:wrap; margin:10px 0 0; max-width:none; }}
+details.filters label {{ display:flex; flex-direction:column; gap:4px;
+  font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }}
+details.filters input, details.filters select {{ padding:6px 9px; font-size:14px;
+  color:var(--ink); background:var(--surface); border:1px solid var(--rule);
+  border-radius:3px; text-transform:none; letter-spacing:0; }}
+.more {{ max-width:1500px; margin:0 auto; padding:0 20px 50px; display:flex;
+  gap:12px; align-items:center; }}
+.more a {{ display:inline-block; padding:9px 18px; border:1px solid var(--rule);
+  border-radius:3px; background:var(--surface); color:var(--ink-2);
+  font-size:14px; }}
+.more a:hover {{ border-color:var(--accent); color:var(--accent); }}
 </style></head><body>
 <header><form action="/" method="get">
   <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
@@ -136,7 +175,7 @@ def create_app(cfg) -> FastAPI:
     def connect() -> sqlite3.Connection:
         con = db.connect(cfg.database, create=False)
         con.row_factory = sqlite3.Row
-        state["vec_ok"] = embed.load_vec_extension(con)
+        state["vec_ok"] = embed.vec_index_ready(con)
         return con
 
     def encoder():
@@ -147,7 +186,20 @@ def create_app(cfg) -> FastAPI:
             )
         return state["encoder"]
 
-    def card(row, score=None) -> str:
+    def safe_back(where: str) -> str:
+        """A return path, or the front page if it is not one.
+
+        `back` arrives in the URL, so it is only ever followed as a relative
+        path on this application: anything absolute, protocol-relative or
+        otherwise not starting with a single slash is discarded rather than
+        turned into a link somewhere else.
+        """
+        where = (where or "/").strip()
+        if not where.startswith("/") or where.startswith("//"):
+            return "/"
+        return where
+
+    def card(row, score=None, back=None) -> str:
         when = ""
         if row["taken_at"]:
             dt = datetime.fromtimestamp(row["taken_at"])
@@ -157,8 +209,14 @@ def create_app(cfg) -> FastAPI:
                     f"{dt:%b %Y}" if p == "month" else
                     f"{dt.day} {dt:%b %Y}")
         right = f"{score:.2f}" if score is not None else (row["camera_model"] or "")
+        # Where this card was rendered travels with it, so the photograph
+        # can offer the way back to the page that led there rather than always
+        # to the front (spec 8.2).
+        to = f'/photo/{row["id"]}'
+        if back:
+            to += f"?back={quote_plus(back)}"
         return (
-            f'<figure><a href="/photo/{row["id"]}">'
+            f'<figure><a href="{to}">'
             f'<img loading="lazy" src="/thumb/s/{row["content_hash"]}" alt="">'
             f'<figcaption><b>{html.escape(when)}</b>'
             f'<span>{html.escape(str(right)[:18])}</span></figcaption></a></figure>')
@@ -278,84 +336,355 @@ def create_app(cfg) -> FastAPI:
             f'{r["asset_count"]:,} photographs</span></a>' for r in rows)
         return f'<div class="meta">Events</div><div class="people">{chips}</div>'
 
+    # How many photographs a page shows, and how deep the ranked search looks
+    # before paging through what it found. 600 is far past the point where a
+    # relevant result is plausible; it exists so the cut and the page count are
+    # computed over the whole answer rather than over one screen of it.
+    PAGE_SIZE = 120
+    MAX_RANKED = 600
+
+    FILTERS = ("from", "to", "cam", "faces", "dsrc", "psrc")
+
+    def _qs(q: str, f: dict, **over) -> str:
+        """A link back to this search with something changed."""
+        parts = {"q": q, **{k: v for k, v in f.items() if v}, **over}
+        out = []
+        for k, v in parts.items():
+            if v in (None, "", 0):
+                continue
+            out.append(f"{quote_plus(str(k))}={quote_plus(str(v))}")
+        return "/?" + "&".join(out) if out else "/"
+
+    def _where(con, r, f) -> tuple:
+        """Every chip and filter as one SQL predicate over `assets a`.
+
+        Built once and used twice: to narrow the candidate set before the
+        vector search ranks it (§7.2), and as the whole query when there is no
+        description to rank by. Two code paths reading one definition of what
+        was asked for.
+        """
+        preds, args = [], []
+
+        pids = [t.ref_id for t in r.people]
+        if pids:
+            # Everyone named has to be in it -- "Tommi and Emmi" is a question
+            # about a pair, not about either of them.
+            marks = ",".join("?" * len(pids))
+            preds.append(
+                f"""a.id IN (SELECT asset_id FROM faces
+                              WHERE person_id IN ({marks})
+                              GROUP BY asset_id
+                             HAVING COUNT(DISTINCT person_id) = ?)""")
+            args.extend([*pids, len(pids)])
+
+        for t in r.places:
+            row = con.execute("SELECT path FROM places WHERE id = ?",
+                              (t.ref_id,)).fetchone()
+            if row is None:
+                continue
+            # Naming any level matches everything beneath it, with one indexed
+            # comparison and no recursion (§7.2).
+            preds.append("""a.place_id IN (SELECT id FROM places
+                             WHERE path = ? OR path LIKE ? ESCAPE '\\')""")
+            args.extend([row["path"], _like(row["path"]) + "/%"])
+
+        for t in r.events:
+            preds.append(
+                "a.id IN (SELECT asset_id FROM event_assets WHERE event_id = ?)")
+            args.append(t.ref_id)
+
+        for t in r.dates:
+            preds.append("(a.taken_at >= ? AND a.taken_at < ?)")
+            args.extend([t.start, t.end])
+
+        if f.get("from"):
+            preds.append("a.taken_at >= ?")
+            args.append(_epoch(f["from"], 0))
+        if f.get("to"):
+            preds.append("a.taken_at < ?")
+            args.append(_epoch(f["to"], 1))
+        if f.get("cam"):
+            preds.append("(a.camera_model LIKE ? OR a.camera_make LIKE ?)")
+            args.extend([f"%{_like(f['cam'])}%"] * 2)
+        if f.get("faces") == "y":
+            preds.append("EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
+        elif f.get("faces") == "n":
+            preds.append("NOT EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
+        if f.get("dsrc"):
+            preds.append("a.taken_at_source = ?")
+            args.append(f["dsrc"])
+        if f.get("psrc"):
+            preds.append("a.place_source = ?")
+            args.append(f["psrc"])
+
+        return (" AND ".join(preds), args) if preds else ("", [])
+
+    def _epoch(text: str, end: int) -> int:
+        """A date typed into a filter box. Unreadable input filters nothing."""
+        for fmt, add in (("%Y-%m-%d", 1), ("%Y-%m", 31), ("%Y", 366)):
+            try:
+                dt = datetime.strptime(text.strip(), fmt)
+            except ValueError:
+                continue
+            if not end:
+                return int(dt.timestamp())
+            return int(dt.timestamp()) + add * 86400
+        return 0 if not end else 4102444800
+
+    def chip_row(r, f) -> str:
+        """What the box understood, and how to take any of it back."""
+        if not r.terms and not r.text:
+            return ""
+        seen = {"person": "/person/", "place": "/place/", "event": "/event/"}
+        bits = []
+        for t in r.terms:
+            gone = _qs(r.without(t), f)
+            # The label leads to the thing itself, so a chip is a way through
+            # to the person, place or event as well as a criterion.
+            label = html.escape(t.label)
+            if t.kind in seen and t.ref_id:
+                label = f'<a href="{seen[t.kind]}{t.ref_id}">{label}</a>'
+            bits.append(
+                f'<span class="crit"><i>{t.kind}</i> {label}'
+                f'<a class="x" href="{gone}" title="not this">&times;</a></span>')
+        if r.text and r.terms:
+            bits.append(f'<span class="rest">and <b>{html.escape(r.text)}</b> '
+                        'as the description</span>')
+        return f'<div class="chips">{"".join(bits)}</div>' if bits else ""
+
+    def offer_row(r, f) -> str:
+        """A reading that was plausible but not acted on (§7.1).
+
+        Shown rather than applied, because the archive holding a handful of
+        photographs somewhere named like an ordinary word is not evidence that
+        the word was meant as a place.
+        """
+        bits = []
+        for t in r.offers:
+            take = _qs(r.raw.replace(t.span, f"place:{t.span}"), f)
+            bits.append(
+                f'&ldquo;{html.escape(t.span)}&rdquo; is also '
+                f'<a href="{take}">{html.escape(t.label)}</a>, '
+                f'where you have {t.held:,}. Searching the words instead.')
+
+        # A word that reads two ways says so, rather than letting precedence
+        # decide in silence. `Hartola` is an event of three photographs and a
+        # municipality of 1,286: picking the event is defensible, picking it
+        # without saying so is not, and the difference only shows as an
+        # unexplained empty page.
+        for t in r.terms:
+            for alt in t.also:
+                take = _qs(r.raw.replace(t.span, f"{alt.kind}:{t.span}"), f)
+                held = f' ({alt.held:,} photographs)' if alt.held else ""
+                bits.append(
+                    f'&ldquo;{html.escape(t.span)}&rdquo; is also a {alt.kind}, '
+                    f'<a href="{take}">{html.escape(alt.label)}</a>{held}.')
+        return f'<div class="offer">{" ".join(bits)}</div>' if bits else ""
+
+    def filter_row(q: str, f: dict) -> str:
+        """The auditing controls, collapsed until wanted (§7.4).
+
+        Not chips: a chip answers "what am I looking for", these answer "what
+        do I want to check", and nobody types `place-source is a folder name`
+        as a question.
+        """
+        def opt(name, value, label, current):
+            sel = " selected" if current == value else ""
+            return f'<option value="{value}"{sel}>{label}</option>'
+
+        on = sum(1 for k in FILTERS if f.get(k))
+        summary = "Filters" + (f" &middot; {on} on" if on else "")
+        sel_faces = "".join([
+            opt("faces", "", "any", f.get("faces")),
+            opt("faces", "y", "with faces", f.get("faces")),
+            opt("faces", "n", "without", f.get("faces"))])
+        sel_dsrc = "".join([
+            opt("dsrc", "", "any", f.get("dsrc")),
+            opt("dsrc", "exif", "EXIF", f.get("dsrc")),
+            opt("dsrc", "filename", "filename", f.get("dsrc")),
+            opt("dsrc", "folder", "folder", f.get("dsrc"))])
+        sel_psrc = "".join([
+            opt("psrc", "", "any", f.get("psrc")),
+            opt("psrc", "gps", "coordinate", f.get("psrc")),
+            opt("psrc", "folder", "folder name", f.get("psrc"))])
+        return (
+            f'<details class="filters"{" open" if on else ""}>'
+            f'<summary>{summary}</summary>'
+            '<form action="/" method="get">'
+            f'<input type="hidden" name="q" value="{html.escape(q)}">'
+            '<label>from<input type="text" name="from" placeholder="2019-06" '
+            f'value="{html.escape(f.get("from", ""))}"></label>'
+            '<label>to<input type="text" name="to" placeholder="2020" '
+            f'value="{html.escape(f.get("to", ""))}"></label>'
+            '<label>camera<input type="text" name="cam" placeholder="any" '
+            f'value="{html.escape(f.get("cam", ""))}"></label>'
+            f'<label>faces<select name="faces">{sel_faces}</select></label>'
+            f'<label>date from<select name="dsrc">{sel_dsrc}</select></label>'
+            f'<label>place from<select name="psrc">{sel_psrc}</select></label>'
+            '<button type="submit">Apply</button>'
+            f'<a class="chip" href="{_qs(q, {})}" style="padding:7px 12px">'
+            'clear</a>'
+            '</form></details>')
+
     @app.get("/", response_class=HTMLResponse)
-    def home(q: str = Query(default=""), limit: int = 120):
+    def home(q: str = Query(default=""), page: int = 0, more: int = 0,
+             date_from: str = Query(default="", alias="from"),
+             to: str = Query(default=""), cam: str = Query(default=""),
+             faces: str = Query(default=""), dsrc: str = Query(default=""),
+             psrc: str = Query(default="")):
         con = connect()
-        total = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
+             "faces": faces.strip(), "dsrc": dsrc.strip(), "psrc": psrc.strip()}
+        page = max(0, page)
+        total_all = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         embedded = con.execute(
             "SELECT COUNT(*) FROM image_vectors").fetchone()[0]
 
-        if not q:
+        r = query.resolve(con, q, place_counts=subtree_counts(con))
+        where, args = _where(con, r, f)
+        # This exact page, so a photograph opened from it can lead back here
+        # rather than to the front -- including the page number and the filters.
+        here = _qs(q, f, page=page or None, more=more or None)
+        head = chip_row(r, f) + offer_row(r, f) + filter_row(q, f)
+
+        cols = ("a.id, a.content_hash, a.taken_at, a.taken_at_precision, "
+                "a.camera_model")
+        clause = f" WHERE {where}" if where else ""
+
+        # Nothing to rank by: the answer is exact, so it is every photograph
+        # that matches, newest first, and the count is the real count.
+        if not r.text:
+            total = con.execute(
+                f"SELECT COUNT(*) FROM assets a{clause}", args).fetchone()[0]
             rows = con.execute(
-                """SELECT id, content_hash, taken_at, taken_at_precision, camera_model
-                   FROM assets ORDER BY taken_at DESC LIMIT ?""", (limit,)).fetchall()
-            meta = (f"{total:,} photographs &middot; {embedded:,} searchable"
-                    "  &middot;  most recent first")
-            body = f'<div class="meta">{meta}</div><div class="grid">' + \
-                   "".join(card(r) for r in rows) + "</div>"
-            if not rows:
-                body = ('<div class="empty"><p>Nothing indexed yet.</p>'
-                        '<p><code>mediaidx add &lt;folder&gt;</code></p></div>')
+                f"SELECT {cols} FROM assets a{clause} "
+                "ORDER BY a.taken_at DESC LIMIT ? OFFSET ?",
+                [*args, PAGE_SIZE, page * PAGE_SIZE]).fetchall()
+            if not rows and not q:
+                return HTMLResponse(PAGE.format(
+                    title="Kuva-arkisto", q="", focus=" autofocus",
+                    placeholder="kids on a beach at sunset",
+                    body='<div class="empty"><p>Nothing indexed yet.</p>'
+                         '<p><code>mediaidx add &lt;folder&gt;</code></p></div>'))
+            if not total:
+                # "0 photographs, most recent first" is not an answer. Say what
+                # was asked for and, where a word read two ways, that the other
+                # reading is a link away -- which is the whole of the Hartola
+                # case: three photographs as an event, 1,286 as a municipality.
+                names = [html.escape(t.label) for t in r.terms]
+                asked = (names[0] if len(names) < 2 else
+                         ", ".join(names[:-1]) + " and " + names[-1])
+                body = (head + '<div class="empty">'
+                        f'<p>No photograph has {asked or "all of that"}.</p>'
+                        '</div>')
+                return HTMLResponse(PAGE.format(
+                    title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
+                    focus=" autofocus", placeholder="kids on a beach at sunset"))
+            what = ("photographs" if where else
+                    f"photographs &middot; {embedded:,} searchable")
+            meta = (f"{total:,} {what} &middot; most recent first"
+                    if where or not q else
+                    f"{total_all:,} {what} &middot; most recent first")
+            body = (head + f'<div class="meta">{meta}</div>'
+                    f'<div class="grid">'
+                    f'{"".join(card(x, back=here) for x in rows)}</div>'
+                    + pager(q, f, page, total, PAGE_SIZE))
             return HTMLResponse(PAGE.format(
-                title="Kuva-arkisto", q="", body=body, focus=" autofocus",
+                title=f"{q} — Kuva-arkisto" if q else "Kuva-arkisto",
+                q=html.escape(q), body=body, focus=" autofocus",
                 placeholder="kids on a beach at sunset"))
 
-        people = (people_matching(con, q) + places_matching(con, q)
-                  + events_matching(con, q))
-
-        # "Tommi and Emmi" is a question about a pair, not about either of
-        # them. If the query names more than one person, the photographs they
-        # are both in come first -- that is what was asked -- and the vector
-        # search still runs underneath.
-        together = ""
-        named = cluster.people_in_query(con, q)
-        if len(named) > 1:
-            person_ids = [r["id"] for r in named]
-            rows = cluster.photos_with_all(con, person_ids)
-            total = cluster.count_photos_with_all(con, person_ids)
-            who = " and ".join(html.escape(r["name"]) for r in named)
-            if rows:
-                # The count is the count, not the length of one page of it.
-                shown = ("" if len(rows) >= total
-                         else f' &middot; showing the {len(rows):,} most recent')
-                together = (
-                    f'<div class="meta">{total:,} photographs with '
-                    f'<b>{who}</b> together{shown}</div>'
-                    f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
-            else:
-                together = (f'<div class="meta">No photograph has {who} '
-                            'in it together.</div>')
-
         if embedded == 0:
-            body = people + together + (
-                '<div class="empty"><p>No search vectors yet.</p>'
-                '<p><code>mediaidx embed</code></p></div>')
+            # The strips still answer, even with nothing to rank: a partial
+            # name is exactly what they are for, and having no vectors is no
+            # reason to stop finding people by name.
             return HTMLResponse(PAGE.format(
-                title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
-                focus=" autofocus", placeholder="kids on a beach at sunset"))
+                title=f"{q} — Kuva-arkisto", q=html.escape(q), focus=" autofocus",
+                placeholder="kids on a beach at sunset",
+                body=head + people_matching(con, r.text)
+                     + places_matching(con, r.text)
+                     + events_matching(con, r.text)
+                     + '<div class="empty"><p>No search vectors yet.</p>'
+                       '<p><code>mediaidx embed</code></p></div>'))
 
-        vec = encoder().encode_text([q])[0]
-        hits = embed.search(con, vec, limit=limit, vec_ok=state["vec_ok"])
-        if not hits:
-            body = people + together + (
-                '<div class="empty"><p>No matching photographs.</p></div>'
-                if not (people or together) else "")
-        else:
-            ids = [h[0] for h in hits]
-            scores = dict(hits)
-            rows = con.execute(
-                f"""SELECT id, content_hash, taken_at, taken_at_precision, camera_model
-                    FROM assets WHERE id IN ({','.join('?' * len(ids))})""",
-                ids).fetchall()
-            by_id = {r["id"]: r for r in rows}
-            cards = "".join(card(by_id[i], scores[i]) for i in ids if i in by_id)
-            body = (people + together +
-                    f'<div class="meta">{len(ids)} matches for '
-                    f'&ldquo;{html.escape(q)}&rdquo; of {embedded:,} searchable'
-                    f'</div><div class="grid">{cards}</div>')
+        # Narrow first, then rank inside it (§7.2).
+        cand = None
+        if where:
+            cand = [x[0] for x in con.execute(
+                f"SELECT a.id FROM assets a WHERE {where}", args)]
+            if not cand:
+                strips = (people_matching(con, r.text)
+                          + places_matching(con, r.text)
+                          + events_matching(con, r.text))
+                return HTMLResponse(PAGE.format(
+                    title=f"{q} — Kuva-arkisto", q=html.escape(q),
+                    focus=" autofocus", placeholder="kids on a beach at sunset",
+                    body=head + strips + '<div class="empty">'
+                         '<p>Nothing matches all of that.</p></div>'))
+
+        vec = encoder().encode_text([r.text])[0]
+        hits = embed.search(con, vec, limit=MAX_RANKED,
+                            vec_ok=state["vec_ok"], candidate_ids=cand)
+        answers = embed.cut([s for _, s in hits])
+        keep = hits if more else hits[:answers]
+        window = keep[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+        # The strips answer a different question from the chips: a chip needs
+        # the whole name, so "emm" resolves to nothing, and the strip is what
+        # turns it into Emmi. They are fed the description alone, so anything
+        # already resolved into a chip is not also offered as a suggestion.
+        strips = (people_matching(con, r.text) + places_matching(con, r.text)
+                  + events_matching(con, r.text))
+
+        if not window:
+            return HTMLResponse(PAGE.format(
+                title=f"{q} — Kuva-arkisto", q=html.escape(q),
+                focus=" autofocus", placeholder="kids on a beach at sunset",
+                body=head + strips +
+                     '<div class="empty"><p>No matching photographs.</p></div>'))
+
+        ids = [a for a, _ in window]
+        scores = dict(window)
+        by_id = {x["id"]: x for x in con.execute(
+            f"SELECT {cols} FROM assets a "
+            f"WHERE a.id IN ({','.join('?' * len(ids))})", ids)}
+        cards = "".join(card(by_id[i], scores[i], back=here)
+                        for i in ids if i in by_id)
+
+        scope = f"of {len(cand):,} matching" if cand else f"of {embedded:,} searchable"
+        held = len(hits) - answers
+        meta = (f'{len(keep):,} for &ldquo;{html.escape(r.text)}&rdquo; {scope}'
+                + (f' &middot; {held:,} weaker held back' if held and not more
+                   else ""))
+        tail = pager(q, f, page, len(keep), PAGE_SIZE,
+                     more=more, held=held if not more else 0)
+        body = (head + strips + f'<div class="meta">{meta}</div>'
+                f'<div class="grid">{cards}</div>' + tail)
         return HTMLResponse(PAGE.format(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
             focus=" autofocus", placeholder="kids on a beach at sunset"))
+
+    def pager(q, f, page, total, size, *, more=0, held=0) -> str:
+        """Next and previous, and the way past the cut.
+
+        Nothing below the cut is discarded; it is one link away, and the link
+        says how much is behind it (§7.3).
+        """
+        bits = []
+        if page > 0:
+            bits.append(f'<a href="{_qs(q, f, page=page - 1, more=more or None)}">'
+                        '&larr; previous</a>')
+        if (page + 1) * size < total:
+            bits.append(f'<a href="{_qs(q, f, page=page + 1, more=more or None)}">'
+                        'next page &rarr;</a>')
+        if held:
+            bits.append(f'<a href="{_qs(q, f, more=1)}">'
+                        f'show {held:,} weaker</a>')
+        if total > size:
+            first = page * size + 1
+            bits.append(f'<span class="rest">{first:,}&ndash;'
+                        f'{min(total, (page + 1) * size):,} of {total:,}</span>')
+        return f'<div class="more">{"".join(bits)}</div>' if bits else ""
 
     @app.get("/thumb/{size}/{content_hash}")
     def thumb(size: str, content_hash: str):
@@ -368,7 +697,7 @@ def create_app(cfg) -> FastAPI:
                             headers={"Cache-Control": "public, max-age=604800"})
 
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
-    def photo(asset_id: int):
+    def photo(asset_id: int, back: str = Query(default="/")):
         con = connect()
         a = con.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
         if a is None:
@@ -426,7 +755,8 @@ def create_app(cfg) -> FastAPI:
                    'align-items:center;flex-wrap:wrap">' + "".join(chips) + '</div>')
         body = (
             f'<div style="max-width:1100px;margin:0 auto;padding:20px">'
-            f'<a href="/" style="color:var(--accent)">&larr; back</a>'
+            f'<a href="{html.escape(safe_back(back))}" '
+            f'style="color:var(--accent)">&larr; back</a>'
             f'<img src="/thumb/m/{a["content_hash"]}" '
             f'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
             f'{who}'
@@ -575,7 +905,9 @@ def create_app(cfg) -> FastAPI:
         shown = "" if len(rows) >= total else f' &middot; showing {len(rows):,}'
         grid = (f'<div class="meta">{total:,} photographs in '
                 f'{html.escape(p["name"])} and everything within it{shown}</div>'
-                f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+                f'<div class="grid">'
+                f'{"".join(card(r, back=f"/place/{place_id}") for r in rows)}'
+                '</div>')
         return page(f'{p["name"]} — Kuva-arkisto', crumb + listing + grid)
 
     # ----------------------------------------------------------------------
@@ -792,7 +1124,9 @@ def create_app(cfg) -> FastAPI:
         body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
                 f'&larr; people</a> &middot; <b>{html.escape(p["name"])}</b> '
                 f'&middot; {len(rows):,} photographs</div>'
-                f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+                f'<div class="grid">'
+                f'{"".join(card(r, back=f"/person/{person_id}") for r in rows)}'
+                '</div>')
         return page(f'{p["name"]} — Kuva-arkisto', body)
 
     # ----------------------------------------------------------------------
@@ -925,7 +1259,9 @@ def create_app(cfg) -> FastAPI:
                 + event_facts(con, e)
                 + event_panel(con, e, back=f"/event/{event_id}")
                 + f'<div class="meta">In order{shown}</div>'
-                + f'<div class="grid">{"".join(card(r) for r in rows)}</div>')
+                + '<div class="grid">'
+                + "".join(card(r, back=f"/event/{event_id}") for r in rows)
+                + '</div>')
         return page(f"{title} — Kuva-arkisto", body)
 
     @app.post("/event/{event_id}/name")
@@ -1044,8 +1380,9 @@ def create_app(cfg) -> FastAPI:
                     'spread across it &middot; '
                     f'<a href="/event/{e["id"]}" style="color:var(--accent)">'
                     'see all of them</a></div>'
-                    f'<div class="grid">{"".join(card(r) for r in sample)}</div>'
-                    + KEYS)
+                    '<div class="grid">'
+                    + "".join(card(r, back="/review") for r in sample)
+                    + '</div>' + KEYS)
             return page("Review — Kuva-arkisto", body)
 
         cl = con.execute("SELECT * FROM face_clusters WHERE id = ?",

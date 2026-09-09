@@ -59,7 +59,14 @@ def app_with(tmp_path):
 
 
 def _matched(client, q) -> bool:
-    return 'class="person"' in client.get("/", params={"q": q}).text
+    """Whether the page found the person at all.
+
+    A partial name arrives as a suggestion strip and a whole one as a resolved
+    chip (spec 7.1); both are ways of having found her, and both put a link to
+    her page on the screen, so that is what is asserted rather than the shape
+    the answer happened to take.
+    """
+    return "/person/" in client.get("/", params={"q": q}).text
 
 
 @pytest.mark.parametrize("q", [

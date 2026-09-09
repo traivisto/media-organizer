@@ -151,10 +151,25 @@ def test_a_longer_name_is_not_also_a_shorter_one(tmp_path):
 # --- through the page -----------------------------------------------------
 
 def test_the_page_reports_the_pair(built):
-    client, _, _ = built
+    """Two names is a question about a pair, and the count is the pair's.
+
+    Both names resolve to chips and the word joining them is dropped, so this
+    is an exact question with nothing left to rank (spec 7.1). What must not
+    happen is the sum: photographs of either of them separately.
+    """
+    client, persons, dbp = built
     body = client.get("/", params={"q": "Tommi and Emmi"}).text
-    assert "photographs with" in body.lower()
-    assert "Tommi and Emmi" in body
+    assert body.count('class="crit"') == 2
+    assert "Tommi" in body and "Emmi" in body
+
+    con = _con(dbp)
+    together = cluster.count_photos_with_all(
+        con, [persons["Tommi"], persons["Emmi"]])
+    either = con.execute(
+        "SELECT COUNT(DISTINCT asset_id) FROM faces WHERE person_id IN (?,?)",
+        (persons["Tommi"], persons["Emmi"])).fetchone()[0]
+    assert together < either, "fixture cannot tell the two counts apart"
+    assert f"{together:,} photographs" in body
 
 
 def test_a_pair_that_never_appears_together_says_so(built):
