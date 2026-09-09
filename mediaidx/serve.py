@@ -975,6 +975,38 @@ def create_app(cfg) -> FastAPI:
             pathutil.long_path(path), media_type=kind or "image/jpeg",
             filename=name if download else None)
 
+    # Where a coordinate goes when somebody asks to see it on a map, and the
+    # only address in this application that is not this machine or the archive.
+    # OpenStreetMap by default because it needs no account and sells nothing;
+    # `[ui] map_url` in the config points it anywhere else. `{lat}` and `{lon}`
+    # are filled in.
+    MAP_URL = ("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}"
+               "#map=15/{lat}/{lon}")
+
+    def _map_link(lat, lon) -> str:
+        """A link out, never a request this page makes by itself (§10.4).
+
+        Nothing is sent until the link is followed, one photograph at a time,
+        and following it puts this coordinate in somebody else's server log --
+        so the link says so rather than leaving it to be discovered. `noreferrer`
+        keeps even the fact of this application out of it.
+        """
+        url = str(cfg.ui.get("map_url") or MAP_URL).format(
+            lat=f"{lat:.6f}", lon=f"{lon:.6f}")
+        host = (url.split("/")[2] if "//" in url else url)
+        host = host[4:] if host.startswith("www.") else host
+        return (f' &middot; <a href="{html.escape(url)}" target="_blank" '
+                f'rel="noreferrer noopener" style="color:var(--accent)">'
+                f'see it on a map</a>'
+                f'<span style="color:var(--ink-3)"> &mdash; sends this '
+                f'coordinate to {html.escape(host)}</span>')
+
+    def _gps_fact(a) -> str:
+        if a["gps_lat"] is None:
+            return ""
+        return (f'{a["gps_lat"]:.5f}, {a["gps_lon"]:.5f}'
+                + _map_link(a["gps_lat"], a["gps_lon"]))
+
     def _fact(k, v, *, note="", edit="") -> str:
         if v in (None, "") and not edit:
             return ""
@@ -1069,8 +1101,7 @@ def create_app(cfg) -> FastAPI:
             _fact("camera", html.escape(" ".join(filter(
                 None, [a["camera_make"], a["camera_model"]])))),
             _fact("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
-            _fact("gps", (f'{a["gps_lat"]:.5f}, {a["gps_lon"]:.5f}'
-                          if a["gps_lat"] is not None else "")),
+            _fact("gps", _gps_fact(a)),
             _place_fact(con, a, asset_id, back, ("place", -1) in fixed),
             _event_row(con, asset_id),
             _fact("source", html.escape(a["source_hint"] or "")),

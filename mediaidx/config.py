@@ -108,6 +108,7 @@ class Config:
     events: dict = field(default_factory=dict)
     places: dict = field(default_factory=dict)
     tools: dict = field(default_factory=dict)
+    ui: dict = field(default_factory=dict)
     # Defaulted so that constructing a Config by hand -- which the tests do --
     # does not have to know about a gazetteer to talk about faces.
     gazetteer: Path = field(default_factory=lambda: _local_data_dir() / "gazetteer")
@@ -180,6 +181,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         logs=Path(p.get("logs", data / "logs")),
         gazetteer=Path(p.get("gazetteer", data / "gazetteer")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
+        ui=merged.get("ui", {}),
         scan=merged["scan"],
         models=merged["models"],
         faces=merged["faces"],

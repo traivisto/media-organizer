@@ -192,3 +192,73 @@ def test_the_way_back_through_a_correction_stays_local(client):
            data={"value": "1998-07", "back": "https://example.com/"})
     body = c.get(f"/photo/{aid}", params={"back": "https://example.com/"}).text
     assert "example.com" not in body
+
+
+# --------------------------------------------------------------------------
+# The map link
+# --------------------------------------------------------------------------
+
+def test_a_coordinate_offers_a_map_and_says_what_that_costs(tmp_path):
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    aid = db.insert_asset(con, "b" * 64, {"format": "jpeg",
+                                          "taken_at": 1_600_000_000})
+    con.execute("UPDATE assets SET gps_lat = 61.4978, gps_lon = 23.7610 "
+                "WHERE id = ?", (aid,))
+    con.commit()
+    con.close()
+    c = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
+    body = c.get(f"/photo/{aid}").text
+
+    assert "see it on a map" in body
+    assert "61.497800" in body and "23.761000" in body
+    # The cost is stated where the link is, not buried in a document.
+    assert "sends this coordinate to openstreetmap.org" in body
+    assert 'rel="noreferrer noopener"' in body
+
+
+def test_the_page_never_fetches_a_map_itself(tmp_path):
+    """A link followed by hand is not the page reaching out on its own (§10.4)."""
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    aid = db.insert_asset(con, "c" * 64, {"format": "jpeg", "taken_at": 1})
+    con.execute("UPDATE assets SET gps_lat = 61.0, gps_lon = 23.0 WHERE id = ?",
+                (aid,))
+    con.commit()
+    con.close()
+    body = TestClient(serve.create_app(cfg_for(tmp_path, dbp))).get(
+        f"/photo/{aid}").text
+    for tag in ('<img src="http', '<script src="http', '<iframe',
+                '<link rel="stylesheet" href="http'):
+        assert tag not in body, f"the page loads something remote: {tag}"
+
+
+def test_a_photograph_with_no_coordinate_offers_no_map(tmp_path):
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    aid = db.insert_asset(con, "d" * 64, {"format": "jpeg", "taken_at": 1})
+    con.commit()
+    con.close()
+    body = TestClient(serve.create_app(cfg_for(tmp_path, dbp))).get(
+        f"/photo/{aid}").text
+    assert "see it on a map" not in body
+
+
+def test_the_map_service_is_configurable(tmp_path):
+    """P7 in spirit: no particular service is baked in."""
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    aid = db.insert_asset(con, "e" * 64, {"format": "jpeg", "taken_at": 1})
+    con.execute("UPDATE assets SET gps_lat = 61.0, gps_lon = 23.0 WHERE id = ?",
+                (aid,))
+    con.commit()
+    con.close()
+    cfg = cfg_for(tmp_path, dbp)
+    cfg.ui["map_url"] = "https://kartta.example/{lat},{lon}"
+    body = TestClient(serve.create_app(cfg)).get(f"/photo/{aid}").text
+    assert "kartta.example/61.000000,23.000000" in body
+    assert "openstreetmap.org" not in body

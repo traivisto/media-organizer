@@ -1521,8 +1521,19 @@ large enough that fixing the link before the first full run is worth an evening'
 ### 10.4 Privacy
 
 **No photograph, thumbnail, filename, embedding, caption or item of metadata is
-ever transmitted anywhere.** All inference runs on the local GPU. This is the point of
-the system, and it holds without qualification.
+ever transmitted anywhere by the application.** All inference runs on the local GPU. This is the
+point of the system.
+
+**One qualification, added deliberately and visibly.** The photograph page offers a link to a map,
+because half this library carries a coordinate and a coordinate on its own tells you nothing. The
+application never follows that link, requests a tile, or loads anything remote: the page contains no
+remote image, script, stylesheet or frame, and a test asserts it. Following the link is the user's
+own act, one photograph at a time, and it puts that one coordinate in the map service's logs. The
+link says so where it sits — *sends this coordinate to openstreetmap.org* — rather than leaving it to
+be discovered, and `[ui] map_url` points it elsewhere or, left unset with the link unused, nowhere
+at all. This is option 1 of the four weighed in §13; the alternative that would have made the
+sentence above false as written is embedded tiles, which send a coordinate every time a photograph
+is opened, wanted or not.
 
 Network access is limited to two things, and both are one-time downloads of software:
 
@@ -1701,7 +1712,10 @@ None blocking.
 
 ### Open
 
-- **A map on the photograph page.** Asked for 2026-09-09, deferred. It would show where a
+- **A map on the photograph page.** Asked for 2026-09-09 and **resolved the same day: option 1, a
+  link out on a click** (§10.4). What follows is the reasoning as it stood when it was decided.
+
+- ~~**A map on the photograph page.**~~ It would show where a
   photograph was taken, and it would apply to the **20,427 of 39,884** that carry a coordinate —
   just over half the library. The data is already there, and §4.3 stores a representative `lat`/`lon`
   on every place against exactly this.
