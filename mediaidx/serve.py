@@ -126,7 +126,9 @@ nav a:hover {{ color:var(--accent); }}
 /* The map, when it has been asked for. Nothing is written into the page until
    then, which is the whole of the privacy argument (10.4). */
 .map {{ margin:10px 0 4px; border:1px solid var(--rule); border-radius:4px;
-  overflow:hidden; background:var(--surface); max-width:620px; }}
+  overflow:hidden; background:var(--surface); max-width:620px;
+  scroll-margin-top:110px; }}
+#where {{ scroll-margin-top:110px; }}
 .map iframe {{ display:block; width:100%; height:300px; border:0; }}
 /* What the box understood. These are the interface, not decoration: each one
    states a criterion and carries the link that removes it, so the whole thing
@@ -1021,7 +1023,7 @@ def create_app(cfg) -> FastAPI:
         host = _map_host(away)
 
         if not shown:
-            here = (f"/photo/{asset_id}?map=1&back={quote_plus(back)}")
+            here = (f"/photo/{asset_id}?map=1&back={quote_plus(back)}#map")
             return (out + f' &middot; <a href="{here}" '
                     'style="color:var(--accent)">see it on a map</a>'
                     f'<span style="color:var(--ink-3)"> &mdash; loads a map '
@@ -1032,21 +1034,22 @@ def create_app(cfg) -> FastAPI:
             lat=f"{lat:.6f}", lon=f"{lon:.6f}",
             w=f"{lon - MAP_SPAN:.6f}", e=f"{lon + MAP_SPAN:.6f}",
             s=f"{lat - MAP_SPAN:.6f}", n=f"{lat + MAP_SPAN:.6f}")
-        gone = f"/photo/{asset_id}?back={quote_plus(back)}"
+        gone = f"/photo/{asset_id}?back={quote_plus(back)}#where"
         return (out
                 + f' &middot; <a href="{gone}" style="color:var(--ink-3)">'
                 'hide the map</a>'
                 + f' &middot; <a href="{html.escape(away)}" target="_blank" '
                 'rel="noreferrer noopener" style="color:var(--ink-3)">'
                 f'open it at {html.escape(host)}</a>'
-                f'<div class="map"><iframe src="{html.escape(embed)}" '
+                f'<div class="map" id="map"><iframe src="{html.escape(embed)}" '
                 'loading="lazy" referrerpolicy="no-referrer" '
                 'title="where this was taken"></iframe></div>')
 
-    def _fact(k, v, *, note="", edit="") -> str:
+    def _fact(k, v, *, note="", edit="", anchor="") -> str:
         if v in (None, "") and not edit:
             return ""
-        return (f'<tr><td style="color:var(--ink-3);padding:5px 16px 5px 0;'
+        return (f'<tr{f" id={anchor}" if anchor else ""}'
+                f'><td style="color:var(--ink-3);padding:5px 16px 5px 0;'
                 f'vertical-align:top;white-space:nowrap">{k}</td>'
                 f'<td style="padding:5px 0">{v}'
                 + (f' <span style="color:var(--ink-3)">&mdash; {note}</span>'
@@ -1137,7 +1140,8 @@ def create_app(cfg) -> FastAPI:
             _fact("camera", html.escape(" ".join(filter(
                 None, [a["camera_make"], a["camera_model"]])))),
             _fact("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
-            _fact("gps", _gps_fact(a, asset_id, back, bool(map))),
+            _fact("gps", _gps_fact(a, asset_id, back, bool(map)),
+                  anchor="where"),
             _place_fact(con, a, asset_id, back, ("place", -1) in fixed),
             _event_row(con, asset_id),
             _fact("source", html.escape(a["source_hint"] or "")),

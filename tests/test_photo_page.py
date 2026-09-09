@@ -289,3 +289,27 @@ def test_the_map_service_is_configurable(tmp_path):
     body = c.get(f"/photo/{aid}", params={"map": 1}).text
     assert "kartta.example/61.000000,23.000000" in body
     assert "openstreetmap.org" not in body
+
+
+def test_showing_the_map_lands_on_the_map_not_the_top_of_the_page(tmp_path):
+    """Following a link loads a fresh page, which otherwise starts at the top.
+
+    The reader was at the bottom looking at the coordinate; sending them back to
+    the top to scroll down again is the browser's default, not an intention.
+    """
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}").text
+    assert "#map" in body
+
+    shown = c.get(f"/photo/{aid}", params={"map": 1}).text
+    assert 'id="map"' in shown
+    # And hiding it lands back on the row the link was on, not the top either.
+    assert "#where" in shown
+    assert 'id=where' in shown or 'id="where"' in shown
+
+
+def test_the_anchors_clear_the_sticky_header(tmp_path):
+    """A sticky header covers whatever an anchor scrolls to, without this."""
+    c, aid = _with_gps(tmp_path)
+    body = c.get(f"/photo/{aid}", params={"map": 1}).text
+    assert "scroll-margin-top" in body
