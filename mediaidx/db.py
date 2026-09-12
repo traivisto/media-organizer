@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -240,6 +240,15 @@ CREATE TABLE IF NOT EXISTS event_names (
 -- clock says. Also permanent, also keyed by a photograph, and the only way a
 -- labelled folder is ever broken into more than one event.
 CREATE TABLE IF NOT EXISTS event_cuts (
+  asset_id   INTEGER PRIMARY KEY REFERENCES assets(id),
+  created_at INTEGER NOT NULL
+);
+
+-- "This one belongs here after all": a photograph that sits far from its
+-- event's centre and has been looked at anyway (spec 6.5). Keyed by the
+-- photograph rather than by the event, because `derive` throws every event away
+-- and builds them again -- the same reason `event_cuts` is.
+CREATE TABLE IF NOT EXISTS odd_dismissed (
   asset_id   INTEGER PRIMARY KEY REFERENCES assets(id),
   created_at INTEGER NOT NULL
 );

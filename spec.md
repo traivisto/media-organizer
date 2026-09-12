@@ -1069,6 +1069,43 @@ one would only have to be deleted.
 as surrounding events and faces acquire names; "some party in Turku" on the first pass is often
 obvious on the second.
 
+### 6.5 The odd one out (M4c)
+
+A trip is a few hundred photographs of largely one thing, so the ones that are
+*not* of that thing stand out arithmetically. Each event's search vectors give a
+centre, and a photograph's similarity to that centre says how much it belongs.
+This is the machinery that groups faces, pointed at whole photographs.
+
+**It needs no captions, and captions would be worse at it.** A caption is derived
+*from* the vector, so comparing captions compares a lossy copy of what is
+compared here directly — and finding one odd photograph among 379 by reading 379
+sentences is not finding it. What a caption would add is the ability to say in
+words *why* it is odd; locating it does not need them.
+
+**How odd is odd.** Not a fixed similarity, for the same reason the search cut is
+not one (§7.3): the scale differs per event. Measured over this library's 570
+events of twelve photographs or more, the median similarity to the centre runs
+from **0.71 to 0.86** depending on how varied the trip was, so one number would
+flag everything in a varied event and nothing in a uniform one. The measure is a
+photograph's distance below its *own* event's median, in units of that event's
+median absolute deviation — the MAD rather than a standard deviation, because
+the outliers being looked for would otherwise widen the very spread they are
+measured against and hide behind it.
+
+**Measured 2026-09-12.** At k = 4, **1,028 photographs across 373 events**, at
+most six from any one; k = 2.5 gives 5.8 an event and starts flagging ordinary
+variety. The whole computation is **0.3 s** over 39,854 vectors, so it is done on
+request and stored nowhere. Two found by hand on the first look: a squat toilet
+in an alpine hut among 379 photographs of Monte Rosa, and a wall of museum text
+among 351 of Lanzarote.
+
+**This is not a queue.** Most of these are good photographs that simply do not
+look like the trip they came from, and the view says so. Three things can be
+done with one: leave it, say **it belongs here** — kept against the photograph,
+like `event_cuts`, because `derive` throws every event away — or open it and
+correct the date that put it in the wrong event, which takes effect at the next
+`derive`.
+
 ---
 
 ## 7. Search
@@ -1342,6 +1379,7 @@ framework — the UI is a small part of the work and should stay that way.
 | Photo | Everything known about one photograph, and how to correct it |
 | People | Person list, cluster review, merge and split |
 | Events | Event list and timeline |
+| Odd ones | The photograph in each series least like the rest (§6.5) |
 | Review | The queue: one question at a time, largest first |
 | Status | Indexing progress, per-stage counts, recent failures |
 

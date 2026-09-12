@@ -28,6 +28,7 @@ from . import corrections
 from . import config as config_mod
 from . import db, embed, images
 from . import events as events_mod
+from . import odd as odd_mod
 from . import paths as pathutil
 from . import places as places_mod
 from . import query
@@ -134,6 +135,12 @@ nav a:hover {{ color:var(--accent); }}
   font-size:13px; }}
 .walk a {{ color:var(--ink-2); }}
 .walk a:hover {{ color:var(--accent); }}
+/* An odd one out, with the means to say it is not. */
+.odd figcaption {{ display:flex; justify-content:space-between;
+  align-items:center; gap:6px; padding:6px 8px; }}
+.odd figcaption span {{ color:var(--ink-3); font-size:11.5px; }}
+.odd form {{ margin:0; }}
+.odd button {{ padding:3px 8px; font-size:11px; }}
 .map iframe {{ display:block; width:100%; height:300px; border:0; }}
 /* What the box understood. These are the interface, not decoration: each one
    states a criterion and carries the link that removes it, so the whole thing
@@ -201,7 +208,7 @@ tr:not(:hover) .fix {{ opacity:.35; }}
   <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
   <button type="submit">Search</button>
 </form>
-<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a><a href="/events">Events</a><a href="/review">Review</a></nav></header>
+<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a><a href="/events">Events</a><a href="/odd">Odd ones</a><a href="/review">Review</a></nav></header>
 {body}
 </body></html>"""
 
@@ -2005,6 +2012,120 @@ def create_app(cfg) -> FastAPI:
             "var a=document.getElementById('answer');"
             "if(a){a.focus({preventScroll:true});"
             "a.setSelectionRange(a.value.length,a.value.length);}</script>")
+
+    @app.get("/odd", response_class=HTMLResponse)
+    def odd_view(dismissed: int = 0):
+        """The photograph in each series that is not like the others (§6.5).
+
+        Ordered by how far out it sits rather than by date, so the striking ones
+        are first and the merely unusual are further down. Nothing here is a
+        queue to be emptied: most of these are perfectly good photographs that
+        happen not to look like the trip they came from.
+        """
+        con = connect()
+        if dismissed:
+            rows = con.execute(
+                """SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
+                          a.camera_model, d.created_at
+                     FROM odd_dismissed d JOIN assets a ON a.id = d.asset_id
+                    ORDER BY d.created_at DESC""").fetchall()
+            if not rows:
+                return page("Odd ones out — Kuva-arkisto",
+                            '<div class="empty"><p>Nothing has been put back '
+                            'yet.</p><p><a href="/odd" '
+                            'style="color:var(--accent)">the odd ones</a></p>'
+                            '</div>')
+            cards = "".join(
+                f'<figure class="odd">'
+                f'<a href="/photo/{r["id"]}?back=%2Fodd%3Fdismissed%3D1">'
+                f'<img loading="lazy" src="/thumb/s/{r["content_hash"]}" alt="">'
+                '</a><figcaption>'
+                f'<form method="post" action="/odd/{r["id"]}/restore">'
+                '<button class="ghost" type="submit">odd after all</button>'
+                '</form></figcaption></figure>' for r in rows)
+            return page("Odd ones out — Kuva-arkisto",
+                        f'<div class="meta">{len(rows):,} put back as belonging '
+                        '&middot; <a href="/odd" style="color:var(--accent)">'
+                        'the odd ones</a></div>'
+                        f'<div class="grid">{cards}</div>')
+
+        found = odd_mod.find(con)
+        n_photos = sum(len(v) for v in found.values())
+        put_back = con.execute(
+            "SELECT COUNT(*) FROM odd_dismissed").fetchone()[0]
+        if not found:
+            body = ('<div class="empty"><p>Nothing stands out.</p>'
+                    '<p>This needs events and search vectors: '
+                    '<code>mediaidx embed</code>, then '
+                    '<code>mediaidx derive</code>.</p></div>')
+            return page("Odd ones out — Kuva-arkisto", body)
+
+        # Worst first, by how far the furthest one in each event has fallen
+        # below that event's own middle.
+        order = sorted(found.items(),
+                       key=lambda kv: kv[1][0][1] - kv[1][0][2])
+        parts = []
+        for eid, items in order[:60]:
+            e = events_mod.get(con, eid)
+            if e is None:
+                continue
+            when = (datetime.fromtimestamp(e["start_at"]).strftime("%B %Y")
+                    if e["start_at"] else "")
+            title = html.escape(e["name"] or "unnamed")
+            cards = []
+            for aid, sim, med, spread in items:
+                a = con.execute(
+                    "SELECT id, content_hash FROM assets WHERE id = ?",
+                    (aid,)).fetchone()
+                if a is None:
+                    continue
+                # How far out, in the event's own units -- the number the
+                # threshold is actually made of, rather than a raw similarity
+                # that means something different in every event.
+                how = (med - sim) / spread
+                cards.append(
+                    '<figure class="odd">'
+                    f'<a href="/photo/{a["id"]}?back=%2Fodd">'
+                    f'<img loading="lazy" src="/thumb/s/{a["content_hash"]}" '
+                    'alt=""></a><figcaption>'
+                    f'<span>{how:.0f}&times; out</span>'
+                    f'<form method="post" action="/odd/{a["id"]}/dismiss">'
+                    '<button class="ghost" type="submit">belongs here</button>'
+                    '</form></figcaption></figure>')
+            if cards:
+                parts.append(
+                    f'<div class="meta" style="padding-bottom:0">'
+                    f'<a href="/event/{eid}" style="color:var(--accent)">'
+                    f'<b>{title}</b></a> &middot; {when} &middot; '
+                    f'{e["asset_count"]:,} photographs</div>'
+                    f'<div class="grid">{"".join(cards)}</div>')
+
+        head = (f'<div class="meta"><b>{n_photos:,} photographs</b> sit far from '
+                f'the middle of their own event, across {len(found):,} of them '
+                '&middot; furthest first</div>'
+                '<div class="offer" style="padding-left:20px">Most of these are '
+                'good photographs that simply do not look like the trip they '
+                'came from &mdash; a sign at a museum, a hotel room, a receipt. '
+                'Some are in the wrong event because their date is wrong, and '
+                'that is fixed on the photograph itself; it moves to the right '
+                'event at the next <code>mediaidx derive</code>.'
+                + (f' &middot; <a href="/odd?dismissed=1">{put_back:,} put back '
+                   'as belonging</a>' if put_back else "") + '</div>')
+        return page("Odd ones out — Kuva-arkisto", head + "".join(parts))
+
+    @app.post("/odd/{asset_id}/dismiss")
+    def odd_dismiss(asset_id: int):
+        con = connect()
+        odd_mod.dismiss(con, asset_id)
+        con.commit()
+        return RedirectResponse("/odd", status_code=303)
+
+    @app.post("/odd/{asset_id}/restore")
+    def odd_restore(asset_id: int):
+        con = connect()
+        odd_mod.restore(con, asset_id)
+        con.commit()
+        return RedirectResponse("/odd?dismissed=1", status_code=303)
 
     @app.get("/review", response_class=HTMLResponse)
     def review():
