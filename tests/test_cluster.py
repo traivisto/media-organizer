@@ -529,3 +529,85 @@ def test_assign_still_leaves_a_stranger_alone(cfg):
     after = con.execute(
         "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0]
     assert after == before
+
+
+def _at_cosine(rng, anchor, cos):
+    """A unit vector exactly `cos` from `anchor`.
+
+    Adding noise does not work in 512 dimensions -- a scale small enough to stay
+    near is invisible, and one large enough to move is random. Mixing in an
+    orthogonal direction sets the angle exactly.
+    """
+    perp = rng.normal(size=faces.DIM)
+    perp -= anchor * (perp @ anchor)
+    perp /= np.linalg.norm(perp)
+    return _unit(cos * anchor + np.sqrt(1 - cos * cos) * perp)
+
+
+def test_a_face_reaches_further_when_the_ones_around_it_agree(cfg):
+    """The looser bound, and what pays for it.
+
+    Checked by eye on the real library: at 0.42 the ten furthest matches were
+    all right; raised to 0.50 alone, two of twelve at the new edge were somebody
+    else. Requiring the five nearest named faces to name one person excluded
+    exactly those two and kept the other ten.
+    """
+    rng = np.random.default_rng(41)
+    con = _con()
+    anchor = _unit(rng.normal(size=faces.DIM))
+    tight = [_at_cosine(rng, anchor, 0.97) for _ in range(6)]
+    _add_faces(con, tight + _group(rng, 6))
+    cluster.build(con, cfg)
+    pid = cluster.person_id_for(con, "Emmi")
+    cid = con.execute("SELECT cluster_id FROM faces WHERE id = 1").fetchone()[0]
+    con.execute("UPDATE face_clusters SET person_id=?, status='named' WHERE id=?",
+                (pid, cid))
+    con.execute("UPDATE faces SET person_id=? WHERE cluster_id=?", (pid, cid))
+
+    # 0.45 away: past the strict bound, inside the looser one, and every face
+    # near it is Emmi.
+    _add_faces(con, [_at_cosine(rng, anchor, 0.55)], start_asset=700)
+    con.commit()
+    fid = con.execute(
+        "SELECT id FROM faces WHERE cluster_id IS NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()[0]
+
+    cluster.assign(con, cfg)
+    con.commit()
+    got = con.execute(
+        """SELECT p.name FROM faces f LEFT JOIN persons p ON p.id = f.person_id
+            WHERE f.id = ?""", (fid,)).fetchone()[0]
+    assert got == "Emmi", "the vote did not carry it"
+
+
+def test_a_disputed_face_is_left_alone_however_near(cfg):
+    """Near enough on the numbers, but its neighbours name two different people."""
+    rng = np.random.default_rng(42)
+    con = _con()
+    one = _unit(rng.normal(size=faces.DIM))
+    # Far enough apart that the point midway between them lands at 0.45 from
+    # each -- past the strict bound, inside the looser one, and with nothing to
+    # choose between two people.
+    two = _at_cosine(rng, one, -0.395)
+    a = [_at_cosine(rng, one, 0.97) for _ in range(6)]
+    b = [_at_cosine(rng, two, 0.97) for _ in range(6)]
+    _add_faces(con, a + b)
+    cluster.build(con, cfg)
+    for i, name in enumerate(("Emmi", "Tommi")):
+        pid = cluster.person_id_for(con, name)
+        cid = con.execute("SELECT cluster_id FROM faces WHERE id = ?",
+                          (1 + i * 6,)).fetchone()[0]
+        con.execute("UPDATE face_clusters SET person_id=?, status='named' WHERE id=?",
+                    (pid, cid))
+        con.execute("UPDATE faces SET person_id=? WHERE cluster_id=?", (pid, cid))
+
+    _add_faces(con, [_unit(one + two)], start_asset=800)   # squarely between
+    con.commit()
+    fid = con.execute(
+        "SELECT id FROM faces WHERE cluster_id IS NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()[0]
+
+    cluster.assign(con, cfg)
+    con.commit()
+    assert con.execute("SELECT person_id FROM faces WHERE id = ?",
+                       (fid,)).fetchone()[0] is None,         "a face its own neighbours cannot agree about was named anyway"

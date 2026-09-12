@@ -880,6 +880,17 @@ Runs over embeddings in the database; touches no files.
    photograph and seventeen in another — the very thing that makes one person arrive as several
    clusters.
 
+   **A face may reach further when the ones around it agree.** Checked by eye on this library,
+   2026-09-12: at a distance of 0.42 the ten furthest matches were all correct, so that bound is
+   sound but conservative — 14,934 faces were still unnamed. Raised to 0.50 on its own, two of the
+   twelve at the new edge were somebody else. Requiring the **five nearest named faces to name the
+   same person** excluded exactly those two and kept the other ten, so the looser bound is allowed
+   and the vote is what pays for it. Both bounds are in force: near enough is enough on its own, and
+   a little further needs the agreement. A person with fewer than five named faces is reachable only
+   by the strict bound, which is right — one example is not evidence enough to name a hundred more.
+
+   Measured after: a further **2,045 faces**, taking the named total to **27,129** of 45,648.
+
    **A guess never becomes evidence.** Only a cluster member or a hand correction is ever an anchor.
    A face that `assign` itself named is given no cluster and speaks for nobody, because a name that
    spreads from one near-miss to the next walks away from whoever it started as.

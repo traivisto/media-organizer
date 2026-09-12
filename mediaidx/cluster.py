@@ -27,6 +27,16 @@ from .embed import pack
 MIN_CLUSTER_SIZE = 4
 ASSIGN_THRESHOLD = 0.42          # cosine distance, for incremental assignment
 
+# A named face may also reach further than that, but only when the faces around
+# it agree. Checked by eye on this library, 2026-09-12: at 0.42 the ten furthest
+# matches were all correct, so that bound is sound but conservative; raised to
+# 0.50 on its own, two of twelve at the new edge were somebody else. Requiring
+# the five nearest named faces to name the same person excluded exactly those
+# two and kept the other ten. So the looser bound is allowed, and the vote is
+# what pays for it.
+ASSIGN_AGREED = 0.50             # how far a face may reach when the vote agrees
+ASSIGN_AGREE = 5                 # how many of the nearest must name one person
+
 
 def load(con, where: str = "", args: tuple = ()) -> tuple[np.ndarray, np.ndarray]:
     """(face_ids, matrix) with rows L2-normalised float32."""
@@ -171,6 +181,7 @@ def assign(con, cfg) -> int:
     """
     from . import corrections as corrections_mod
     threshold = float(cfg.faces.get("assign_threshold", ASSIGN_THRESHOLD))
+    agreed_threshold = float(cfg.faces.get("assign_agreed", ASSIGN_AGREED))
 
     crows = con.execute(
         "SELECT id, centroid FROM face_clusters WHERE status != 'ignored'").fetchall()
@@ -202,18 +213,28 @@ def assign(con, cfg) -> int:
     # four years old in one photograph and seventeen in another -- the very
     # thing that makes one person arrive as several clusters (6.1) -- whereas
     # every named face speaks only for itself.
-    a_best = a_dist = None
+    a_who = a_dist = a_agreed = None
     if len(anchors):
-        near = np.zeros(len(ids), np.int64)
-        far = np.ones(len(ids), np.float32)
-        # In blocks: 20,000 faces against 19,500 anchors is a large product to
+        k = min(ASSIGN_AGREE, len(anchors))
+        a_who = np.zeros(len(ids), np.int64)
+        a_dist = np.ones(len(ids), np.float32)
+        a_agreed = np.zeros(len(ids), bool)
+        # In blocks: 15,000 faces against 19,500 anchors is a large product to
         # hold whole, and nothing here needs it all at once.
         for i in range(0, len(ids), 4096):
             block = mat[i:i + 4096] @ anchors.T
-            j = block.argmax(axis=1)
-            near[i:i + 4096] = j
-            far[i:i + 4096] = 1.0 - block[np.arange(len(j)), j]
-        a_best, a_dist = near, far
+            take_k = np.argpartition(-block, k - 1, axis=1)[:, :k]
+            rows = np.arange(block.shape[0])[:, None]
+            sims = block[rows, take_k]
+            order = np.argsort(-sims, axis=1)
+            near_w = who[take_k[rows, order]]
+            a_who[i:i + 4096] = near_w[:, 0]
+            a_dist[i:i + 4096] = 1.0 - sims[rows, order][:, 0]
+            # Whether the nearest few name the same person. With fewer anchors
+            # than that in the whole database there is nothing to put to a vote,
+            # and only the strict bound below applies.
+            a_agreed[i:i + 4096] = ((near_w == near_w[:, :1]).all(axis=1)
+                                    if k >= ASSIGN_AGREE else False)
 
     con.execute("BEGIN")
     try:
@@ -221,7 +242,13 @@ def assign(con, cfg) -> int:
         to_cluster, to_person = [], []
         for i in range(len(ids)):
             fid = int(ids[i])
-            by_anchor = a_dist is not None and a_dist[i] <= threshold
+            # Either near enough to be sure on its own, or a little further
+            # with the faces around it agreeing. A person with fewer than five
+            # named faces is reachable only by the strict bound, which is right:
+            # one example is not evidence enough to name a hundred more.
+            by_anchor = a_dist is not None and (
+                a_dist[i] <= threshold
+                or (a_agreed[i] and a_dist[i] <= agreed_threshold))
             by_centroid = dist[i] <= threshold
             if by_anchor and (not by_centroid or a_dist[i] <= dist[i]):
                 # Named, but given no cluster. Joining one would make this face
@@ -229,7 +256,7 @@ def assign(con, cfg) -> int:
                 # spreads from a guess to a guess drifts away from whoever it
                 # started as. Only a cluster member or a hand correction ever
                 # speaks for somebody.
-                to_person.append((int(who[a_best[i]]), fid))
+                to_person.append((int(a_who[i]), fid))
             elif by_centroid:
                 to_cluster.append((int(cids[best[i]]), fid))
 
