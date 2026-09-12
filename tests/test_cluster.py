@@ -18,7 +18,7 @@ import sqlite3
 import numpy as np
 import pytest
 
-from mediaidx import cluster, db, faces
+from mediaidx import cluster, corrections, db, faces
 from mediaidx.config import Config
 
 SIZES = (12, 10, 8)
@@ -432,3 +432,100 @@ def test_renaming_one_cluster_separates_two_people_again(cfg):
         "SELECT COUNT(*) FROM faces WHERE person_id = ?", (first,)).fetchone()[0] == 12
     assert con.execute(
         "SELECT COUNT(*) FROM faces WHERE person_id = ?", (second,)).fetchone()[0] == 10
+
+
+# --------------------------------------------------------------------------
+# A face somebody named speaks for that person
+# --------------------------------------------------------------------------
+
+def test_a_hand_named_face_pulls_in_its_likenesses(cfg):
+    """The surest evidence in the database used to count for nothing here.
+
+    `assign` compared against cluster centroids, and a centroid is computed from
+    cluster members -- so a face somebody named by hand, which usually belongs to
+    no cluster, was invisible. This is the case that changes: a stranger to every
+    cluster, named once, and others like them.
+    """
+    rng = np.random.default_rng(31)
+    con = _con()
+    groups = [_group(rng, 6) for _ in range(2)]
+    _add_faces(con, groups[0] + groups[1])
+    cluster.build(con, cfg)
+
+    # Somebody the clusterer never grouped: one face, named by hand, plus three
+    # more like it that it also left alone.
+    apart = _unit(rng.normal(size=faces.DIM))
+    _add_faces(con, [apart] + [_unit(apart + rng.normal(scale=0.02, size=faces.DIM))
+                               for _ in range(3)], start_asset=500)
+    con.commit()
+    lone = con.execute(
+        "SELECT id FROM faces WHERE cluster_id IS NULL ORDER BY id").fetchone()[0]
+    pid = cluster.person_id_for(con, "Reetta")
+    con.execute("UPDATE faces SET person_id = ? WHERE id = ?", (pid, lone))
+    h = con.execute("""SELECT a.content_hash FROM assets a JOIN faces f
+                        ON f.asset_id = a.id WHERE f.id = ?""", (lone,)).fetchone()[0]
+    corrections.record(con, "person", h, "Reetta", face_idx=0,
+                       face_bbox=(0.0, 0.0, 0.2, 0.2))
+    con.commit()
+
+    cluster.assign(con, cfg)
+    con.commit()
+
+    got = con.execute(
+        """SELECT COUNT(*) FROM faces f JOIN persons p ON p.id = f.person_id
+            WHERE p.name = 'Reetta'""").fetchone()[0]
+    assert got >= 3, "the hand-named face did not speak for anybody"
+
+
+def test_a_face_named_by_assign_does_not_become_evidence_itself(cfg):
+    """A guess must not become the evidence for the next guess.
+
+    Otherwise a name walks outward one near-miss at a time and ends up on
+    somebody else entirely. Only a cluster member or a hand correction is ever
+    an anchor, so a face `assign` named is given no cluster and stays silent.
+    """
+    rng = np.random.default_rng(32)
+    con = _con()
+    _add_faces(con, _group(rng, 6) + _group(rng, 6))
+    cluster.build(con, cfg)
+
+    apart = _unit(rng.normal(size=faces.DIM))
+    _add_faces(con, [apart, _unit(apart + rng.normal(scale=0.02, size=faces.DIM))],
+               start_asset=500)
+    con.commit()
+    lone = con.execute(
+        "SELECT id FROM faces WHERE cluster_id IS NULL ORDER BY id").fetchone()[0]
+    pid = cluster.person_id_for(con, "Reetta")
+    con.execute("UPDATE faces SET person_id = ? WHERE id = ?", (pid, lone))
+    h = con.execute("""SELECT a.content_hash FROM assets a JOIN faces f
+                        ON f.asset_id = a.id WHERE f.id = ?""", (lone,)).fetchone()[0]
+    corrections.record(con, "person", h, "Reetta", face_idx=0,
+                       face_bbox=(0.0, 0.0, 0.2, 0.2))
+    con.commit()
+
+    cluster.assign(con, cfg)
+    con.commit()
+    named = con.execute(
+        """SELECT f.id FROM faces f JOIN persons p ON p.id = f.person_id
+            WHERE p.name = 'Reetta' AND f.id != ?""", (lone,)).fetchall()
+    for r in named:
+        assert con.execute("SELECT cluster_id FROM faces WHERE id = ?",
+                           (r[0],)).fetchone()[0] is None, \
+            "a face assign named joined a cluster and became an anchor"
+
+
+def test_assign_still_leaves_a_stranger_alone(cfg):
+    """Waiting is the cheaper mistake, and that has not changed."""
+    rng = np.random.default_rng(33)
+    con = _con()
+    _add_faces(con, _group(rng, 6) + _group(rng, 6))
+    cluster.build(con, cfg)
+    _add_faces(con, [_unit(rng.normal(size=faces.DIM))], start_asset=900)
+    con.commit()
+    before = con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0]
+    cluster.assign(con, cfg)
+    con.commit()
+    after = con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0]
+    assert after == before

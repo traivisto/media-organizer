@@ -388,6 +388,13 @@ def cmd_faces_cluster(args) -> int:
         print("no faces yet -- run `mediaidx faces` first", file=sys.stderr)
         return 1
 
+    # Before anything that names thousands of faces in one pass, and which no
+    # single action undoes.
+    from . import export as export_mod
+    kept = export_mod.snapshot(con, cfg.database)
+    if kept:
+        print(f"  everything done by hand saved to {kept}")
+
     existing = con.execute("SELECT COUNT(*) FROM face_clusters").fetchone()[0]
     if existing and not args.rebuild:
         # The cheap path: only the faces that arrived since the last build,
@@ -665,6 +672,9 @@ def cmd_import(args) -> int:
     if src is None or not src.exists():
         print(f"no such export: {src}", file=sys.stderr)
         return 1
+    kept = export_mod.snapshot(con, cfg.database)
+    if kept:
+        print(f"  what was here first saved to {kept}")
     st = export_mod.read(con, src)
     con.commit()
     print(f"restored from {src}\n  {st}")

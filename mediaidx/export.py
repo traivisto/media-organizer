@@ -229,3 +229,37 @@ def _face_at(con, asset_id: int, idx: int, bbox):
         if got >= best_iou:
             best, best_iou = r["id"], got
     return best
+
+
+# --------------------------------------------------------------------------
+# The one taken without being asked
+# --------------------------------------------------------------------------
+
+# How many snapshots to keep beside the database. These are an undo buffer for
+# the minutes after an operation that cannot be cleanly reversed, not an
+# archive: the archive is `names_export`, which lives in a synced folder and is
+# versioned (§10.5).
+KEEP = 10
+
+
+def snapshot(con, database) -> "pathlib.Path | None":
+    """Write a dated copy of everything handmade, before something risky.
+
+    `faces cluster` attaches thousands of faces to people in one pass and there
+    is no single action that undoes it -- only a full rebuild, or a correction
+    at a time. An operation whose mistake costs an evening should not depend on
+    somebody having thought to run an export first.
+    """
+    import pathlib
+    data = dump(con)
+    if not (data["faces"] or data["corrections"] or data["persons"]):
+        return None                      # nothing handmade yet; nothing to lose
+    folder = pathlib.Path(database).parent / "backups"
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / f"names-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out.write_text(json.dumps(data, indent=1, ensure_ascii=False),
+                   encoding="utf-8")
+    old = sorted(folder.glob("names-*.json"))[:-KEEP]
+    for f in old:
+        f.unlink()
+    return out

@@ -180,39 +180,99 @@ def assign(con, cfg) -> int:
     cents = np.frombuffer(b"".join(r[1] for r in crows), dtype=np.float16)
     cents = cents.reshape(len(crows), -1).astype(np.float32)
 
-    ids, mat = load(con, "WHERE cluster_id IS NULL")
+    ids, mat = load(con, "WHERE cluster_id IS NULL AND person_id IS NULL")
     if len(ids) == 0:
         return 0
 
+    anchors, who = _anchors(con)
     sims = mat @ cents.T
     best = sims.argmax(axis=1)
     dist = 1.0 - sims[np.arange(len(ids)), best]
-    take = dist <= threshold
-    if not take.any():
-        return 0
+
+    # Against the named faces themselves, not only against the middle of their
+    # cluster. A face somebody named by hand is the surest evidence in the
+    # database -- a person looked at it and said who it was -- and until now it
+    # counted for nothing here, because a centroid is computed from cluster
+    # members and a hand-named face usually belongs to no cluster. Measured on
+    # this library, 2026-09-12: 91 such faces, and matching against every named
+    # face instead of the centroids reaches 5,537 of the unclustered rather than
+    # 3,455 at the same threshold.
+    #
+    # It is also the better shape. One centroid cannot describe somebody who is
+    # four years old in one photograph and seventeen in another -- the very
+    # thing that makes one person arrive as several clusters (6.1) -- whereas
+    # every named face speaks only for itself.
+    a_best = a_dist = None
+    if len(anchors):
+        near = np.zeros(len(ids), np.int64)
+        far = np.ones(len(ids), np.float32)
+        # In blocks: 20,000 faces against 19,500 anchors is a large product to
+        # hold whole, and nothing here needs it all at once.
+        for i in range(0, len(ids), 4096):
+            block = mat[i:i + 4096] @ anchors.T
+            j = block.argmax(axis=1)
+            near[i:i + 4096] = j
+            far[i:i + 4096] = 1.0 - block[np.arange(len(j)), j]
+        a_best, a_dist = near, far
 
     con.execute("BEGIN")
     try:
-        pairs = [(int(cids[best[i]]), int(ids[i]))
-                 for i in range(len(ids)) if take[i]]
-        # A corrected face keeps its answer: joining a cluster tells us where it
-        # looks like it belongs, not who it is.
         fixed = corrections_mod.corrected_face_ids(con)
+        to_cluster, to_person = [], []
+        for i in range(len(ids)):
+            fid = int(ids[i])
+            by_anchor = a_dist is not None and a_dist[i] <= threshold
+            by_centroid = dist[i] <= threshold
+            if by_anchor and (not by_centroid or a_dist[i] <= dist[i]):
+                # Named, but given no cluster. Joining one would make this face
+                # an anchor in its own right on the next run, and a name that
+                # spreads from a guess to a guess drifts away from whoever it
+                # started as. Only a cluster member or a hand correction ever
+                # speaks for somebody.
+                to_person.append((int(who[a_best[i]]), fid))
+            elif by_centroid:
+                to_cluster.append((int(cids[best[i]]), fid))
+
         con.executemany(
             """UPDATE faces SET cluster_id = ?,
                  person_id = (SELECT person_id FROM face_clusters WHERE id = ?)
                WHERE id = ?""",
-            [(c, c, f) for c, f in pairs if f not in fixed])
+            [(c, c, f) for c, f in to_cluster if f not in fixed])
         con.executemany(
             "UPDATE faces SET cluster_id = ? WHERE id = ?",
-            [(c, f) for c, f in pairs if f in fixed])
-        for cid in {c for c, _ in pairs}:
+            [(c, f) for c, f in to_cluster if f in fixed])
+        con.executemany(
+            "UPDATE faces SET person_id = ? WHERE id = ?",
+            [(p, f) for p, f in to_person if f not in fixed])
+        for cid in {c for c, _ in to_cluster}:
             refresh(con, cid)
         con.execute("COMMIT")
     except BaseException:
         con.execute("ROLLBACK")
         raise
-    return len(pairs)
+    return len(to_cluster) + len(to_person)
+
+
+def _anchors(con) -> tuple:
+    """(matrix, person_id per row) for every face that speaks for somebody.
+
+    A cluster member, or a face a person corrected by hand. Deliberately not a
+    face that a previous `assign` named: those were guesses, and letting a guess
+    become the evidence for the next one is how a name drifts off the person it
+    began with.
+    """
+    ids, mat = load(
+        con,
+        """WHERE person_id IS NOT NULL AND (cluster_id IS NOT NULL
+             OR id IN (SELECT f.id FROM corrections c
+                         JOIN assets a ON a.content_hash = c.content_hash
+                         JOIN faces  f ON f.asset_id = a.id AND f.idx = c.face_idx
+                        WHERE c.kind = 'person'))""")
+    if len(ids) == 0:
+        return np.empty((0, faces_mod.DIM), np.float32), np.empty(0, np.int64)
+    order = {int(r[0]): int(r[1]) for r in con.execute(
+        "SELECT id, person_id FROM faces WHERE person_id IS NOT NULL")}
+    return mat, np.fromiter((order[int(i)] for i in ids), np.int64, len(ids))
 
 
 def refresh(con, cluster_id: int) -> None:

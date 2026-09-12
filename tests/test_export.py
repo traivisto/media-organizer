@@ -200,3 +200,46 @@ def test_an_export_from_another_version_is_refused(tmp_path):
     con = _library(tmp_path / "a.db")
     with pytest.raises(ValueError):
         export.load(con, {"version": 99})
+
+
+# --------------------------------------------------------------------------
+# The backup taken without being asked
+# --------------------------------------------------------------------------
+
+def test_a_snapshot_is_written_beside_the_database(tmp_path):
+    con = _library(tmp_path / "a.db")
+    _decide(con)
+    got = export.snapshot(con, tmp_path / "a.db")
+    assert got is not None and got.parent.name == "backups"
+    assert json.loads(got.read_text(encoding="utf-8"))["faces"]
+
+
+def test_a_database_with_nothing_handmade_writes_no_snapshot(tmp_path):
+    """A backup of nothing is noise in a folder somebody has to read."""
+    con = _library(tmp_path / "a.db")
+    assert export.snapshot(con, tmp_path / "a.db") is None
+
+
+def test_snapshots_do_not_pile_up_forever(tmp_path):
+    con = _library(tmp_path / "a.db")
+    _decide(con)
+    import time as _t
+    for _ in range(export.KEEP + 3):
+        export.snapshot(con, tmp_path / "a.db")
+        _t.sleep(0.01)
+    kept = list((tmp_path / "backups").glob("names-*.json"))
+    assert len(kept) <= export.KEEP
+
+
+def test_a_snapshot_restores_what_was_there(tmp_path):
+    """The point of it: the minutes after something that cannot be undone."""
+    con = _library(tmp_path / "a.db")
+    _decide(con)
+    got = export.snapshot(con, tmp_path / "a.db")
+    con.execute("UPDATE faces SET person_id = NULL")
+    con.execute("DELETE FROM corrections")
+    con.commit()
+    export.read(con, got)
+    con.commit()
+    assert con.execute(
+        "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0] == 8

@@ -864,9 +864,25 @@ Runs over embeddings in the database; touches no files.
 2. **Auto-naming:** a cluster whose members are overwhelmingly drawn from folders carrying one
    person hint (§5.1) is proposed with that name. This is a proposal in the review queue, never a
    silent assignment. Where no hints were supplied, every cluster simply arrives unnamed.
-3. **Incremental assignment:** new faces from later runs are matched against existing cluster
-   centroids by cosine similarity. Above the assign threshold they join; below it they accumulate
-   as unclustered and are re-clustered when enough have gathered.
+3. **Incremental assignment:** new faces from later runs are matched both against existing cluster
+   centroids and against **every face somebody has named**, each speaking for itself. Above the
+   assign threshold they join; below it they accumulate as unclustered and are re-clustered when
+   enough have gathered.
+
+   A hand-named face is the surest evidence in the database — a person looked at it and said who it
+   was — and until 2026-09-12 it counted for nothing here, because a centroid is computed from
+   cluster members and a hand-named face usually belongs to no cluster. Measured on this library:
+   91 such faces, and 46% of all faces unclustered. Against centroids alone, assignment reached
+   3,455 of them; against the named faces as well, **5,749**, taking the named total from 19,512 to
+   **25,084** in two seconds. Emmi, corrected by hand 41 times, went from 999 faces to 4,339.
+
+   It is also the better shape: one centroid cannot describe somebody four years old in one
+   photograph and seventeen in another — the very thing that makes one person arrive as several
+   clusters.
+
+   **A guess never becomes evidence.** Only a cluster member or a hand correction is ever an anchor.
+   A face that `assign` itself named is given no cluster and speaks for nobody, because a name that
+   spreads from one near-miss to the next walks away from whoever it started as.
 4. **Full rebuild:** `mediaidx faces cluster --rebuild` recomputes from scratch, preserving
    `person` assignments by majority vote of each old cluster's members. Cheap, because embeddings
    were kept (P5). A face carrying a `person` correction (§4.7) is excluded from the vote and has
@@ -1378,6 +1394,11 @@ Everything in it is keyed by content hash, never by a row id, because the file h
 a database built from nothing where every id differs or is absent. A face is found again by its index
 within its photograph and, where a re-detection has reordered them, by where it sits in the frame —
 the same anchor §5.2 uses.
+
+**Taken without being asked, too.** `faces cluster` attaches thousands of faces to people in one
+pass and no single action undoes it — only a full rebuild, or a correction at a time. So it writes a
+dated copy of everything handmade beside the database first, keeping the last ten. That is an undo
+buffer for the minutes afterwards; the archive is `names_export`, which is synced and versioned.
 
 **Measured, 2026-09-12.** 94 people, 19,512 named faces, 7 event names and 103 corrections write out
 as 3.9 MB in under a second. Restoring into a copy of the library with every name, person and
