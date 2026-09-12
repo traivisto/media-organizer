@@ -627,6 +627,55 @@ def cmd_people(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    """Write out everything decided by hand (spec 8.1).
+
+    The database can be rebuilt from the archive; this cannot be rebuilt from
+    anything. It goes to `names_export` in the config by default, which 10.5
+    puts in the project folder precisely so that it is backed up without anybody
+    remembering to.
+    """
+    from . import export as export_mod
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    out = pathlib.Path(args.file) if args.file else cfg.names_export
+    if out is None:
+        print("no file given and no `names_export` in the config", file=sys.stderr)
+        return 1
+    data = export_mod.write(con, out)
+    print(f"{out}")
+    print(f"  {len(data['persons']):>7,} people")
+    print(f"  {len(data['faces']):>7,} named faces")
+    print(f"  {len(data['events']):>7,} event names")
+    print(f"  {len(data['cuts']):>7,} cuts")
+    print(f"  {len(data['places_rejected']):>7,} rejected places")
+    print(f"  {len(data['corrections']):>7,} corrections")
+    print(f"  {len(data['not_odd']):>7,} kept as belonging")
+    print(f"  {out.stat().st_size / 1024:,.0f} kB")
+    return 0
+
+
+def cmd_import(args) -> int:
+    from . import export as export_mod
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    src = pathlib.Path(args.file) if args.file else cfg.names_export
+    if src is None or not src.exists():
+        print(f"no such export: {src}", file=sys.stderr)
+        return 1
+    st = export_mod.read(con, src)
+    con.commit()
+    print(f"restored from {src}\n  {st}")
+    if st.missing_assets or st.missing_faces:
+        # Not an error: an export from the whole archive is still worth having
+        # on a machine that holds part of it.
+        print(f"  {st.missing_assets:,} for photographs this database does not "
+              f"hold, {st.missing_faces:,} for faces it no longer finds")
+    return 0
+
+
 def cmd_corrections(args) -> int:
     """What has been put right by hand, and where it goes when exported.
 
@@ -915,6 +964,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     pe = sub.add_parser("people", help="who has been named, and how much of the library")
     pe.set_defaults(func=cmd_people)
+
+    ex = sub.add_parser("export", help="write out everything decided by hand")
+    ex.add_argument("what", nargs="?", default="people",
+                    choices=["people", "all"],
+                    help="kept for the spelling in the spec; both write "
+                         "everything, there being nothing worth leaving out")
+    ex.add_argument("file", nargs="?", help="defaults to config names_export")
+    ex.set_defaults(func=cmd_export)
+
+    im = sub.add_parser("import", help="read one back into this database")
+    im.add_argument("what", nargs="?", default="people",
+                    choices=["people", "all"])
+    im.add_argument("file", nargs="?", help="defaults to config names_export")
+    im.set_defaults(func=cmd_import)
 
     cr = sub.add_parser("corrections",
                         help="what has been put right by hand")

@@ -1362,11 +1362,26 @@ mediaidx serve                    Start the local web UI  (default http://localh
 
 mediaidx status                   Per-stage counts: done, pending, failed
 mediaidx doctor                   Check GPU, models, exiftool, NAS reachability, DB integrity
-mediaidx export people <file>     Export person and event names as JSON
-mediaidx import people <file>     Restore them into a rebuilt database
+mediaidx export [people] [file]   Write out everything decided by hand, as JSON
+mediaidx import [people] [file]   Read one back, into a rebuilt database if need be
 ```
 
 `add` is idempotent and safe to re-run over the whole library at any time.
+
+**The export is broader than its name.** `export people` was specified when names were the only
+thing a person supplied. They are not any more: a correction (§4.7), a rejected place (§6.3), a cut
+between two events, a photograph said to belong where it is (§6.5) — each is an answer somebody gave
+and none can be recomputed, so all of it goes in the one file. A backup covering most of somebody's
+work is one they cannot rely on.
+
+Everything in it is keyed by content hash, never by a row id, because the file has to be readable by
+a database built from nothing where every id differs or is absent. A face is found again by its index
+within its photograph and, where a re-detection has reordered them, by where it sits in the frame —
+the same anchor §5.2 uses.
+
+**Measured, 2026-09-12.** 94 people, 19,512 named faces, 7 event names and 103 corrections write out
+as 3.9 MB in under a second. Restoring into a copy of the library with every name, person and
+correction deleted brought back all 19,512 and all 94, with the per-person counts unchanged.
 
 ### 8.2 Web UI
 
@@ -1612,7 +1627,7 @@ of these files and actively dangerous for others.
 | File | Location | Why |
 |---|---|---|
 | Source, `spec.md`, `config.toml` | Project folder (OneDrive) | Small, versionable, worth syncing |
-| `names.json` export | Project folder (OneDrive) | The only irreplaceable data (P6). Backed up for free |
+| `names.json` export | Project folder (OneDrive) | The only irreplaceable data (P6, P8). Backed up for free, and versioned |
 | `photos.db` | `%LOCALAPPDATA%\mediaidx\` | **Never in OneDrive** |
 | Thumbnail cache | `%LOCALAPPDATA%\mediaidx\` | 1.5 GB of regenerable files; syncing it is pure waste |
 | Logs | `%LOCALAPPDATA%\mediaidx\` | Churns constantly |
