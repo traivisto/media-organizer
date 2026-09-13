@@ -105,3 +105,23 @@ def test_paths_default_outside_any_sync_folder(nowhere):
     from mediaidx import paths as pathutil
     cfg = config.load(nowhere)
     assert pathutil.is_in_sync_folder(str(cfg.database)) is None
+
+
+# --- the backup copies ----------------------------------------------------
+
+def test_no_extra_export_is_configured_by_default(nowhere):
+    """Where a backup belongs is a fact about somebody's storage, not ours."""
+    cfg = config.load(nowhere)
+    assert cfg.names_export_extra == []
+
+
+def test_every_extra_export_path_is_read(tmp_path):
+    p = write_cfg(tmp_path, """
+[paths]
+names_export = "C:/work/names.json"
+names_export_extra = ["//nas/Backups/names.json", "D:/stick/names.json"]
+""")
+    cfg = config.load(p)
+    assert cfg.names_export == Path("C:/work/names.json")
+    assert cfg.names_export_extra == [Path("//nas/Backups/names.json"),
+                                      Path("D:/stick/names.json")]

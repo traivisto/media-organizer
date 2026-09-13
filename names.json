@@ -1,6 +1,6 @@
 {
- "version": 1,
- "exported_at": 1789293312,
+ "version": 2,
+ "exported_at": 1789315577,
  "persons": [
   "Aaron",
   "Aatu",
@@ -308178,5 +308178,187 @@
    "note": null
   }
  ],
- "not_odd": []
+ "not_odd": [],
+ "folders": [
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\1998",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\1999",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2000",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2001",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2002",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2003",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2004",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2005",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2006",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2007",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2008",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2009",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2010",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2011",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2012",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2013",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2014",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2015",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2016",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2017",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2018",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2019",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2020",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2021",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2022",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2023",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2024",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2025",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2025\\2025 12 Teneriffa",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  },
+  {
+   "path": "\\\\TRaDiskStation\\Media\\Pictures\\2026",
+   "person_hint": null,
+   "user_label": null,
+   "is_root": 1
+  }
+ ]
 }

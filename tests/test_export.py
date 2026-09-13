@@ -243,3 +243,157 @@ def test_a_snapshot_restores_what_was_there(tmp_path):
     con.commit()
     assert con.execute(
         "SELECT COUNT(*) FROM faces WHERE person_id IS NOT NULL").fetchone()[0] == 8
+
+
+# --------------------------------------------------------------------------
+# What a person typed at `add` time
+# --------------------------------------------------------------------------
+
+def _folders(con):
+    """Two roots, one of them labelled and hinted at, and one plain subfolder."""
+    from mediaidx import dates
+    parsed = dates.FolderParse(year=None, month=None, label=None)
+    db.upsert_folder(con, r"\nas\Pictures\2019", parsed, is_root=True, now=1)
+    db.upsert_folder(con, r"\nas\Pictures\Anskun", parsed, is_root=True,
+                     user_label="Anskun kuvat", person_hint="Ansku", now=1)
+    db.upsert_folder(con, r"\nas\Pictures\2019\07", parsed)
+    con.commit()
+
+
+def test_the_export_carries_the_roots_and_the_hints(tmp_path):
+    """Typed by a person, and derivable from nothing in the archive."""
+    con = _library(tmp_path / "a.db")
+    _folders(con)
+    got = {f["path"]: f for f in export.dump(con)["folders"]}
+    assert set(got) == {r"\nas\Pictures\2019", r"\nas\Pictures\Anskun"}
+    assert got[r"\nas\Pictures\Anskun"]["person_hint"] == "Ansku"
+    assert got[r"\nas\Pictures\Anskun"]["user_label"] == "Anskun kuvat"
+
+
+def test_a_folder_nobody_said_anything_about_is_not_in_it(tmp_path):
+    """The export is what a person decided, not a copy of the folder tree."""
+    con = _library(tmp_path / "a.db")
+    _folders(con)
+    paths = {f["path"] for f in export.dump(con)["folders"]}
+    assert r"\nas\Pictures\2019\07" not in paths
+
+
+def test_a_restored_database_knows_which_folders_to_scan(tmp_path):
+    """So the rebuild is `import` and `scan`, not thirty paths retyped."""
+    src = _library(tmp_path / "a.db")
+    _folders(src)
+    data = export.dump(src)
+
+    fresh = db.connect(tmp_path / "b.db")
+    db.migrate(fresh)
+    st = export.load(fresh, data)
+    fresh.commit()
+
+    assert st.folders == 2
+    roots = {r["path"]: r for r in fresh.execute(
+        "SELECT path, person_hint, user_label FROM folders WHERE is_root = 1")}
+    assert set(roots) == {r"\nas\Pictures\2019", r"\nas\Pictures\Anskun"}
+    assert roots[r"\nas\Pictures\Anskun"]["person_hint"] == "Ansku"
+
+
+def test_restoring_does_not_flatten_a_folder_that_has_since_been_scanned(tmp_path):
+    """`add` fills in the parsed year; a restore must not wipe it."""
+    from mediaidx import dates
+    con = _library(tmp_path / "a.db")
+    _folders(con)
+    data = export.dump(con)
+    db.upsert_folder(con, r"\nas\Pictures\2019",
+                     dates.FolderParse(year=2019, month=7, label="Alicante"))
+    con.commit()
+
+    export.load(con, data)
+    con.commit()
+    row = con.execute("SELECT parsed_year, parsed_label, is_root FROM folders "
+                      "WHERE path = ?", (r"\nas\Pictures\2019",)).fetchone()
+    assert (row["parsed_year"], row["parsed_label"], row["is_root"]) == (
+        2019, "Alicante", 1)
+
+
+def test_an_export_written_before_folders_existed_still_reads(tmp_path):
+    """Version 1 is what every snapshot on disk was written by."""
+    con = _library(tmp_path / "a.db")
+    _decide(con)
+    data = export.dump(con)
+    data["version"] = 1
+    del data["folders"]
+
+    fresh = _library(tmp_path / "b.db")
+    st = export.load(fresh, data)
+    fresh.commit()
+    assert st.faces == 8 and st.folders == 0
+
+
+# --------------------------------------------------------------------------
+# The copy on storage that is backed up on its own schedule
+# --------------------------------------------------------------------------
+
+def _cli_library(tmp_path):
+    """A database with one decision in it, and a config naming two exports."""
+    con = _library(tmp_path / "photos.db")
+    _decide(con)
+    con.close()
+    return tmp_path / "photos.db"
+
+
+def _cfg(tmp_path, dbp, primary, extra):
+    body = ["[paths]",
+            f'database = "{dbp.as_posix()}"',
+            f'thumbnails = "{(tmp_path / "t").as_posix()}"',
+            f'logs = "{(tmp_path / "l").as_posix()}"',
+            f'names_export = "{primary.as_posix()}"',
+            "names_export_extra = ["
+            + ", ".join(f'"{p.as_posix()}"' for p in extra) + "]"]
+    p = tmp_path / "config.toml"
+    p.write_text("\n".join(body) + "\n", encoding="utf-8")
+    return p
+
+
+def _run(cfg, *args):
+    import subprocess
+    import sys
+    return subprocess.run(
+        [sys.executable, "-m", "mediaidx", "--config", str(cfg), *args],
+        capture_output=True, text=True, encoding="utf-8")
+
+
+def test_every_named_copy_is_written_and_they_are_identical(tmp_path):
+    """One dump, several destinations: the backup is not a near-copy."""
+    dbp = _cli_library(tmp_path)
+    primary = tmp_path / "one" / "names.json"
+    away = tmp_path / "nas" / "names.json"
+    r = _run(_cfg(tmp_path, dbp, primary, [away]), "export")
+
+    assert r.returncode == 0, r.stderr
+    assert primary.read_bytes() == away.read_bytes()
+    assert json.loads(away.read_text(encoding="utf-8"))["faces"]
+
+
+def test_a_copy_that_could_not_be_written_is_never_quiet(tmp_path):
+    """A NAS that was asleep must not look like a backup that happened."""
+    dbp = _cli_library(tmp_path)
+    primary = tmp_path / "one" / "names.json"
+    blocked = tmp_path / "blocker"
+    blocked.write_text("not a directory", encoding="utf-8")
+
+    r = _run(_cfg(tmp_path, dbp, primary, [blocked / "names.json"]), "export")
+
+    assert r.returncode != 0
+    assert "NOT written" in r.stderr
+    assert primary.exists(), "the copy that could be written still was"
+
+
+def test_a_named_file_means_that_file_and_no_other(tmp_path):
+    """`export <file>` is a one-off; it does not fan out to the backups."""
+    dbp = _cli_library(tmp_path)
+    primary = tmp_path / "one" / "names.json"
+    away = tmp_path / "nas" / "names.json"
+    asked = tmp_path / "asked.json"
+    r = _run(_cfg(tmp_path, dbp, primary, [away]), "export", "all", str(asked))
+
+    assert r.returncode == 0, r.stderr
+    assert asked.exists() and not away.exists() and not primary.exists()

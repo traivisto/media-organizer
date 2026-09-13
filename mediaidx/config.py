@@ -108,6 +108,10 @@ class Config:
     thumbnails: Path
     logs: Path
     names_export: Path | None
+    # Further copies of that same file, written by every `export`. A backup on
+    # storage with its own schedule is worth having, and one that has to be
+    # refreshed by hand is one you find stale on the day it matters.
+    names_export_extra: list[Path] = field(default_factory=list)
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
@@ -187,6 +191,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         logs=Path(p.get("logs", data / "logs")),
         gazetteer=Path(p.get("gazetteer", data / "gazetteer")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
+        names_export_extra=[Path(x) for x in p.get("names_export_extra", [])],
         ui=merged.get("ui", {}),
         scan=merged["scan"],
         models=merged["models"],

@@ -1426,6 +1426,21 @@ between two events, a photograph said to belong where it is (§6.5) — each is 
 and none can be recomputed, so all of it goes in the one file. A backup covering most of somebody's
 work is one they cannot rely on.
 
+**Including what was typed at `add` time.** A folder's `--label`, its `--person` hint, and the plain
+fact that it was handed to `add` at all are all decisions a person made, and version 2 of the format
+carries them. Only folders carrying one of those three appear; the rest of the tree is recomputed by
+walking it. Restoring them into a fresh database inserts the rows as stubs if nothing has been
+scanned yet, which means a rebuild is `import` followed by `scan` rather than thirty paths retyped,
+and a later `add` fills in the parsed year and label without disturbing what was restored. Version 1
+files remain readable: they simply carry no folders.
+
+**Written to every configured destination.** `names_export_extra` (§9) names further copies, and one
+`export` writes them all from a single dump, so each is byte-identical to the first rather than
+merely close to it. A destination that cannot be written is reported on stderr and makes the command
+exit non-zero even though the others succeeded — a NAS that was asleep otherwise looks exactly like
+a backup that happened, which is the one way a backup fails silently for years. A path given on the
+command line is a one-off and fans out to nothing.
+
 Everything in it is keyed by content hash, never by a row id, because the file has to be readable by
 a database built from nothing where every id differs or is absent. A face is found again by its index
 within its photograph and, where a re-detection has reordered them, by where it sits in the frame —
@@ -1529,6 +1544,13 @@ names_export = "C:/Users/traiv/OneDrive/My Digital Solutions/Media classifier/na
 # The GeoNames extract behind place search (§6.3). Regenerable; reloaded with
 # `mediaidx places --load`.
 gazetteer  = "C:/Users/traiv/.mediaidx/gazetteer"
+
+# Further copies of that same export, written by every `mediaidx export`.
+# Storage with its own backup schedule belongs here. Nothing under a scan root
+# does: P1 permits no write there, backup or not.
+names_export_extra = [
+  "//TRaDiskStation/Media/Backups/Kuva-arkisto/names.json",
+]
 
 # No roots are configured. Folders are indexed by passing them to `add`,
 # and recorded from that; `mediaidx roots` lists what has accumulated.

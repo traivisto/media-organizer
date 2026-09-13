@@ -91,10 +91,16 @@ and near enough — or a little further, when the five nearest agree — takes t
 name. Corrections made by hand have produced about 75 further named faces each.
 
 `export` then writes `names.json`, the one thing here that cannot be rebuilt
-from the archive. Commit it. The dated snapshots under `~\.mediaidx\backups\`
-are written automatically before anything that names thousands of faces at once,
-but they are local and only the last ten are kept: they protect you from a bad
-run, not from a dead disk.
+from the archive — every name, correction, event name, rejected place, and the
+folders you passed to `add` with their labels and hints. Commit it. It also
+writes a copy to every path in `names_export_extra`, which on this machine is
+the NAS, where the regular backups reach it; if one of those cannot be written
+the command says so and exits non-zero rather than letting a sleeping disk look
+like a backup.
+
+The dated snapshots under `~\.mediaidx\backups\` are a different thing: written
+automatically before anything that names thousands of faces at once, local, and
+only the last ten kept. They protect you from a bad run, not from a dead disk.
 
 ### Less often
 

@@ -650,6 +650,10 @@ def cmd_export(args) -> int:
     if out is None:
         print("no file given and no `names_export` in the config", file=sys.stderr)
         return 1
+    # A named file means that file and no other. The extra copies are for the
+    # routine export, which is the one somebody runs at the end of an evening
+    # of naming and does not want to run three times.
+    extra = [] if args.file else list(cfg.names_export_extra)
     data = export_mod.write(con, out)
     print(f"{out}")
     print(f"  {len(data['persons']):>7,} people")
@@ -659,7 +663,25 @@ def cmd_export(args) -> int:
     print(f"  {len(data['places_rejected']):>7,} rejected places")
     print(f"  {len(data['corrections']):>7,} corrections")
     print(f"  {len(data['not_odd']):>7,} kept as belonging")
+    print(f"  {len(data['folders']):>7,} folders, roots and hints")
     print(f"  {out.stat().st_size / 1024:,.0f} kB")
+
+    # Written from the same dump, so every copy is byte-identical to the first.
+    failed = False
+    for other in extra:
+        try:
+            export_mod.write(con, other, data)
+            print(f"  also {other}")
+        except OSError as e:
+            # Not fatal -- what matters most is already on disk -- but never
+            # quiet. A backup believed to exist is worse than one known to be
+            # missing, and a NAS that was asleep looks exactly like success.
+            print(f"\n  NOT written: {other}\n    {e}", file=sys.stderr)
+            failed = True
+    if failed:
+        print(f"  the copy at {out} is complete; the one(s) above are not",
+              file=sys.stderr)
+        return 1
     return 0
 
 

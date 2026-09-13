@@ -25,7 +25,12 @@ from __future__ import annotations
 import json
 import time
 
-VERSION = 1
+VERSION = 2
+
+# Version 1 had no `folders`. Every snapshot beside the database and every
+# `names.json` in the repository's history was written by it, and a backup
+# format that refuses to read its own older files is not a backup format.
+READABLE = {1, 2}
 
 
 def dump(con) -> dict:
@@ -71,19 +76,36 @@ def dump(con) -> dict:
         "not_odd": [r["content_hash"] for r in con.execute(
             """SELECT a.content_hash FROM odd_dismissed d
                  JOIN assets a ON a.id = d.asset_id ORDER BY a.content_hash""")],
+        # Typed by a person at `add` time, and derivable from nothing: a label
+        # for a folder whose own name says nothing to a reader, the hint that a
+        # folder is mostly of one person, and -- the quiet one -- which folders
+        # were handed to `add` at all. A rebuild that has lost the list of roots
+        # is a rebuild somebody has to reconstruct by looking at the archive.
+        "folders": [
+            {"path": r["path"], "person_hint": r["person_hint"],
+             "user_label": r["user_label"], "is_root": r["is_root"]}
+            for r in con.execute(
+                """SELECT path, person_hint, user_label, is_root FROM folders
+                    WHERE is_root = 1 OR person_hint IS NOT NULL
+                       OR user_label IS NOT NULL
+                    ORDER BY path""")],
     }
 
 
-def write(con, path) -> dict:
+def write(con, path, data: dict | None = None) -> dict:
     """Write the export, and only replace the old one once it is complete.
 
     Through a temporary file beside it: a backup half-written over its own
     predecessor is worse than no backup, and this one lives in a syncing folder
     (§10.5) where a partial file would be copied away immediately.
+
+    `data` is accepted so that several copies can be written from one dump --
+    the second and third are then byte-identical to the first rather than
+    merely near it, and a large library is walked once instead of three times.
     """
     import pathlib
     p = pathlib.Path(path)
-    data = dump(con)
+    data = dump(con) if data is None else data
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".part")
     tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False),
@@ -97,14 +119,15 @@ class Restored:
 
     def __init__(self):
         self.persons = self.faces = self.events = self.cuts = 0
-        self.places = self.corrections = self.not_odd = 0
+        self.places = self.corrections = self.not_odd = self.folders = 0
         self.missing_assets = self.missing_faces = 0
 
     def __str__(self) -> str:
         return (f"{self.persons:,} people, {self.faces:,} faces, "
                 f"{self.events:,} event names, {self.cuts:,} cuts, "
                 f"{self.places:,} place rejections, "
-                f"{self.corrections:,} corrections, {self.not_odd:,} kept")
+                f"{self.corrections:,} corrections, {self.not_odd:,} kept, "
+                f"{self.folders:,} folders")
 
 
 def load(con, data: dict) -> Restored:
@@ -115,12 +138,31 @@ def load(con, data: dict) -> Restored:
     a machine holding half of it, and the entries for what is missing are left
     in the file for the machine that does have them.
     """
-    if data.get("version") != VERSION:
+    if data.get("version") not in READABLE:
         raise ValueError(f"unknown export version: {data.get('version')!r}")
     from . import corrections as corrections_mod
 
     st = Restored()
     now = int(time.time())
+
+    # Before the faces, because a folder carries the person hint that names a
+    # cluster later (§5.1). The row may not exist at all: on a fresh database
+    # nothing has been scanned yet, and restoring it as a stub is what lets
+    # `mediaidx scan` walk every root again without anybody retyping thirty
+    # paths. `add` fills in the parsed year and label when it reaches it.
+    for f in data.get("folders", []):
+        con.execute(
+            """INSERT INTO folders (path, person_hint, user_label, is_root,
+                                    root_added_at)
+                    VALUES (?,?,?,?,?)
+               ON CONFLICT(path) DO UPDATE SET
+                    person_hint   = COALESCE(excluded.person_hint, person_hint),
+                    user_label    = COALESCE(excluded.user_label, user_label),
+                    is_root       = MAX(folders.is_root, excluded.is_root),
+                    root_added_at = COALESCE(root_added_at, excluded.root_added_at)""",
+            (f["path"], f.get("person_hint"), f.get("user_label"),
+             int(f.get("is_root") or 0), now if f.get("is_root") else None))
+        st.folders += 1
 
     for name in data.get("persons", []):
         cur = con.execute(
