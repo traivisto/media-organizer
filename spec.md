@@ -1534,6 +1534,23 @@ click is not browsing. The original is served by the application rather than lin
 which browsers refuse to follow from a served page. An asset has several paths, so the route serves
 the first that is reachable and says so plainly when none is.
 
+**The slideshow.** A result plays as a slideshow — from the results, or from any photograph reached
+from them — at 3, 5 or 10 seconds a photograph, in the order the arrows walk. Space plays and pauses,
+the arrows step, F fills the screen and Esc stops on the photograph showing. While it plays the
+header, the panel and, once the mouse is still, the controls give way to the picture, and the next
+photograph is fetched before it is due. It plays inside the page rather than from page to page, so a
+full screen stays full; pausing reloads the photograph showing, so its panel is that photograph's.
+
+The slideshow is the one place a picture larger than the 1,024-pixel thumbnail earns its cost, a
+screen being wider than that, and a setting beside the speed asks for one. Each photograph is then
+read from its original, fitted to the screen (at most 2,560 pixels) in memory and not kept. Measured
+2026-09-13, reading and scaling takes about 0.6 s a photograph over this link, well inside a slide,
+while a cache at that size would have added about 13 GB to the 4.9 GB of thumbnails for photographs
+mostly seen once. The setting is off until turned on and remembered by the browser, and turning it
+on is the explicit request §7.5 waits for. The NAS is not always on, so a picture that has not
+arrived in eight seconds leaves the thumbnail showing, the slideshow carries on, it says so once, and
+asking again waits two minutes.
+
 **Downloads.** The same route serves the original as a download. A whole result set may be taken as a
 zip, with a guard rail nothing else in the UI needs: it is the only feature that reads many originals
 from the NAS on demand, over the link that is already the slowest thing here (§1.2). So the count and

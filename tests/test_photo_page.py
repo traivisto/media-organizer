@@ -364,3 +364,39 @@ def test_the_pin_is_on_the_picture_only_with_a_coordinate(tmp_path, client):
     g, gid = _with_gps(tmp_path / "gps")
     body = g.get(f"/photo/{gid}").text
     assert 'title="Show it on a map (loads a map from openstreetmap.org)"' in body
+
+
+# --------------------------------------------------------------------------
+# The slideshow's sharper picture
+# --------------------------------------------------------------------------
+
+def test_the_sharp_picture_is_read_from_the_original_and_fitted(tmp_path):
+    """Scaled to the screen asked for, never past the limit, and not kept."""
+    import io
+    from PIL import Image
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    src = tmp_path / "orig.jpg"
+    Image.new("RGB", (4000, 3000), (200, 30, 30)).save(src, "JPEG")
+    aid = db.insert_asset(con, "f" * 64, {"format": "jpeg", "taken_at": 1})
+    con.execute("""INSERT INTO files (path, asset_id, size_bytes, mtime,
+                                      first_seen, last_seen)
+                   VALUES (?,?,1,1,1,1)""", (str(src), aid))
+    con.commit()
+    con.close()
+    c = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
+
+    r = c.get(f"/view/{aid}", params={"w": 1600})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+    assert max(Image.open(io.BytesIO(r.content)).size) == 1600
+    big = c.get(f"/view/{aid}", params={"w": 99999})
+    assert max(Image.open(io.BytesIO(big.content)).size) == 2560
+    assert not list((tmp_path / "thumbs").rglob("*.*")), "nothing is kept"
+
+
+def test_the_sharp_picture_says_when_the_nas_is_not_answering(client):
+    """The fixture's path is a NAS that does not exist on this machine."""
+    c, aid = client
+    assert c.get(f"/view/{aid}").status_code == 503

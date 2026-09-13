@@ -11,6 +11,7 @@ one vector. Browsing touches only photos.db and the thumbnail cache.
 from __future__ import annotations
 
 import html
+import io
 import json
 import mimetypes
 import re
@@ -421,6 +422,49 @@ details.edit h3 {{ margin:20px 0 6px; font-size:11.5px; font-weight:650; color:v
   .arrow {{ width:44px; height:44px; }}
   .side {{ width:auto; border-left:0; }}
 }}
+/* The slideshow: its controls on the stage, and while it plays, the picture and
+   nothing else -- the header, the panel and, once the mouse is still, the
+   controls and the arrows all give way. */
+button.vbtn {{ background:transparent; border:0; font:inherit; filter:none; }}
+.vbar details.pop > summary {{ height:38px; min-width:38px; justify-content:center;
+  padding:0 10px; background:transparent; border:0; color:#d6dbe0; }}
+.vbar details.pop > summary:hover, .vbar details.pop[open] > summary {{
+  background:rgba(255,255,255,.13); color:#fff; }}
+.slideopts .menu {{ width:300px; padding:12px; color:var(--ink); }}
+.slideopts .opt {{ display:flex; flex-direction:column; gap:6px; font-size:13px;
+  color:var(--ink-2); }}
+.slideopts .opt select {{ height:36px; padding:0 8px; font:inherit; color:var(--ink);
+  background:var(--surface); border:1px solid var(--rule); border-radius:8px; }}
+.slideopts .opt.check {{ flex-direction:row; align-items:flex-start; gap:10px;
+  margin-top:14px; color:var(--ink); font-weight:550; cursor:pointer; }}
+.slideopts .opt.check input {{ margin-top:3px; accent-color:var(--accent); }}
+.slideopts .opt small {{ display:block; margin-top:2px; font-size:12px; font-weight:400;
+  color:var(--ink-3); }}
+.progress {{ position:absolute; left:0; top:0; z-index:3; height:3px; width:0;
+  background:#3b82f6; }}
+.progress.run {{ animation:grow var(--slide, 5s) linear forwards; }}
+@keyframes grow {{ from {{ width:0; }} to {{ width:100%; }} }}
+.caption {{ position:absolute; left:24px; right:260px; bottom:12px; color:#e9ecef;
+  font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.9); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; opacity:0; transition:opacity .4s;
+  pointer-events:none; }}
+.nas {{ position:absolute; right:16px; bottom:9px; padding:5px 10px; border-radius:8px;
+  background:rgba(0,0,0,.65); color:#fbbf24; font-size:12.5px; }}
+body.playing header, body.playing .side {{ display:none; }}
+body.playing .viewer {{ min-height:100vh; }}
+body.playing .stage {{ position:sticky; top:0; height:100vh; }}
+body.playing .pic {{ padding-bottom:40px; }}
+body.playing .pic img {{ max-height:100%; }}
+body.playing .caption {{ opacity:.92; }}
+body.playing .vbar {{ transition:opacity .4s; }}
+body.playing.idle .vbar, body.playing.idle .arrow {{ opacity:0 !important;
+  pointer-events:none; }}
+body.playing.idle {{ cursor:none; }}
+.meta a.play {{ float:right; display:inline-flex; gap:7px; align-items:center;
+  height:34px; margin-top:-7px; padding:0 14px; border-radius:10px;
+  background:var(--ink); color:var(--surface); font-weight:600; }}
+.meta a.play:hover {{ opacity:.88; }}
+.meta a.play svg.ic {{ width:15px; height:15px; }}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -442,6 +486,9 @@ details.edit h3 {{ margin:20px 0 6px; font-size:11.5px; font-weight:650; color:v
 <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
 <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
 <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+<symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
 <symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
 </svg>
 <header><div class="bar">
@@ -1194,7 +1241,8 @@ def create_app(cfg) -> FastAPI:
             meta = (f"{total:,} {what} &middot; most recent first"
                     if where or not q else
                     f"{total_all:,} {what} &middot; most recent first")
-            body = (head + f'<div class="meta">{meta}</div>'
+            first = rows[0]["id"] if rows else None
+            body = (head + f'<div class="meta">{meta}{play_link(first, here)}</div>'
                     f'<div class="grid">'
                     f'{cards_by_month(rows, here)}</div>'
                     + pager(q, f, page, total, PAGE_SIZE))
@@ -1265,7 +1313,8 @@ def create_app(cfg) -> FastAPI:
                    else ""))
         tail = pager(q, f, page, len(keep), PAGE_SIZE,
                      more=more, held=held if not more else 0)
-        body = (head + strips + f'<div class="meta">{meta}</div>'
+        body = (head + strips + f'<div class="meta">{meta}'
+                f'{play_link(ids[0], here)}</div>'
                 f'<div class="grid">{cards}</div>' + tail)
         return HTMLResponse(layout(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
@@ -1710,6 +1759,253 @@ def create_app(cfg) -> FastAPI:
                 ids[i + 1] if i + 1 < len(ids) else None,
                 i + 1, len(ids))
 
+    def _when_words(taken_at, precision):
+        """(the date as the facts write it, the heading, the weekday and time).
+
+        The heading says the date as far as it is known, and the weekday and
+        the time only where they are: a scan dated by its folder has neither.
+        """
+        if not taken_at:
+            return "unknown", "When is not known", ""
+        d = datetime.fromtimestamp(taken_at)
+        p = precision
+        when = (f"{d:%Y}" if p == "year" else f"{d:%B %Y}" if p == "month"
+                else f"{d.day} {d:%B %Y}" if p == "day"
+                else f"{d.day} {d:%B %Y}, {d:%H:%M}")
+        aside = ("" if p in ("year", "month") else f"{d:%A}" if p == "day"
+                 else f"{d:%A} &middot; {d:%H:%M}")
+        return when, when.split(",")[0], aside
+
+    def _place_short(con, place_id):
+        """(id, "Pärnu, Estonia", the whole trail) for a place, or None."""
+        if not place_id:
+            return None
+        pl = con.execute("SELECT id, name, path FROM places WHERE id = ?",
+                         (place_id,)).fetchone()
+        if pl is None:
+            return None
+        parts = pl["path"].split("/")
+        short = pl["name"] + (f", {parts[0]}" if len(parts) > 1 else "")
+        return pl["id"], short, " · ".join(reversed(parts))
+
+    def _slide(con, asset_id: int):
+        """One photograph as the slideshow shows it: its thumbnail and a line
+        saying when, where and who."""
+        a = con.execute("SELECT id, content_hash, taken_at, taken_at_precision, "
+                        "place_id FROM assets WHERE id = ?", (asset_id,)).fetchone()
+        if a is None:
+            return None
+        when, _, _ = _when_words(a["taken_at"], a["taken_at_precision"])
+        place = _place_short(con, a["place_id"])
+        names = [r["name"] for r in con.execute(
+            """SELECT p.name FROM faces f JOIN persons p ON p.id = f.person_id
+                WHERE f.asset_id = ? GROUP BY p.id ORDER BY MIN(f.idx)""",
+            (asset_id,))]
+        said = [when if a["taken_at"] else "", place[1] if place else "",
+                ", ".join(names)]
+        return {"id": a["id"], "hash": a["content_hash"],
+                "caption": " · ".join(s for s in said if s)}
+
+    def _following(con, asset_id: int, back: str, n: int):
+        """(total, position of the first, ids): the photographs after this one
+        in the result it came from, in the order the arrows walk, n at a time.
+
+        A few at a time so that playing the whole library never builds a list
+        of all 39,884 of it. The same two orders as `_neighbours`: by date for
+        an exact result, by the held ranking for a described one.
+        """
+        got = _search_from(back)
+        if got is None:
+            return 0, 0, []
+        q, f, more = got
+        r = query.resolve(con, q, place_counts=subtree_counts(con))
+        where, args = _where(con, r, f)
+        pred = f" AND {where}" if where else ""
+        if not r.text:
+            cur = con.execute(
+                "SELECT COALESCE(taken_at, 0) t, id FROM assets WHERE id = ?",
+                (asset_id,)).fetchone()
+            if cur is None:
+                return 0, 0, []
+            key = (cur["t"], cur["id"])
+            ids = [x["id"] for x in con.execute(
+                f"""SELECT a.id FROM assets a
+                     WHERE (COALESCE(a.taken_at,0), a.id) < (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) DESC, a.id DESC LIMIT ?""",
+                [*key, *args, n])]
+            before = con.execute(
+                f"""SELECT COUNT(*) FROM assets a
+                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}""",
+                [*key, *args]).fetchone()[0]
+            total = con.execute(
+                "SELECT COUNT(*) FROM assets a"
+                + (f" WHERE {where}" if where else ""), args).fetchone()[0]
+            return total, before + 2, ids
+        ranked = _ranked_ids(con, (q, tuple(sorted(f.items())), more),
+                             r, where, args, more)
+        if asset_id not in ranked:
+            return 0, 0, []
+        i = ranked.index(asset_id)
+        return len(ranked), i + 2, ranked[i + 1:i + 1 + n]
+
+    @app.get("/slides")
+    def slides(back: str = Query(default="/"), at: int = 0, n: int = 10):
+        """What the slideshow plays next, after photograph `at` (§8.2)."""
+        con = connect()
+        total, first, ids = _following(con, at, safe_back(back),
+                                       max(1, min(n, 50)))
+        out = []
+        for k, aid in enumerate(ids):
+            s = _slide(con, aid)
+            if s is not None:
+                s.update(at=first + k, total=total)
+                out.append(s)
+        return {"total": total, "slides": out}
+
+    # The largest side the slideshow asks an original for. A screen past it
+    # gains nothing, and every extra pixel still crosses the network.
+    VIEW_MAX = 2560
+
+    @app.get("/view/{asset_id}")
+    def view(asset_id: int, w: int = 1920):
+        """The photograph fitted to the screen showing it, read from its original.
+
+        For the slideshow, and only when its setting asks (§8.2). Browsing never
+        pulls an original across the network (§7.5); turning the setting on is
+        the explicit request that rule waits for. Nothing is kept: a cache at
+        this size would add about 13 GB, for photographs mostly seen once.
+        """
+        con = connect()
+        path = _reachable(con, asset_id)
+        if path is None:
+            return Response(status_code=503)
+        try:
+            im = images.load(pathutil.long_path(path),
+                             max_side=max(320, min(w, VIEW_MAX)))
+        except OSError:
+            return Response(status_code=503)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=86)
+        return Response(buf.getvalue(), media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
+
+    def play_link(first_id, here: str) -> str:
+        """Play a result as a slideshow, from the first photograph on the page."""
+        if first_id is None:
+            return ""
+        return (f'<a class="play" href="/photo/{first_id}?play=1&back='
+                f'{quote_plus(here)}">{_icon("play")}Slideshow</a>')
+
+    def slide_controls() -> str:
+        return (
+            '<button class="vbtn" id="play" type="button" '
+            f'title="Slideshow (Space)">{_icon("play")}</button>'
+            '<details class="pop slideopts"><summary title="Slideshow settings">'
+            f'{_icon("sliders")}</summary><div class="menu">'
+            '<label class="opt">Each photograph for'
+            '<select id="speed"><option value="3">3 seconds</option>'
+            '<option value="5" selected>5 seconds</option>'
+            '<option value="10">10 seconds</option></select></label>'
+            '<label class="opt check"><input type="checkbox" id="sharp">'
+            '<span>Sharper pictures from the NAS<small>While the slideshow plays, '
+            'each original is read over the network and fitted to the screen. '
+            'When the NAS is not answering, the preview size is shown instead.'
+            '</small></span></label></div></details>'
+            '<button class="vbtn" id="fs" type="button" '
+            f'title="Full screen (F)">{_icon("screen")}</button>')
+
+    # The slideshow plays inside the page rather than from page to page, so a
+    # full screen stays full. It asks `/slides` for what comes next a few at a
+    # time, has the next picture before it is due, and on pause reloads the
+    # photograph showing so its panel is that photograph's. Speed and the
+    # sharper pictures are remembered by the browser. A sharp picture that has
+    # not arrived in eight seconds leaves the thumbnail showing, says so once,
+    # and asking again waits two minutes: the NAS is not always on.
+    SLIDE_JS = """<script>(function(){
+var st=document.querySelector('.stage');if(!st||!st.dataset.back)return;
+var img=document.querySelector('.pic img'),cap=document.getElementById('cap'),
+prog=document.getElementById('prog'),nas=document.getElementById('nas'),
+btn=document.getElementById('play'),speed=document.getElementById('speed'),
+sharp=document.getElementById('sharp'),pos=document.querySelector('.vbar .pos');
+var back=st.dataset.back,home=+st.dataset.id,queue=[],shown=[],timer=null,
+idle=null,fetching=false,done=false;
+var cur={id:home,hash:st.dataset.hash,caption:st.dataset.caption};
+function get(k,d){try{var v=localStorage.getItem(k);return v===null?d:v;}catch(e){return d;}}
+function put(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+speed.value=get('slides.speed','5');sharp.checked=get('slides.sharp','0')==='1';
+speed.onchange=function(){put('slides.speed',speed.value);if(timer)restart();};
+sharp.onchange=function(){put('slides.sharp',sharp.checked?'1':'0');if(timer)fetchSharp(cur);};
+function secs(){return +speed.value||5;}
+function nasDown(){try{return Date.now()-(+sessionStorage.getItem('slides.nasdown')||0)<120000;}catch(e){return false;}}
+function down(){try{sessionStorage.setItem('slides.nasdown',String(Date.now()));}catch(e){}nas.hidden=false;}
+function url(s){return '/photo/'+s.id+'?back='+encodeURIComponent(back);}
+function fetchSharp(s){
+ if(!s||s.im||!sharp.checked||nasDown())return;
+ var side=Math.round(Math.max(screen.width||0,screen.height||0,innerWidth,innerHeight)
+  *(window.devicePixelRatio||1))||1920;
+ var im=new Image(),t=setTimeout(function(){if(!s.sharp)down();},8000);
+ s.im=im;
+ im.onload=function(){clearTimeout(t);s.sharp=im.src;nas.hidden=true;if(cur===s)img.src=im.src;};
+ im.onerror=function(){clearTimeout(t);down();};
+ im.src='/view/'+s.id+'?w='+side;}
+function warm(s){if(!s)return;if(!s.th){s.th=new Image();s.th.src='/thumb/m/'+s.hash;}fetchSharp(s);}
+function fill(){
+ if(fetching||done||queue.length>2)return;fetching=true;
+ var last=queue.length?queue[queue.length-1]:cur;
+ fetch('/slides?n=10&at='+last.id+'&back='+encodeURIComponent(back))
+ .then(function(r){return r.json();})
+ .then(function(d){fetching=false;if(!d.slides.length)done=true;
+  queue=queue.concat(d.slides);warm(queue[0]);})
+ .catch(function(){fetching=false;});}
+function show(s){
+ cur=s;img.src=s.sharp||'/thumb/m/'+s.hash;cap.textContent=s.caption;
+ if(s.at&&pos)pos.textContent=s.at.toLocaleString('en')+' of '+s.total.toLocaleString('en');
+ history.replaceState(null,'',url(s)+'&play=1');
+ fetchSharp(s);warm(queue[0]);fill();}
+function restart(){
+ clearTimeout(timer);timer=setTimeout(step,secs()*1000);
+ st.style.setProperty('--slide',secs()+'s');
+ prog.classList.remove('run');void prog.offsetWidth;prog.classList.add('run');}
+function step(){
+ if(!queue.length){if(done){pause();return;}fill();restart();return;}
+ shown.push(cur);show(queue.shift());restart();}
+function stepBack(){if(!shown.length)return;queue.unshift(cur);show(shown.pop());restart();}
+function icon(n){btn.querySelector('use').setAttribute('href','#i-'+n);}
+function wake(){document.body.classList.remove('idle');clearTimeout(idle);
+ if(timer)idle=setTimeout(function(){document.body.classList.add('idle');},2500);}
+function play(){
+ document.body.classList.add('playing');window.scrollTo(0,0);
+ icon('pause');btn.title='Pause (Space)';cap.textContent=cur.caption;
+ fetchSharp(cur);fill();restart();wake();}
+function pause(){
+ clearTimeout(timer);timer=null;prog.classList.remove('run');
+ document.body.classList.remove('playing','idle');icon('play');btn.title='Slideshow (Space)';
+ if(cur.id!==home)location.replace(url(cur));else history.replaceState(null,'',url(cur));}
+function fullscreen(){
+ if(document.fullscreenElement)document.exitFullscreen();
+ else if(document.documentElement.requestFullscreen)
+  document.documentElement.requestFullscreen().catch(function(){});}
+btn.onclick=function(){if(timer)pause();else play();btn.blur();};
+document.getElementById('fs').onclick=fullscreen;
+document.addEventListener('mousemove',wake);
+['go-prev','go-next'].forEach(function(id,i){var a=document.getElementById(id);
+ if(a)a.addEventListener('click',function(e){if(!timer)return;e.preventDefault();
+  if(i)step();else stepBack();});});
+window.addEventListener('keydown',function(e){
+ var t=e.target.tagName;if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA')return;
+ var k=e.key,hit=true;
+ if(k===' '){if(timer)pause();else play();}
+ else if(k==='f'||k==='F')fullscreen();
+ else if(!timer)hit=false;
+ else if(k==='ArrowRight')step();
+ else if(k==='ArrowLeft')stepBack();
+ else if(k==='Escape')pause();
+ else hit=false;
+ if(hit){e.preventDefault();e.stopImmediatePropagation();}
+},true);
+if(st.dataset.play==='1')play();
+})();</script>"""
+
     def _walk(con, asset_id, back):
         """The arrows either side of the photograph and where it sits in the
         result, following whatever brought the reader here. Nothing when it was
@@ -1744,7 +2040,8 @@ def create_app(cfg) -> FastAPI:
 
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
     def photo(asset_id: int, back: str = Query(default="/"),
-              msg: str = Query(default=""), map: int = 0, edit: int = 0):
+              msg: str = Query(default=""), map: int = 0, edit: int = 0,
+              play: int = 0):
         """One photograph (§8.2): the picture, what matters about it beside
         it, and everything for putting it right one click further."""
         con = connect()
@@ -1761,19 +2058,10 @@ def create_app(cfg) -> FastAPI:
             "SELECT path FROM files WHERE asset_id = ? ORDER BY path",
             (asset_id,)).fetchall()
 
-        when, typed, heading, aside = "unknown", "", "When is not known", ""
-        if a["taken_at"]:
-            d = datetime.fromtimestamp(a["taken_at"])
-            p = a["taken_at_precision"]
-            when = (f"{d:%Y}" if p == "year" else f"{d:%B %Y}" if p == "month"
-                    else f"{d.day} {d:%B %Y}" if p == "day"
-                    else f"{d.day} {d:%B %Y}, {d:%H:%M}")
-            typed = f"{d:%Y-%m-%d}"
-            # The date as far as it is known, and the weekday and the time only
-            # where they are: a scan dated by its folder has neither.
-            heading = when.split(",")[0]
-            aside = ("" if p in ("year", "month") else f"{d:%A}" if p == "day"
-                     else f"{d:%A} &middot; {d:%H:%M}")
+        when, heading, aside = _when_words(a["taken_at"],
+                                           a["taken_at_precision"])
+        typed = (f'{datetime.fromtimestamp(a["taken_at"]):%Y-%m-%d}'
+                 if a["taken_at"] else "")
 
         # Every fact says where it came from, under Edit & details. A date and
         # a place are guesses of very different quality, and one that arrived
@@ -1841,15 +2129,10 @@ def create_app(cfg) -> FastAPI:
                if chips else "")
 
         place = ""
-        if a["place_id"]:
-            pl = con.execute("SELECT id, name, path FROM places WHERE id = ?",
-                             (a["place_id"],)).fetchone()
-            if pl is not None:
-                parts = pl["path"].split("/")
-                short = pl["name"] + (f", {parts[0]}" if len(parts) > 1 else "")
-                place = (f'<a class="link" href="/place/{pl["id"]}" title="'
-                         f'{html.escape(" · ".join(reversed(parts)))}">'
-                         f'{html.escape(short)}</a>')
+        short = _place_short(con, a["place_id"])
+        if short:
+            place = (f'<a class="link" href="/place/{short[0]}" '
+                     f'title="{html.escape(short[2])}">{html.escape(short[1])}</a>')
         gps = _gps_fact(a, asset_id, back, bool(map))
         where = (fact("pin", "Where", place + gps, anchor="where")
                  if place or gps else "")
@@ -1881,6 +2164,16 @@ def create_app(cfg) -> FastAPI:
                    f'{html.escape(host)})">{_icon("pin")}</a>')
 
         prev_a, next_a, pos = _walk(con, asset_id, back)
+        # The slideshow plays from here, and only where there is a result to
+        # play through.
+        slide = stage = ""
+        if pos:
+            me = _slide(con, asset_id)
+            stage = (f' data-id="{asset_id}" data-hash="{h}" '
+                     f'data-back="{html.escape(back)}" '
+                     f'data-caption="{html.escape(me["caption"])}" '
+                     f'data-play="{1 if play else 0}"')
+            slide = slide_controls()
         note = f'<div class="notice">{html.escape(msg)}</div>' if msg else ""
         paths = "".join(f'<div>{html.escape(f["path"])}</div>' for f in files)
         # Open again after a correction, so several can be made in a row.
@@ -1895,24 +2188,28 @@ def create_app(cfg) -> FastAPI:
             f'<a href="/full/{asset_id}?download=1">Download it</a></div>'
             f'<div class="paths">{paths}</div></details>')
         body = (
-            '<div class="viewer"><section class="stage"><div class="vbar">'
+            f'<div class="viewer"><section class="stage"{stage}>'
+            '<div class="progress" id="prog"></div><div class="vbar">'
             f'<a class="vbtn" id="go-back" href="{html.escape(back)}" '
             f'title="Back (Esc)">{_icon("back")}'
             f'{"Back to the results" if pos else "Back"}</a>{pos}'
-            f'<span class="spacer"></span>{pin}'
+            f'<span class="spacer"></span>{slide}{pin}'
             f'<a class="vbtn" href="/full/{asset_id}" '
             f'title="See the original at full size">{_icon("full")}</a>'
             f'<a class="vbtn" href="/full/{asset_id}?download=1" '
             f'title="Download the original">{_icon("down")}</a>'
             '</div><div class="pic">'
             f'{prev_a}<img src="/thumb/m/{h}" alt="">{next_a}'
-            '</div></section><aside class="side">'
+            '</div><div class="caption" id="cap"></div>'
+            '<div class="nas" id="nas" hidden>The NAS is not answering '
+            '&mdash; showing the preview size</div>'
+            '</section><aside class="side">'
             f'{note}<h1>{html.escape(heading)}</h1>'
             + (f'<div class="sub">{aside}</div>' if aside else "")
             + warn
             + f'<div class="facts">{who}{where}{event}{camera}</div>'
             + _questions(con, asset_id) + details + '</aside></div>'
-            + WALK_KEYS)
+            + WALK_KEYS + (SLIDE_JS if pos else ""))
         return HTMLResponse(layout(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
 

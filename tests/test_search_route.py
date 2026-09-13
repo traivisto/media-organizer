@@ -355,3 +355,51 @@ def test_the_place_counts_are_not_recomputed_for_every_photograph(client):
     import sqlite3
     body = client.get("/", params={"q": "Alicante"}).text
     assert "75 photographs" in body
+
+
+# --------------------------------------------------------------------------
+# The slideshow
+# --------------------------------------------------------------------------
+
+def test_a_result_plays_from_its_first_photograph(client):
+    ids = _ids_on(client, q="Alicante")
+    body = client.get("/", params={"q": "Alicante"}).text
+    assert f'href="/photo/{ids[0]}?play=1&back=%2F%3Fq%3DAlicante"' in body
+    assert 'data-play="1"' in client.get(
+        f"/photo/{ids[0]}", params={"play": 1, "back": "/?q=Alicante"}).text
+
+
+def test_the_slides_follow_the_walk(client):
+    ids = _ids_on(client, q="Alicante")
+    d = client.get("/slides", params={"back": "/?q=Alicante", "at": ids[0],
+                                      "n": 3}).json()
+    assert [s["id"] for s in d["slides"]] == ids[1:4]
+    assert [s["at"] for s in d["slides"]] == [2, 3, 4]
+    assert d["total"] == 75
+    assert all(len(s["hash"]) == 64 for s in d["slides"])
+
+
+def test_the_slides_follow_a_ranked_walk_in_its_own_order(client):
+    ids = _ids_on(client, q="text:whatever")
+    d = client.get("/slides", params={"back": "/?q=text:whatever",
+                                      "at": ids[0], "n": 3}).json()
+    assert [s["id"] for s in d["slides"]] == ids[1:4]
+    assert d["total"] == 15, "the cut should bound the slideshow too"
+
+
+def test_the_slides_end_where_the_result_does(client):
+    ids = _ids_on(client, q="Alicante")
+    d = client.get("/slides", params={"back": "/?q=Alicante",
+                                      "at": ids[-1]}).json()
+    assert d["slides"] == []
+
+
+def test_a_photograph_from_elsewhere_has_no_slideshow(client):
+    """Arriving from a person or a place is not a result to play."""
+    assert client.get("/slides", params={"back": "/person/1", "at": 1}).json() \
+        == {"total": 0, "slides": []}
+    ids = _ids_on(client, q="Alicante")
+    assert 'id="play"' in client.get(
+        f"/photo/{ids[0]}", params={"back": "/?q=Alicante"}).text
+    assert 'id="play"' not in client.get(
+        f"/photo/{ids[0]}", params={"back": "/person/1"}).text
