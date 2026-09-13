@@ -1534,7 +1534,11 @@ everything it knows and let a person put it right.
 - **Open questions about this photograph** link through to the review queue — a photograph belongs
   to an event and its faces to clusters, and any of them may be waiting on an answer.
 - **The original**, at full resolution, behind an explicit link (see below), plus its path as
-  copyable text.
+  copyable text — and **opened on this computer** in whatever application opens it there, a
+  double-click in Explorer done from the page. Since the server itself launches that application, it
+  does so only for a request from the computer it runs on and from its own page: a phone given the
+  page would open files on a screen nobody is watching, and any web page can post a form to
+  localhost.
 
 **The full-size rule.** Browsing never pulls a full-size file across the network (§7.5); a deliberate
 click is not browsing. The original is served by the application rather than linked as `file://`,

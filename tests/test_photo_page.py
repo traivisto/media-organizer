@@ -400,3 +400,100 @@ def test_the_sharp_picture_says_when_the_nas_is_not_answering(client):
     """The fixture's path is a NAS that does not exist on this machine."""
     c, aid = client
     assert c.get(f"/view/{aid}").status_code == 503
+
+
+# --------------------------------------------------------------------------
+# Opening the file in its application
+# --------------------------------------------------------------------------
+
+def _openable(tmp_path, monkeypatch, client=("127.0.0.1", 50000)):
+    """One photograph whose original is really there, and a launcher that
+    only writes down what it was asked to open."""
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    src = tmp_path / "IMG_2.jpg"
+    src.write_bytes(b"not really a jpeg")
+    aid = db.insert_asset(con, "c" * 64, {"format": "jpeg", "taken_at": 1})
+    con.execute("""INSERT INTO files (path, asset_id, size_bytes, mtime,
+                                      first_seen, last_seen)
+                   VALUES (?,?,1,1,1,1)""", (str(src), aid))
+    con.commit()
+    con.close()
+    opened = []
+    monkeypatch.setattr(serve, "open_with_default_app", opened.append)
+    app = serve.create_app(cfg_for(tmp_path, dbp))
+    return TestClient(app, client=client), aid, opened, str(src)
+
+
+def test_the_photograph_offers_to_open_its_file(tmp_path, monkeypatch):
+    c, aid, _, _ = _openable(tmp_path, monkeypatch)
+    body = c.get(f"/photo/{aid}").text
+    assert f'action="/photo/{aid}/open"' in body
+    assert 'id="opened"' in body
+
+
+def test_the_file_is_handed_to_its_application(tmp_path, monkeypatch):
+    c, aid, opened, src = _openable(tmp_path, monkeypatch)
+    r = c.post(f"/photo/{aid}/open", headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "message": "Opening IMG_2.jpg"}
+    assert opened == [src]
+
+
+def test_without_script_it_comes_back_to_the_photograph(tmp_path, monkeypatch):
+    c, aid, opened, _ = _openable(tmp_path, monkeypatch)
+    r = c.post(f"/photo/{aid}/open", data={"back": "/?q=Ansku"},
+               follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/photo/{aid}?back=%2F%3Fq%3DAnsku"
+    assert len(opened) == 1
+
+
+def test_another_computer_cannot_open_files_here(tmp_path, monkeypatch):
+    """Served to a phone, the file would open on a screen nobody is watching."""
+    c, aid, opened, _ = _openable(tmp_path, monkeypatch,
+                                  client=("192.168.1.20", 50000))
+    r = c.post(f"/photo/{aid}/open", headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 403
+    assert opened == []
+
+
+@pytest.mark.parametrize("headers", [
+    {"Origin": "https://example.com"},
+    {"Sec-Fetch-Site": "cross-site"},
+])
+def test_another_site_cannot_open_files_here(tmp_path, monkeypatch, headers):
+    """Any web page can post a form to localhost; none may open a file."""
+    c, aid, opened, _ = _openable(tmp_path, monkeypatch)
+    r = c.post(f"/photo/{aid}/open", headers=headers, follow_redirects=False)
+    assert r.status_code == 303 and "msg=Refused" in r.headers["location"]
+    assert opened == []
+
+
+def test_its_own_page_may(tmp_path, monkeypatch):
+    c, aid, opened, _ = _openable(tmp_path, monkeypatch)
+    r = c.post(f"/photo/{aid}/open", headers={
+        "Origin": "http://testserver", "Sec-Fetch-Site": "same-origin",
+        "X-Requested-With": "fetch"})
+    assert r.status_code == 200 and len(opened) == 1
+
+
+def test_an_unreachable_original_is_not_opened(tmp_path, monkeypatch):
+    """The fixture's other photograph lives on a NAS that does not exist."""
+    dbp = tmp_path / "photos.db"
+    con = db.connect(dbp)
+    db.migrate(con)
+    aid = db.insert_asset(con, "d" * 64, {"format": "jpeg", "taken_at": 1})
+    con.execute("""INSERT INTO files (path, asset_id, size_bytes, mtime,
+                                      first_seen, last_seen)
+                   VALUES ('\\\\nas\\Pictures\\gone.jpg',?,1,1,1,1)""", (aid,))
+    con.commit()
+    con.close()
+    opened = []
+    monkeypatch.setattr(serve, "open_with_default_app", opened.append)
+    c = TestClient(serve.create_app(cfg_for(tmp_path, dbp)),
+                   client=("127.0.0.1", 50000))
+    r = c.post(f"/photo/{aid}/open", headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 503 and "not answering" in r.json()["message"]
+    assert opened == []

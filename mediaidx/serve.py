@@ -12,19 +12,23 @@ from __future__ import annotations
 
 import html
 import io
+import ipaddress
 import json
 import mimetypes
+import os
 import re
 import sqlite3
+import subprocess
+import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import (parse_qs, parse_qsl, quote_plus, urlencode,
                           urlparse)
 
-from fastapi import FastAPI, Form, Query
-from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
-                               Response, StreamingResponse)
+from fastapi import FastAPI, Form, Query, Request
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, Response, StreamingResponse)
 
 from . import cluster
 from . import corrections
@@ -411,7 +415,7 @@ details.edit h3 {{ margin:20px 0 6px; font-size:11.5px; font-weight:650; color:v
 .frow .note {{ color:var(--ink-3); font-size:13px; }}
 .side .mugs {{ margin:6px 0 0; gap:8px; }}
 .side .mug {{ width:calc(50% - 4px); }}
-.orig {{ display:flex; gap:16px; font-size:13.5px; }}
+.orig {{ display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13.5px; }}
 .orig a {{ color:var(--accent); font-weight:550; }}
 .paths {{ margin-top:10px; font:11.5px/1.5 ui-monospace,Consolas,monospace;
   color:var(--ink-3); word-break:break-all; }}
@@ -477,6 +481,15 @@ body.playing.idle {{ cursor:none; }}
 .meta .sort a + a {{ border-left:1px solid var(--rule); }}
 .meta .sort a:hover {{ color:var(--ink); background:var(--soft); }}
 .meta .sort a.on {{ background:var(--ink); color:var(--surface); }}
+/* Opening the file in its application, and the line that answers. */
+.vbar form {{ display:flex; }}
+.orig .linkish {{ padding:0; border:0; background:none; color:var(--accent);
+  font:inherit; font-size:13.5px; font-weight:550; cursor:pointer;
+  white-space:nowrap; }}
+.orig .linkish:hover {{ filter:none; text-decoration:underline; }}
+.toast {{ position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
+  z-index:4; padding:8px 14px; border-radius:10px; background:rgba(20,22,26,.92);
+  color:#fff; font-size:13.5px; white-space:nowrap; }}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -501,6 +514,7 @@ body.playing.idle {{ cursor:none; }}
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
 <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
 <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+<symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
 <symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
 </svg>
 <header><div class="bar">
@@ -532,6 +546,19 @@ document.addEventListener('change',function(e){{if(e.target.form)when(e.target.f
 document.querySelectorAll('form').forEach(function(f){{when(f);}});</script>
 </body></html>"""
 
+
+def open_with_default_app(path: str) -> None:
+    """Hand a file to whatever this computer opens it with.
+
+    A double-click in Explorer, done from the page. At module level so a test
+    can put something harmless in its place.
+    """
+    if hasattr(os, "startfile"):
+        os.startfile(path)                 # Windows: the associated application
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 def create_app(cfg) -> FastAPI:
     app = FastAPI(title="Kuva-arkisto")
@@ -2270,7 +2297,11 @@ if(st.dataset.play==='1')play();
             + f'<h3>What is known, and from where</h3>{rows}'
             + '<h3>The original</h3>'
             f'<div class="orig"><a href="/full/{asset_id}">See it at full size</a>'
-            f'<a href="/full/{asset_id}?download=1">Download it</a></div>'
+            f'<a href="/full/{asset_id}?download=1">Download it</a>'
+            f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
+            f'<input type="hidden" name="back" value="{html.escape(back)}">'
+            '<button class="linkish" type="submit">Open it on this computer'
+            '</button></form></div>'
             f'<div class="paths">{paths}</div></details>')
         body = (
             f'<div class="viewer"><section class="stage"{stage}>'
@@ -2284,20 +2315,107 @@ if(st.dataset.play==='1')play();
             f'title="See the original at full size">{_icon("full")}</a>'
             f'<a class="vbtn" href="/full/{asset_id}?download=1" '
             f'title="Download the original">{_icon("down")}</a>'
+            f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
+            f'<input type="hidden" name="back" value="{html.escape(back)}">'
+            '<button class="vbtn" type="submit" '
+            'title="Open the file in its application on this computer">'
+            f'{_icon("open")}</button></form>'
             '</div><div class="pic">'
             f'{prev_a}<img src="/thumb/m/{h}" alt="">{next_a}'
             '</div><div class="caption" id="cap"></div>'
             '<div class="nas" id="nas" hidden>The NAS is not answering '
             '&mdash; showing the preview size</div>'
+            '<div class="toast" id="opened" role="status" hidden></div>'
             '</section><aside class="side">'
             f'{note}<h1>{html.escape(heading)}</h1>'
             + (f'<div class="sub">{aside}</div>' if aside else "")
             + warn
             + f'<div class="facts">{who}{where}{event}{camera}</div>'
             + _questions(con, asset_id) + details + '</aside></div>'
-            + WALK_KEYS + (SLIDE_JS if pos else ""))
+            + WALK_KEYS + OPEN_JS + (SLIDE_JS if pos else ""))
         return HTMLResponse(layout(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
+
+    def _refuse_open(request: Request):
+        """Why this request may not open a file here, or None if it may.
+
+        Opening runs an application on the computer serving the page, so two
+        things must hold. The request comes from that computer: served to a
+        phone, the file would open on a screen nobody is looking at. And it
+        comes from this application's own page rather than from some other
+        site the browser has open -- any web page can post a form to
+        localhost, and none of them should be able to make this machine open
+        files.
+        """
+        host = request.client.host if request.client else ""
+        try:
+            local = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = host == "localhost"
+        if not local:
+            return ("Opening a file only works on the computer running "
+                    "Kuva-arkisto.")
+        site = request.headers.get("sec-fetch-site")
+        origin = request.headers.get("origin")
+        if ((site and site not in ("same-origin", "none"))
+                or (origin and urlparse(origin).netloc
+                    != request.headers.get("host"))):
+            return "Refused: that request did not come from Kuva-arkisto's own page."
+        return None
+
+    @app.post("/photo/{asset_id}/open")
+    def open_original(asset_id: int, request: Request,
+                      back: str = Form(default="/")):
+        """The original, opened in whatever application this computer opens it
+        with (§8.2).
+
+        Like the full-size link, a deliberate click and not browsing (§7.5):
+        the file crosses the network only to the application it is handed to.
+        """
+        con = connect()
+        status, said = 200, ""
+        refused = _refuse_open(request)
+        if refused:
+            status, said = 403, refused
+        elif con.execute("SELECT 1 FROM assets WHERE id = ?",
+                         (asset_id,)).fetchone() is None:
+            status, said = 404, "No such photograph."
+        else:
+            path = _reachable(con, asset_id)
+            if path is None:
+                status, said = 503, ("Not reachable. Every known copy of this "
+                                     "photograph is on a drive that is not "
+                                     "answering.")
+            else:
+                name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+                try:
+                    open_with_default_app(path)
+                    said = f"Opening {name}"
+                except OSError as e:
+                    status, said = 500, (f"This computer could not open {name}: "
+                                         f"{e.strerror or e}")
+        if request.headers.get("x-requested-with") == "fetch":
+            return JSONResponse({"ok": status == 200, "message": said},
+                                status_code=status)
+        to = f"/photo/{asset_id}?back={quote_plus(safe_back(back))}"
+        if status != 200:
+            to += f"&msg={quote_plus(said)}"
+        return RedirectResponse(to, status_code=303)
+
+    # Asking to open a file, without leaving the photograph: the answer is a
+    # line on the picture for a few seconds. The forms work without it.
+    OPEN_JS = (
+        "<script>document.querySelectorAll('form.openfile').forEach(function(f){"
+        "f.addEventListener('submit',function(e){e.preventDefault();"
+        "var n=document.getElementById('opened');"
+        "function say(t){n.textContent=t;n.hidden=false;clearTimeout(n.t);"
+        "n.t=setTimeout(function(){n.hidden=true;},4000);}"
+        "say('Opening…');"
+        "fetch(f.action,{method:'POST',headers:{'X-Requested-With':'fetch'},"
+        "body:new FormData(f)}).then(function(r){return r.json();})"
+        ".then(function(d){say(d.message);})"
+        ".catch(function(){say('Kuva-arkisto did not answer.');});});});"
+        "</script>")
 
     def _hash_of(con, asset_id: int):
         r = con.execute("SELECT content_hash FROM assets WHERE id = ?",
