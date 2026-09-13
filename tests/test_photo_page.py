@@ -313,3 +313,54 @@ def test_the_anchors_clear_the_sticky_header(tmp_path):
     c, aid = _with_gps(tmp_path)
     body = c.get(f"/photo/{aid}", params={"map": 1}).text
     assert "scroll-margin-top" in body
+
+
+# --------------------------------------------------------------------------
+# The page itself
+# --------------------------------------------------------------------------
+
+def test_what_matters_is_beside_the_picture(client):
+    """Date, people, place and camera without opening anything."""
+    c, aid = client
+    body = c.get(f"/photo/{aid}").text
+    side = body[body.index('<aside class="side">'):body.index('<details class="edit"')]
+    assert "<h1>April 2002</h1>" in side
+    assert 'class="face-chip"' in side and "Ansku" in side
+    assert "Alicante, Spain" in side
+    assert "Canon EOS 400D" in side
+    assert "put it right" not in side, "the editing belongs under the details"
+
+
+def test_the_details_are_closed_until_asked_for(client):
+    c, aid = client
+    assert '<details class="edit">' in c.get(f"/photo/{aid}").text
+
+
+def test_a_correction_comes_back_with_the_details_open(client):
+    """Several things are often put right in a row."""
+    c, aid = client
+    r = c.post(f"/photo/{aid}/date", data={"value": "1998-07", "back": "/"},
+               follow_redirects=False)
+    assert "edit=1" in r.headers["location"]
+    assert '<details class="edit" open>' in c.get(r.headers["location"]).text
+
+
+def test_a_date_conflict_is_flagged_under_the_date(client):
+    c, aid = client
+    assert "Its dates disagree" in c.get(f"/photo/{aid}").text
+    c.post(f"/photo/{aid}/date", data={"value": "1998-07", "back": "/"})
+    assert "Its dates disagree" not in c.get(f"/photo/{aid}").text
+
+
+def test_there_is_always_a_way_back(client):
+    c, aid = client
+    body = c.get(f"/photo/{aid}", params={"back": "/person/1"}).text
+    assert 'id="go-back" href="/person/1"' in body
+
+
+def test_the_pin_is_on_the_picture_only_with_a_coordinate(tmp_path, client):
+    c, aid = client
+    assert 'title="Show it on a map' not in c.get(f"/photo/{aid}").text
+    g, gid = _with_gps(tmp_path / "gps")
+    body = g.get(f"/photo/{gid}").text
+    assert 'title="Show it on a map (loads a map from openstreetmap.org)"' in body

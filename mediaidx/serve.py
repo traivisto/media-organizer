@@ -333,10 +333,94 @@ figcaption b {{ color:var(--ink-2); font-weight:550; }}
 /* The correction sitting under the fact it corrects, quiet until wanted. */
 .fix {{ margin-top:5px; }}
 .fix form {{ display:flex; gap:6px; }}
-.fix input[type=text] {{ padding:5px 9px; font-size:13px; border-radius:8px; }}
+.fix input[type=text] {{ flex:1; min-width:0; padding:5px 9px; font-size:13px;
+  border-radius:8px; }}
 .fix button {{ padding:5px 11px; font-size:12px; border-radius:8px; }}
-tr:not(:hover) .fix {{ opacity:.35; }}
-.fix:focus-within {{ opacity:1 !important; }}
+/* One photograph: the picture on a dark stage with the way through the result
+   at its sides, what matters about it beside it, and everything for putting it
+   right one click further, under Edit & details. The stage stays put while the
+   panel scrolls, so opening the details never pushes the picture away. */
+.viewer {{ display:flex; min-height:calc(100vh - 71px); }}
+.stage {{ flex:1; min-width:0; position:sticky; top:71px; height:calc(100vh - 71px);
+  display:flex; flex-direction:column; background:#0c0d0f; color:#e9ecef; }}
+.vbar {{ display:flex; align-items:center; gap:4px; padding:10px 12px; }}
+.vbtn {{ display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  height:38px; min-width:38px; padding:0 10px; border-radius:10px; color:#d6dbe0;
+  font-weight:550; }}
+.vbtn:hover, .vbtn.on {{ background:rgba(255,255,255,.13); color:#fff; }}
+.vbar .pos {{ color:#9aa3ad; font-size:13.5px; margin-left:6px; }}
+.pic {{ flex:1; min-height:0; position:relative; display:flex; align-items:center;
+  justify-content:center; padding:0 84px 22px; }}
+.pic img {{ display:block; max-width:100%; max-height:100%; object-fit:contain;
+  border-radius:4px; }}
+/* Visible without hunting for them, and brighter when pointed at. */
+.arrow {{ position:absolute; top:50%; transform:translateY(-50%); width:54px;
+  height:54px; border-radius:50%; display:grid; place-items:center; color:#fff;
+  background:rgba(255,255,255,.08); opacity:.5; transition:opacity .2s, background .2s; }}
+.arrow svg.ic {{ width:26px; height:26px; }}
+.pic:hover .arrow {{ opacity:.85; }}
+.arrow:hover, .arrow:focus-visible {{ opacity:1 !important; background:rgba(255,255,255,.22); }}
+.arrow.prev {{ left:14px; }}
+.arrow.next {{ right:14px; }}
+.side {{ width:380px; flex:none; background:var(--surface); border-left:1px solid var(--rule);
+  padding:22px 22px 44px; }}
+.side h1 {{ margin:0; font-size:21px; font-weight:650; letter-spacing:-.01em; }}
+.side .sub {{ color:var(--ink-3); margin-top:2px; }}
+.side .warn {{ color:var(--place); font-size:13px; margin-top:6px; }}
+.side .note {{ color:var(--ink-3); font-size:12.5px; }}
+.side .note a {{ color:var(--accent); }}
+.notice {{ background:var(--accent-soft); color:var(--ink); padding:9px 12px;
+  border-radius:10px; font-size:13.5px; margin-bottom:14px; }}
+.facts {{ margin-top:20px; display:flex; flex-direction:column; gap:16px; }}
+.fact {{ display:flex; gap:12px; align-items:flex-start; scroll-margin-top:90px; }}
+.fact > svg.ic {{ color:var(--ink-3); margin-top:3px; }}
+.fact > div {{ flex:1; min-width:0; }}
+.fact .k {{ color:var(--ink-3); font-size:12px; }}
+.fact a.link {{ border-bottom:1px solid var(--rule); }}
+.fact a.link:hover {{ border-color:var(--ink); }}
+.faces-in {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }}
+.face-chip {{ display:inline-flex; align-items:center; gap:8px; padding:3px 12px 3px 3px;
+  border-radius:999px; background:var(--soft); font-size:13.5px; font-weight:550; }}
+.face-chip img {{ width:30px; height:30px; border-radius:50%; object-fit:cover;
+  background:var(--rule); }}
+.face-chip.unnamed {{ color:var(--ink-3); font-weight:400; }}
+a.face-chip:hover {{ background:var(--rule); }}
+.coord {{ color:var(--ink-3); font-size:12.5px; margin-top:2px; }}
+.maplink {{ display:inline-flex; gap:6px; align-items:center; margin-top:6px;
+  color:var(--accent); font-weight:550; }}
+.maplink svg.ic {{ width:15px; height:15px; }}
+.side .map {{ max-width:none; margin:8px 0 6px; }}
+.side .map iframe {{ height:240px; }}
+.qlink {{ display:inline-flex; gap:6px; align-items:center; margin-top:18px;
+  color:var(--place); font-size:13.5px; }}
+.qlink svg.ic {{ width:15px; height:15px; }}
+details.edit {{ margin-top:22px; }}
+details.edit > summary {{ list-style:none; cursor:pointer; display:flex; gap:8px;
+  align-items:center; justify-content:center; height:40px; border:1px solid var(--rule);
+  border-radius:10px; font-weight:550; color:var(--ink-2); user-select:none; }}
+details.edit > summary::-webkit-details-marker {{ display:none; }}
+details.edit > summary:hover, details.edit[open] > summary {{ color:var(--ink);
+  border-color:var(--ink-3); }}
+details.edit h3 {{ margin:20px 0 6px; font-size:11.5px; font-weight:650; color:var(--ink-3);
+  text-transform:uppercase; letter-spacing:.05em; }}
+.frow {{ padding:8px 0; border-bottom:1px solid var(--rule); font-size:14px;
+  scroll-margin-top:90px; }}
+.frow .k {{ color:var(--ink-3); font-size:12px; }}
+.frow .note {{ color:var(--ink-3); font-size:13px; }}
+.side .mugs {{ margin:6px 0 0; gap:8px; }}
+.side .mug {{ width:calc(50% - 4px); }}
+.orig {{ display:flex; gap:16px; font-size:13.5px; }}
+.orig a {{ color:var(--accent); font-weight:550; }}
+.paths {{ margin-top:10px; font:11.5px/1.5 ui-monospace,Consolas,monospace;
+  color:var(--ink-3); word-break:break-all; }}
+@media (max-width:900px) {{
+  .viewer {{ flex-direction:column; }}
+  .stage {{ position:static; height:auto; }}
+  .pic {{ padding:0 8px 14px; }}
+  .pic img {{ max-height:72vh; }}
+  .arrow {{ width:44px; height:44px; }}
+  .side {{ width:auto; border-left:0; }}
+}}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -352,6 +436,12 @@ tr:not(:hover) .fix {{ opacity:.35; }}
 <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
 <symbol id="i-q" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5M12 17h0"/></symbol>
 <symbol id="i-not" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+<symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 18l-6-6 6-6"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+<symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
 <symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
 </svg>
 <header><div class="bar">
@@ -1441,23 +1531,22 @@ def create_app(cfg) -> FastAPI:
         privacy, because the deciding property is *when* anything is fetched,
         not where it is drawn: the frame exists only on the request that asks
         for it. What it saves is the place in the archive -- the photograph is
-        still there behind the map, and going back is not a browser button.
+        still there beside the map, and going back is not a browser button.
         """
         if a["gps_lat"] is None:
             return ""
         lat, lon = a["gps_lat"], a["gps_lon"]
-        out = f"{lat:.5f}, {lon:.5f}"
+        out = f'<div class="coord">{lat:.5f}, {lon:.5f}</div>'
         away = str(cfg.ui.get("map_url") or MAP_URL).format(
             lat=f"{lat:.6f}", lon=f"{lon:.6f}")
         host = _map_host(away)
 
         if not shown:
             here = (f"/photo/{asset_id}?map=1&back={quote_plus(back)}#map")
-            return (out + f' &middot; <a href="{here}" '
-                    'style="color:var(--accent)">see it on a map</a>'
-                    f'<span style="color:var(--ink-3)"> &mdash; loads a map '
-                    f'from {html.escape(host)}, which means sending it this '
-                    'coordinate</span>')
+            return (out + f'<a class="maplink" href="{here}">{_icon("pin")}'
+                    'see it on a map</a>'
+                    f'<div class="note">loads a map from {html.escape(host)}, '
+                    'which means sending it this coordinate</div>')
 
         embed = str(cfg.ui.get("map_embed_url") or MAP_EMBED).format(
             lat=f"{lat:.6f}", lon=f"{lon:.6f}",
@@ -1465,36 +1554,32 @@ def create_app(cfg) -> FastAPI:
             s=f"{lat - MAP_SPAN:.6f}", n=f"{lat + MAP_SPAN:.6f}")
         gone = f"/photo/{asset_id}?back={quote_plus(back)}#where"
         return (out
-                + f' &middot; <a href="{gone}" style="color:var(--ink-3)">'
-                'hide the map</a>'
-                + f' &middot; <a href="{html.escape(away)}" target="_blank" '
-                'rel="noreferrer noopener" style="color:var(--ink-3)">'
-                f'open it at {html.escape(host)}</a>'
-                f'<div class="map" id="map"><iframe src="{html.escape(embed)}" '
+                + f'<div class="map" id="map"><iframe src="{html.escape(embed)}" '
                 'loading="lazy" referrerpolicy="no-referrer" '
-                'title="where this was taken"></iframe></div>')
+                'title="where this was taken"></iframe></div>'
+                + f'<div class="note"><a href="{gone}">hide the map</a> &middot; '
+                f'<a href="{html.escape(away)}" target="_blank" '
+                f'rel="noreferrer noopener">open it at {html.escape(host)}</a></div>')
 
     def _fact(k, v, *, note="", edit="", anchor="") -> str:
+        """One line of Edit & details: the fact, where it came from, and the
+        means to put it right."""
         if v in (None, "") and not edit:
             return ""
-        return (f'<tr{f" id={anchor}" if anchor else ""}'
-                f'><td style="color:var(--ink-3);padding:5px 16px 5px 0;'
-                f'vertical-align:top;white-space:nowrap">{k}</td>'
-                f'<td style="padding:5px 0">{v}'
-                + (f' <span style="color:var(--ink-3)">&mdash; {note}</span>'
-                   if note else "")
+        ident = f' id="{anchor}"' if anchor else ""
+        return (f'<div class="frow"{ident}><div class="k">{k}</div><div>{v}'
+                + (f' <span class="note">&mdash; {note}</span>' if note else "")
                 + (f'<div class="fix">{edit}</div>' if edit else "")
-                + '</td></tr>')
+                + '</div></div>')
 
-    def _fix_form(asset_id, kind, back, *, value="", placeholder="", extra="",
-                  wide=260) -> str:
+    def _fix_form(asset_id, kind, back, *, value="", placeholder="",
+                  extra="") -> str:
         return (
             f'<form method="post" action="/photo/{asset_id}/{kind}">'
             f'<input type="hidden" name="back" value="{html.escape(back)}">'
             f'{extra}'
             f'<input type="text" name="value" value="{html.escape(value)}" '
-            f'placeholder="{html.escape(placeholder)}" '
-            f'style="min-width:{wide}px">'
+            f'placeholder="{html.escape(placeholder)}">'
             '<button type="submit">put it right</button></form>')
 
     def _undo_form(asset_id, kind, back, *, idx=None) -> str:
@@ -1523,11 +1608,10 @@ def create_app(cfg) -> FastAPI:
             (asset_id, asset_id)).fetchall()
         if not rows:
             return ""
-        what = ("one open question" if len(rows) == 1
+        what = ("One open question" if len(rows) == 1
                 else f"{len(rows)} open questions")
-        return ('<div class="meta" style="padding-left:0">'
-                f'<a href="/review" style="color:var(--accent)">{what}</a> '
-                'about this photograph</div>')
+        return (f'<a class="qlink" href="/review">{_icon("q")}{what} '
+                'about this photograph</a>')
 
     def _search_from(back: str):
         """The search a photograph was opened from, read back out of `back`.
@@ -1626,45 +1710,50 @@ def create_app(cfg) -> FastAPI:
                 ids[i + 1] if i + 1 < len(ids) else None,
                 i + 1, len(ids))
 
-    def _walk(con, asset_id, back) -> str:
-        """Previous and next, following whatever brought the reader here."""
+    def _walk(con, asset_id, back):
+        """The arrows either side of the photograph and where it sits in the
+        result, following whatever brought the reader here. Nothing when it was
+        not a search: arriving from a person or a place is not a walk."""
         got = _neighbours(con, asset_id, back)
         if got is None:
-            return ""
+            return "", "", ""
         prv, nxt, at, total = got
         b = quote_plus(back)
 
-        def step(aid, label, side):
+        def step(aid, side, title, icon):
             if aid is None:
-                return f'<span class="rest" style="opacity:.35">{label}</span>'
-            return (f'<a href="/photo/{aid}?back={b}" id="go-{side}" '
-                    f'rel="{side}">{label}</a>')
+                return ""
+            return (f'<a class="arrow {side}" href="/photo/{aid}?back={b}" '
+                    f'id="go-{side}" rel="{side}" title="{title}">'
+                    f'{_icon(icon)}</a>')
 
-        return ('<div class="walk">'
-                + step(prv, "&lsaquo; previous", "prev")
-                + f'<span class="rest">{at:,} of {total:,}</span>'
-                + step(nxt, "next &rsaquo;", "next")
-                + '</div>')
+        return (step(prv, "prev", "Previous (&larr;)", "left"),
+                step(nxt, "next", "Next (&rarr;)", "right"),
+                f'<span class="pos">{at:,} of {total:,}</span>')
 
-    # Arrow keys, because a result set is walked rather than clicked through.
-    # The same handful of lines as the review screen's Escape: no framework,
-    # and the links work without it.
+    # Arrow keys, because a result set is walked rather than clicked through,
+    # and Esc back to it. No framework, and the links work without it.
     WALK_KEYS = (
         "<script>document.addEventListener('keydown',function(e){"
-        "if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;"
-        "var k=e.key==='ArrowLeft'?'go-prev':e.key==='ArrowRight'?'go-next':0;"
+        "var t=e.target.tagName;"
+        "if(t==='INPUT'||t==='TEXTAREA'||t==='SELECT')return;"
+        "var k=e.key==='ArrowLeft'?'go-prev':e.key==='ArrowRight'?'go-next':"
+        "e.key==='Escape'?'go-back':0;"
         "if(!k)return;var a=document.getElementById(k);"
         "if(a){e.preventDefault();a.click();}});</script>")
 
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
     def photo(asset_id: int, back: str = Query(default="/"),
-              msg: str = Query(default=""), map: int = 0):
+              msg: str = Query(default=""), map: int = 0, edit: int = 0):
+        """One photograph (§8.2): the picture, what matters about it beside
+        it, and everything for putting it right one click further."""
         con = connect()
         a = con.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
         if a is None:
             return HTMLResponse("<p>not found</p>", status_code=404)
         back = safe_back(back)
         h = a["content_hash"]
+        b = quote_plus(back)
         fixed = {(r["kind"], r["face_idx"]): r
                  for r in corrections.for_asset(con, h)}
 
@@ -1672,7 +1761,7 @@ def create_app(cfg) -> FastAPI:
             "SELECT path FROM files WHERE asset_id = ? ORDER BY path",
             (asset_id,)).fetchall()
 
-        when, typed = "unknown", ""
+        when, typed, heading, aside = "unknown", "", "When is not known", ""
         if a["taken_at"]:
             d = datetime.fromtimestamp(a["taken_at"])
             p = a["taken_at_precision"]
@@ -1680,24 +1769,29 @@ def create_app(cfg) -> FastAPI:
                     else f"{d.day} {d:%B %Y}" if p == "day"
                     else f"{d.day} {d:%B %Y}, {d:%H:%M}")
             typed = f"{d:%Y-%m-%d}"
+            # The date as far as it is known, and the weekday and the time only
+            # where they are: a scan dated by its folder has neither.
+            heading = when.split(",")[0]
+            aside = ("" if p in ("year", "month") else f"{d:%A}" if p == "day"
+                     else f"{d:%A} &middot; {d:%H:%M}")
 
-        # Every fact says where it came from. A date and a place are guesses of
-        # very different quality, and one that arrived from a folder name should
-        # never read like one measured by a satellite (§8.2).
+        # Every fact says where it came from, under Edit & details. A date and
+        # a place are guesses of very different quality, and one that arrived
+        # from a folder name should never read like one measured by a satellite.
         date_note = f'{a["taken_at_source"]}, {a["taken_at_precision"]}'
         if ("date", -1) in fixed:
             date_note = "put right by hand"
-        info = "".join([
+        # 1,294 photographs carry a date conflict, which is worth a line under
+        # the date itself rather than only in the details.
+        warn = ('<div class="warn">Its dates disagree &mdash; see Edit &amp; '
+                'details</div>'
+                if a["conflict_note"] and ("date", -1) not in fixed else "")
+        rows = "".join([
             _fact("taken", html.escape(when), note=date_note,
                   edit=(_undo_form(asset_id, "date", back)
                         if ("date", -1) in fixed else
                         _fix_form(asset_id, "date", back, value=typed,
                                   placeholder="1998-07, or kesä 1998"))),
-            _fact("camera", html.escape(" ".join(filter(
-                None, [a["camera_make"], a["camera_model"]])))),
-            _fact("size", f'{a["width"]}x{a["height"]}' if a["width"] else ""),
-            _fact("gps", _gps_fact(a, asset_id, back, bool(map)),
-                  anchor="where"),
             _place_fact(con, a, asset_id, back, ("place", -1) in fixed),
             _event_row(con, asset_id),
             _fact("source", html.escape(a["source_hint"] or "")),
@@ -1705,61 +1799,119 @@ def create_app(cfg) -> FastAPI:
             _fact("hash", h[:24] + "&hellip;"),
         ])
 
-        # Who is in it, and the means to say otherwise. Correcting a face here
-        # is one row and outranks the clusterer for good (§4.7).
+        def fact(icon, k, v, anchor=""):
+            ident = f' id="{anchor}"' if anchor else ""
+            return (f'<div class="fact"{ident}>{_icon(icon)}<div>'
+                    f'<div class="k">{k}</div>{v}</div></div>')
+
+        # Who is in it: a face and a name beside the picture, and under Edit &
+        # details the means to say otherwise -- one row that outranks the
+        # clusterer for good (§4.7).
         in_photo = con.execute(
             """SELECT fa.idx, fa.cluster_id, p.id AS pid, p.name
                FROM faces fa LEFT JOIN persons p ON p.id = fa.person_id
                WHERE fa.asset_id = ? ORDER BY fa.idx""",
             (asset_id,)).fetchall()
-        who = ""
-        if in_photo:
-            cards = []
-            for f in in_photo:
-                fix = fixed.get(("person", f["idx"]))
-                name = fix["value"] if fix else f["name"]
-                href = (f'/person/{f["pid"]}' if f["pid"] and not fix else
-                        (f'/cluster/{f["cluster_id"]}' if f["cluster_id"]
-                         and not fix else None))
-                label = html.escape(name or "not named")
-                if href:
-                    label = f'<a href="{href}">{label}</a>'
-                cards.append(
-                    '<figure class="mug">'
-                    f'<img src="/face/{h}/{f["idx"]}" alt="">'
-                    f'<figcaption><b>{label}</b>'
-                    + ('<span>by hand</span>' if fix else "")
-                    + '</figcaption>'
-                    + (_undo_form(asset_id, "person", back, idx=f["idx"]) if fix
-                       else _fix_form(asset_id, "person", back,
-                                      placeholder="who is this?", wide=150,
-                                      extra=f'<input type="hidden" name="idx" '
-                                            f'value="{f["idx"]}">'))
-                    + '</figure>')
-            who = f'<div class="mugs">{"".join(cards)}</div>'
+        chips, cards = [], []
+        for f in in_photo:
+            fix = fixed.get(("person", f["idx"]))
+            name = fix["value"] if fix else f["name"]
+            href = (f'/person/{f["pid"]}' if f["pid"] and not fix else
+                    (f'/cluster/{f["cluster_id"]}' if f["cluster_id"]
+                     and not fix else None))
+            label = html.escape(name or "not named")
+            linked = f'<a href="{href}">{label}</a>' if href else label
+            img = f'<img src="/face/{h}/{f["idx"]}" alt="">'
+            cls = "face-chip" if name else "face-chip unnamed"
+            chips.append(f'<a class="{cls}" href="{href}">{img}{label}</a>'
+                         if href else f'<span class="{cls}">{img}{label}</span>')
+            cards.append(
+                f'<figure class="mug">{img}'
+                f'<figcaption><b>{linked}</b>'
+                + ('<span>by hand</span>' if fix else "")
+                + '</figcaption>'
+                + (_undo_form(asset_id, "person", back, idx=f["idx"]) if fix
+                   else _fix_form(asset_id, "person", back,
+                                  placeholder="who is this?",
+                                  extra=f'<input type="hidden" name="idx" '
+                                        f'value="{f["idx"]}">'))
+                + '</figure>')
+        who = (fact("people", "In the photograph",
+                    f'<div class="faces-in">{"".join(chips)}</div>')
+               if chips else "")
 
-        paths = "".join(
-            f'<div style="color:var(--ink-3);font-size:12px;'
-            f'font-family:ui-monospace,monospace;padding:1px 0;'
-            f'word-break:break-all">{html.escape(f["path"])}</div>'
-            for f in files)
+        place = ""
+        if a["place_id"]:
+            pl = con.execute("SELECT id, name, path FROM places WHERE id = ?",
+                             (a["place_id"],)).fetchone()
+            if pl is not None:
+                parts = pl["path"].split("/")
+                short = pl["name"] + (f", {parts[0]}" if len(parts) > 1 else "")
+                place = (f'<a class="link" href="/place/{pl["id"]}" title="'
+                         f'{html.escape(" · ".join(reversed(parts)))}">'
+                         f'{html.escape(short)}</a>')
+        gps = _gps_fact(a, asset_id, back, bool(map))
+        where = (fact("pin", "Where", place + gps, anchor="where")
+                 if place or gps else "")
 
-        note = (f'<div class="offer" style="padding-left:0">{html.escape(msg)}</div>'
-                if msg else "")
+        e = events_mod.for_asset(con, asset_id)
+        event = ""
+        if e is not None:
+            label = e["name"] or f'{e["asset_count"]:,} photographs, unnamed'
+            event = fact("event", "Event",
+                         f'<a class="link" href="/event/{e["id"]}">'
+                         f'{html.escape(label)}</a>')
+        made = html.escape(" ".join(filter(
+            None, [a["camera_make"], a["camera_model"]])))
+        size = f'{a["width"]}&times;{a["height"]}' if a["width"] else ""
+        camera = (fact("camera", "Camera",
+                       " &middot; ".join(filter(None, [made, size])))
+                  if made or size else "")
+
+        # The pin sits on the picture only where there is somewhere to show,
+        # and says what pressing it costs; the map itself still loads nothing
+        # until it is pressed (§10.4).
+        pin = ""
+        if a["gps_lat"] is not None:
+            host = _map_host(str(cfg.ui.get("map_url") or MAP_URL))
+            pin = (f'<a class="vbtn on" href="/photo/{asset_id}?back={b}#where" '
+                   f'title="Hide the map">{_icon("pin")}</a>' if map else
+                   f'<a class="vbtn" href="/photo/{asset_id}?map=1&back={b}#map" '
+                   f'title="Show it on a map (loads a map from '
+                   f'{html.escape(host)})">{_icon("pin")}</a>')
+
+        prev_a, next_a, pos = _walk(con, asset_id, back)
+        note = f'<div class="notice">{html.escape(msg)}</div>' if msg else ""
+        paths = "".join(f'<div>{html.escape(f["path"])}</div>' for f in files)
+        # Open again after a correction, so several can be made in a row.
+        details = (
+            f'<details class="edit"{" open" if edit or msg else ""}>'
+            f'<summary>{_icon("pen")}Edit &amp; details</summary>'
+            + (f'<h3>Who is this?</h3><div class="mugs">{"".join(cards)}</div>'
+               if cards else "")
+            + f'<h3>What is known, and from where</h3>{rows}'
+            + '<h3>The original</h3>'
+            f'<div class="orig"><a href="/full/{asset_id}">See it at full size</a>'
+            f'<a href="/full/{asset_id}?download=1">Download it</a></div>'
+            f'<div class="paths">{paths}</div></details>')
         body = (
-            '<div style="max-width:1100px;margin:0 auto;padding:20px">'
-            f'<a href="{html.escape(back)}" style="color:var(--accent)">'
-            '&larr; back</a>'
-            + _walk(con, asset_id, back)
-            + f'<img src="/thumb/m/{h}" '
-            'style="display:block;max-width:100%;margin:14px 0;border-radius:3px">'
-            '<div class="more" style="padding:0 0 14px">'
-            f'<a href="/full/{asset_id}">see the original</a>'
-            f'<a href="/full/{asset_id}?download=1">download it</a>'
-            '</div>'
-            + note + _questions(con, asset_id) + who
-            + f'<table style="font-size:14px">{info}</table>'
-            f'<div style="margin-top:14px">{paths}</div></div>'
+            '<div class="viewer"><section class="stage"><div class="vbar">'
+            f'<a class="vbtn" id="go-back" href="{html.escape(back)}" '
+            f'title="Back (Esc)">{_icon("back")}'
+            f'{"Back to the results" if pos else "Back"}</a>{pos}'
+            f'<span class="spacer"></span>{pin}'
+            f'<a class="vbtn" href="/full/{asset_id}" '
+            f'title="See the original at full size">{_icon("full")}</a>'
+            f'<a class="vbtn" href="/full/{asset_id}?download=1" '
+            f'title="Download the original">{_icon("down")}</a>'
+            '</div><div class="pic">'
+            f'{prev_a}<img src="/thumb/m/{h}" alt="">{next_a}'
+            '</div></section><aside class="side">'
+            f'{note}<h1>{html.escape(heading)}</h1>'
+            + (f'<div class="sub">{aside}</div>' if aside else "")
+            + warn
+            + f'<div class="facts">{who}{where}{event}{camera}</div>'
+            + _questions(con, asset_id) + details + '</aside></div>'
             + WALK_KEYS)
         return HTMLResponse(layout(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
@@ -1770,7 +1922,9 @@ def create_app(cfg) -> FastAPI:
         return None if r is None else r["content_hash"]
 
     def _back_to(asset_id, back, msg="") -> RedirectResponse:
-        to = f"/photo/{asset_id}?back={quote_plus(back)}"
+        # Back with Edit & details open, so several things can be put
+        # right in a row.
+        to = f"/photo/{asset_id}?back={quote_plus(back)}&edit=1"
         if msg:
             to += f"&msg={quote_plus(msg)}"
         return RedirectResponse(to, status_code=303)
@@ -2226,10 +2380,9 @@ def create_app(cfg) -> FastAPI:
         label = e["name"] or f'{e["asset_count"]:,} photographs, unnamed'
         note = {"folder": "from the folder name",
                 "user": "you named it"}.get(e["name_source"], "grouped by time")
-        return ('<tr><td style="color:var(--ink-3);padding:3px 16px 3px 0">event</td>'
-                f'<td><a href="/event/{e["id"]}" style="color:var(--accent)">'
-                f'{html.escape(label)}</a> '
-                f'<span style="color:var(--ink-3)">&mdash; {note}</span></td></tr>')
+        return _fact("event", f'<a href="/event/{e["id"]}" '
+                     f'style="color:var(--accent)">{html.escape(label)}</a>',
+                     note=note)
 
     def when_range(start: int, end: int) -> str:
         a, b = datetime.fromtimestamp(start), datetime.fromtimestamp(end)

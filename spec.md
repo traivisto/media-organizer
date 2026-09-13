@@ -1507,14 +1507,23 @@ it deserves more design attention than the pipeline does.
 **Photo screen requirements.** This is where the archive is checked against memory, so it must say
 everything it knows and let a person put it right.
 
-- **Every fact names its source.** The place row already does this — "from the coordinate" against
-  "from the folder name" — and the rule extends to all of them, the date most of all: 1,294
+- **What matters sits beside the picture; how it is known is one click away.** The date and time,
+  who is in it, where, the event and the camera are beside the photograph without scrolling. Where
+  each came from, the corrections, the hash and the paths are under *Edit & details*. Asked for
+  2026-09-13: the editing and the debugging read as the page, and what a person looks for was below
+  the fold.
+- **Every fact still names its source**, there. The place row already did — "from the coordinate"
+  against "from the folder name" — and the rule extends to all of them, the date most of all: 1,294
   photographs carry a date conflict, and a date is not worth reading without knowing where it came
-  from.
+  from. A conflict is therefore also flagged under the date itself.
+- **The way through the result is on the photograph**: arrows at its sides, brighter when pointed
+  at, ← → on the keyboard and Esc back to the result; its position in the result; and a map pin
+  where there is a coordinate, which still loads nothing until pressed (§10.4).
 - Shows date, camera, dimensions, coordinates, place, event, caption (M5), people, source hint,
   conflict note, and every known path the file lives at.
-- **Corrections in place** (§4.7): the date, the place, and the person on any one face. Each is
-  editable where it is displayed, not on a separate screen.
+- **Corrections in place** (§4.7): the date, the place, and the person on any one face, each beside
+  the line naming its source under *Edit & details*, not on a separate screen. The section comes back
+  open after a correction, so several can be made in a row.
 - **Open questions about this photograph** link through to the review queue — a photograph belongs
   to an event and its faces to clusters, and any of them may be waiting on an answer.
 - **The original**, at full resolution, behind an explicit link (see below), plus its path as

@@ -177,7 +177,7 @@ def test_the_photograph_honours_it(client):
 
 def test_a_photograph_reached_directly_falls_back_to_the_front(client):
     body = client.get("/photo/1").text
-    assert 'href="/" style="color:var(--accent)">&larr; back' in body
+    assert 'id="go-back" href="/"' in body
 
 
 @pytest.mark.parametrize("hostile", [
@@ -187,7 +187,7 @@ def test_the_way_back_is_never_off_this_application(client, hostile):
     """`back` arrives in the URL, so it is only ever followed as a local path."""
     body = client.get("/photo/1", params={"back": hostile}).text
     assert hostile not in body
-    assert 'href="/" style="color:var(--accent)">&larr; back' in body
+    assert 'id="go-back" href="/"' in body
 
 
 # --------------------------------------------------------------------------
