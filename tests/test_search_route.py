@@ -92,7 +92,7 @@ def _meta(body: str) -> str:
 
 def test_a_place_chip_narrows_and_counts(client):
     body = client.get("/", params={"q": "Alicante"}).text
-    assert '<i>place</i>' in body
+    assert 'data-kind="place"' in body
     assert "75 photographs" in _meta(body)
 
 
@@ -119,7 +119,8 @@ def test_paging_reports_the_whole_not_the_page(client):
 def test_a_filter_narrows_without_a_query(client):
     body = client.get("/", params={"cam": "K-70"}).text
     assert "50 photographs" in _meta(body)
-    assert "1 on" in body            # the collapsed row says how many are set
+    assert "camera K-70" in body     # a filter that is on shows as a chip
+    assert 'class="badge">1<' in body   # and the button says how many
 
 
 def test_a_filter_and_a_chip_apply_together(client):
@@ -250,7 +251,7 @@ def test_the_other_reading_promises_what_it_delivers(tmp_path):
 
     client = TestClient(serve.create_app(cfg_for(tmp_path, dbp)))
     body = client.get("/", params={"q": "hartola tommi"}).text
-    assert "<i>event</i>" in body            # the larger reading was taken
+    assert 'data-kind="event"' in body       # the larger reading was taken
     assert "No photograph has" in body
     assert "4 photographs" in body           # what the link gives
     assert "30 photograph" not in body       # not what the place holds
@@ -259,7 +260,8 @@ def test_the_other_reading_promises_what_it_delivers(tmp_path):
 def test_how_many_people_are_in_it(client):
     """"Just the two of them" is a different question from "the two of them"."""
     body = client.get("/", params={"who": "2"}).text
-    assert "1 on" in body                    # the filter registers as set
+    assert "just two people" in body         # the filter shows as a chip
+    assert 'class="badge">1<' in body         # and the button counts it
     assert 'value="2" selected' in body
 
 

@@ -39,177 +39,310 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
 <style>
+/* One palette, named the way the inline styles across the pages already use
+   it (--ink-3, --accent, --rule ...), so restyling the frame restyles them. */
 :root {{
-  --ground:#f2f3f0; --surface:#fafbf8; --ink:#161a19; --ink-2:#4e5653;
-  --ink-3:#7b8480; --rule:#d2d7d1; --accent:#2c5c69;
+  --ground:#f6f7f9; --surface:#ffffff; --soft:#eef1f5; --ink:#15181d;
+  --ink-2:#4a5260; --ink-3:#737c8b; --rule:#e4e7ec; --accent:#2563eb;
+  --accent-soft:#e3ecff; --on-accent:#ffffff;
+  --person:#6d28d9; --person-soft:#efe7ff; --date:#0f766e; --date-soft:#dff3ef;
+  --place:#c2410c; --place-soft:#fdece1; --event:#be185d; --event-soft:#fce7f1;
+  --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.09);
 }}
 @media (prefers-color-scheme:dark) {{
   :root {{
-    --ground:#121514; --surface:#191d1c; --ink:#e7eae6; --ink-2:#a2aca8;
-    --ink-3:#79837f; --rule:#2a302e; --accent:#7fbac7;
+    --ground:#0f1115; --surface:#171a1f; --soft:#1f232a; --ink:#e8eaee;
+    --ink-2:#b3bac5; --ink-3:#8a93a0; --rule:#2a2f37; --accent:#6b9cff;
+    --accent-soft:#1b2848; --on-accent:#0b1020;
+    --person:#c9b0ff; --person-soft:#2a2141; --date:#63d4c4; --date-soft:#14302c;
+    --place:#ffab7d; --place-soft:#3a2418; --event:#f7a8cf; --event-soft:#3b1a2c;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.5);
   }}
 }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; background:var(--ground); color:var(--ink);
-  font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }}
-header {{ position:sticky; top:0; z-index:5; background:var(--ground);
-  border-bottom:1px solid var(--rule); padding:14px 20px; }}
-form {{ display:flex; gap:10px; align-items:center; max-width:1500px; margin:0 auto; }}
-input[type=search] {{ flex:1; padding:10px 14px; font-size:16px; color:var(--ink);
-  background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
-input[type=search]:focus {{ outline:2px solid var(--accent); outline-offset:-1px; }}
-button {{ padding:10px 18px; font-size:15px; font-weight:600; cursor:pointer;
-  background:var(--accent); color:var(--ground); border:0; border-radius:3px; }}
-.meta {{ max-width:1500px; margin:0 auto; padding:10px 20px 0; color:var(--ink-3);
-  font-size:13px; }}
-.grid {{ max-width:1500px; margin:0 auto; padding:14px 20px 60px;
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }}
-figure {{ margin:0; background:var(--surface); border:1px solid var(--rule);
-  border-radius:3px; overflow:hidden; }}
-figure img {{ display:block; width:100%; aspect-ratio:1; object-fit:cover;
-  background:var(--rule); }}
-figcaption {{ padding:7px 9px; font-size:11.5px; color:var(--ink-3);
-  display:flex; justify-content:space-between; gap:8px; }}
-figcaption b {{ color:var(--ink-2); font-weight:500; }}
-.empty {{ max-width:640px; margin:70px auto; text-align:center; color:var(--ink-3); }}
-.empty code {{ background:var(--surface); padding:2px 6px; border-radius:3px; }}
+  font:14.5px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif; }}
 a {{ color:inherit; text-decoration:none; }}
-nav {{ max-width:1500px; margin:8px auto 0; display:flex; gap:16px;
-  font-size:13px; color:var(--ink-3); }}
-nav a:hover {{ color:var(--accent); }}
+form {{ margin:0; }}
+svg.ic {{ width:17px; height:17px; flex:none; fill:none; stroke:currentColor;
+  stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }}
+button {{ font:inherit; padding:9px 16px; font-size:14px; font-weight:600;
+  cursor:pointer; background:var(--accent); color:var(--on-accent);
+  border:1px solid transparent; border-radius:10px; }}
+button:hover {{ filter:brightness(1.08); }}
+.ghost {{ background:var(--surface); color:var(--ink-2); border-color:var(--rule); }}
+.ghost:hover {{ filter:none; color:var(--ink); border-color:var(--ink-3); }}
+input[type=text], input[type=number] {{ font:inherit; font-size:14.5px;
+  color:var(--ink); background:var(--surface); border:1px solid var(--rule);
+  border-radius:10px; padding:8px 12px; }}
+input[type=text]:focus, input[type=number]:focus {{ outline:0;
+  border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }}
+
+/* The frame: the box, and everything else behind one menu. */
+header {{ position:sticky; top:0; z-index:10; background:var(--surface);
+  border-bottom:1px solid var(--rule); }}
+.bar {{ max-width:1500px; margin:0 auto; padding:12px 20px; display:flex;
+  gap:16px; align-items:center; }}
+.logo {{ display:flex; gap:9px; align-items:center; font-weight:650;
+  font-size:16px; white-space:nowrap; }}
+.logo span {{ width:32px; height:32px; border-radius:9px; display:grid;
+  place-items:center; color:#fff;
+  background:linear-gradient(135deg,#3b82f6,#7c3aed); }}
+.search {{ flex:1; max-width:780px; display:flex; align-items:center; gap:8px;
+  height:46px; padding:0 6px 0 16px; background:var(--soft);
+  border:1px solid transparent; border-radius:999px; }}
+.search:focus-within {{ background:var(--surface); border-color:var(--accent);
+  box-shadow:0 0 0 4px var(--accent-soft); }}
+.search > svg.ic {{ color:var(--ink-3); }}
+.search input {{ flex:1; min-width:0; border:0; outline:0; background:transparent;
+  color:var(--ink); font:inherit; font-size:16px; }}
+.search input::-webkit-search-cancel-button {{ display:none; }}
+.search .clear {{ display:grid; place-items:center; width:30px; height:30px;
+  border-radius:50%; color:var(--ink-3); }}
+.search .clear:hover {{ background:var(--rule); color:var(--ink); }}
+.search button {{ height:34px; padding:0 18px; border-radius:999px; }}
+.spacer {{ flex:1; }}
+details.pop {{ position:relative; }}
+details.pop > summary {{ list-style:none; cursor:pointer; display:inline-flex;
+  gap:7px; align-items:center; height:38px; padding:0 12px; border-radius:10px;
+  border:1px solid var(--rule); background:var(--surface); color:var(--ink-2);
+  font-weight:550; white-space:nowrap; user-select:none; }}
+details.pop > summary::-webkit-details-marker {{ display:none; }}
+details.pop > summary:hover, details.pop[open] > summary {{ color:var(--ink);
+  border-color:var(--ink-3); }}
+.menu {{ position:absolute; right:0; top:46px; width:240px; z-index:20;
+  background:var(--surface); border:1px solid var(--rule); border-radius:12px;
+  box-shadow:var(--shadow); padding:6px; }}
+.menu a {{ display:flex; gap:10px; align-items:center; padding:9px 10px;
+  border-radius:8px; font-weight:500; }}
+.menu a:hover {{ background:var(--soft); }}
+.menu a svg.ic {{ color:var(--ink-3); }}
+.menu a .badge {{ margin-left:auto; }}
+.menu hr {{ border:0; border-top:1px solid var(--rule); margin:6px 4px; }}
+.badge {{ display:inline-grid; place-items:center; min-width:19px; height:19px;
+  padding:0 6px; border-radius:10px; background:var(--accent);
+  color:var(--on-accent); font-size:11px; font-weight:700; }}
+@media (max-width:720px) {{
+  .logo b, details.browse > summary b {{ display:none; }}
+  .bar {{ gap:10px; padding:10px 12px; }}
+}}
 /* The header is sticky, so focusing the search box makes the browser scroll it
    clear -- taking the first line of the page under the header with it. The
    search pages want the caret; every other page wants its own first line, so
    the attribute is filled in per page rather than baked in here. */
-/* Faces are square, small and scanned in bulk: a tighter grid than the photo
-   one, because recognising a person takes a glance, not a look. */
-.faces {{ max-width:1500px; margin:0 auto; padding:14px 20px 60px;
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; }}
-.faces figure img {{ aspect-ratio:1; }}
-.chip {{ display:inline-block; padding:2px 8px; border:1px solid var(--rule);
-  border-radius:11px; font-size:12px; color:var(--ink-2); background:var(--surface); }}
-.panel {{ max-width:1500px; margin:0 auto; padding:14px 20px 0;
-  display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
-.panel input[type=text] {{ padding:8px 12px; font-size:15px; color:var(--ink);
-  background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
-.panel form {{ display:flex; gap:8px; align-items:center; margin:0; }}
-.people {{ max-width:1500px; margin:0 auto; padding:6px 20px 0;
-  display:flex; gap:10px; flex-wrap:wrap; }}
-.person {{ display:flex; gap:10px; align-items:center; padding:8px 14px 8px 8px;
-  background:var(--surface); border:1px solid var(--rule); border-radius:30px;
-  font-size:13px; color:var(--ink-2); }}
-.person:hover {{ border-color:var(--accent); }}
-.person img {{ width:44px; height:44px; border-radius:50%; object-fit:cover;
-  background:var(--rule); }}
-.person b {{ color:var(--ink); font-size:14.5px; }}
-.ghost {{ background:transparent; color:var(--ink-2); border:1px solid var(--rule); }}
-.cands {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; display:flex;
-  gap:10px; flex-wrap:wrap; }}
-.cand {{ display:flex; gap:9px; align-items:center; margin:0; padding:8px;
-  background:var(--surface); border:1px solid var(--rule); border-radius:4px;
-  font-size:12px; color:var(--ink-3); }}
-.cand img {{ width:56px; height:56px; border-radius:3px; object-fit:cover;
-  background:var(--rule); }}
-.cand button {{ padding:6px 10px; font-size:12px; }}
-/* A place list is read down the column, not scanned like a grid of faces:
-   one line each, the count where the eye can compare them. */
-.rows {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; }}
-.rows a, .rows div.row {{ display:flex; gap:14px; align-items:baseline;
-  padding:7px 10px; border-bottom:1px solid var(--rule); }}
-.rows a:hover {{ background:var(--surface); }}
-.rows b {{ flex:1; font-weight:500; color:var(--ink); }}
-.rows span {{ color:var(--ink-3); font-size:12.5px; }}
-.rows form {{ display:inline; margin:0; }}
-.rows form button {{ padding:3px 9px; font-size:11.5px; }}
-.crumb {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; font-size:13px;
+
+/* What the box understood, and every filter that is on. These are the
+   interface, not decoration: each one states a criterion and carries the link
+   that removes it, so the whole thing works as plain anchors. */
+.chips {{ position:relative; max-width:1500px; margin:0 auto; padding:14px 20px 0;
+  display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
+.crit {{ display:inline-flex; gap:7px; align-items:center; height:34px;
+  padding:0 5px 0 11px; border-radius:999px; background:var(--soft);
+  color:var(--ink); font-size:13.5px; font-weight:550; white-space:nowrap;
+  border:1px solid transparent; }}
+.crit i {{ font-style:normal; display:inline-flex; }}
+.crit a:hover {{ text-decoration:underline; }}
+.crit a.x {{ display:grid; place-items:center; width:24px; height:24px;
+  border-radius:50%; font-size:17px; line-height:1; opacity:.6; }}
+.crit a.x:hover {{ opacity:1; background:rgba(127,127,127,.22);
+  text-decoration:none; }}
+.crit[data-kind=person] {{ background:var(--person-soft); color:var(--person);
+  padding-left:3px; }}
+.crit[data-kind=person] img, .crit .av {{ width:28px; height:28px;
+  border-radius:50%; object-fit:cover; background:var(--rule); display:grid;
+  place-items:center; }}
+.crit[data-kind=date] {{ background:var(--date-soft); color:var(--date); }}
+.crit[data-kind=place] {{ background:var(--place-soft); color:var(--place); }}
+.crit[data-kind=event] {{ background:var(--event-soft); color:var(--event); }}
+.crit.filter {{ background:var(--surface); border-color:var(--rule);
+  color:var(--ink-2); }}
+.rest {{ color:var(--ink-3); font-size:13.5px; }}
+.rest b {{ color:var(--ink-2); font-weight:550; }}
+/* The auditing filters, one button at the end of the chips. Positioned against
+   the row rather than the button, so the form opens full width beneath it. */
+details.filters {{ position:static; }}
+details.filters > summary {{ height:34px; border-radius:999px;
+  border-style:dashed; font-size:13.5px; }}
+details.filters form {{ position:absolute; left:20px; right:20px;
+  top:calc(100% + 8px); z-index:8; max-width:1000px; background:var(--surface);
+  border:1px solid var(--rule); border-radius:14px; box-shadow:var(--shadow);
+  padding:18px 20px; display:flex; gap:16px; align-items:flex-end;
+  flex-wrap:wrap; }}
+details.filters label {{ display:flex; flex-direction:column; gap:5px;
+  font-size:11.5px; font-weight:650; color:var(--ink-3);
+  text-transform:uppercase; letter-spacing:.05em; }}
+details.filters input, details.filters select {{ height:38px; padding:0 10px;
+  font:inherit; font-size:14px; font-weight:400; color:var(--ink);
+  background:var(--surface); border:1px solid var(--rule); border-radius:10px;
+  text-transform:none; letter-spacing:0; }}
+details.filters .clearall {{ color:var(--ink-3); padding:9px 4px; }}
+details.filters .clearall:hover {{ color:var(--ink); }}
+/* An unsure reading: shown, never applied. */
+.offer {{ max-width:1500px; margin:0 auto; padding:10px 20px 0; font-size:13.5px;
+  color:var(--ink-2); }}
+.offer a {{ color:var(--accent); font-weight:550; }}
+
+.meta {{ max-width:1500px; margin:0 auto; padding:14px 20px 0; color:var(--ink-3);
+  font-size:13.5px; }}
+.meta b {{ color:var(--ink); }}
+.crumb {{ max-width:1500px; margin:0 auto; padding:14px 20px 0; font-size:13.5px;
   color:var(--ink-3); }}
 .crumb a {{ color:var(--accent); }}
-/* The map, when it has been asked for. Nothing is written into the page until
-   then, which is the whole of the privacy argument (10.4). */
-.map {{ margin:10px 0 4px; border:1px solid var(--rule); border-radius:4px;
-  overflow:hidden; background:var(--surface); max-width:620px;
-  scroll-margin-top:110px; }}
-#where {{ scroll-margin-top:110px; }}
-/* Previous and next, sitting with the way back. */
-.walk {{ display:inline-flex; gap:14px; align-items:center; margin-left:20px;
-  font-size:13px; }}
-.walk a {{ color:var(--ink-2); }}
-.walk a:hover {{ color:var(--accent); }}
+.empty {{ max-width:640px; margin:70px auto; padding:0 20px; text-align:center;
+  color:var(--ink-3); }}
+.empty code, .offer code {{ background:var(--soft); color:var(--ink-2);
+  padding:2px 7px; border-radius:6px; }}
+
+/* A photograph in a result grid is looked at rather than read: no frame, no
+   caption line, and its date laid over it only when pointed at. */
+.grid {{ max-width:1500px; margin:0 auto; padding:12px 20px 40px; display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:6px; }}
+figure {{ margin:0; position:relative; background:var(--surface);
+  border-radius:10px; overflow:hidden; }}
+figure img {{ display:block; width:100%; aspect-ratio:1; object-fit:cover;
+  background:var(--rule); transition:transform .3s; }}
+figcaption {{ padding:7px 9px; font-size:12px; color:var(--ink-3); display:flex;
+  justify-content:space-between; gap:8px; }}
+figcaption b {{ color:var(--ink-2); font-weight:550; }}
+.grid figure:not(.odd) figcaption {{ position:absolute; left:0; right:0; bottom:0;
+  padding:30px 10px 8px; background:linear-gradient(transparent,rgba(0,0,0,.62));
+  opacity:0; transition:opacity .2s; pointer-events:none; }}
+.grid figure:not(.odd) figcaption b,
+.grid figure:not(.odd) figcaption span {{ color:#fff; }}
+.grid figure:not(.odd):hover figcaption,
+.grid figure:not(.odd) a:focus-visible figcaption {{ opacity:1; }}
+.grid figure:not(.odd):hover img {{ transform:scale(1.04); }}
+/* Where the month changes. Inside the grid and spanning it, so the page stays
+   one grid and paging does not have to know about months. */
+.month {{ grid-column:1/-1; padding:18px 0 4px; font-weight:650; font-size:15px;
+  color:var(--ink); }}
+.month:first-child {{ padding-top:2px; }}
+/* Faces are square, small and scanned in bulk: a tighter grid than the photo
+   one, because recognising a person takes a glance, not a look. */
+.faces {{ max-width:1500px; margin:0 auto; padding:12px 20px 40px; display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:10px; }}
+.faces figure {{ border:1px solid var(--rule); }}
+.faces figure:hover {{ border-color:var(--accent); }}
 /* An odd one out, with the means to say it is not. */
 .odd figcaption {{ display:flex; justify-content:space-between;
   align-items:center; gap:6px; padding:6px 8px; }}
 .odd figcaption span {{ color:var(--ink-3); font-size:11.5px; }}
-.odd form {{ margin:0; }}
-.odd button {{ padding:3px 8px; font-size:11px; }}
-.map iframe {{ display:block; width:100%; height:300px; border:0; }}
-/* What the box understood. These are the interface, not decoration: each one
-   states a criterion and carries the link that removes it, so the whole thing
-   works as plain anchors with no script on the page. */
-.chips {{ max-width:1500px; margin:0 auto; padding:12px 20px 0; display:flex;
-  gap:8px; align-items:center; flex-wrap:wrap; }}
-.crit {{ display:inline-flex; gap:8px; align-items:center; padding:5px 6px 5px 11px;
-  background:var(--surface); border:1px solid var(--rule); border-radius:14px;
-  font-size:13px; color:var(--ink); }}
-.crit i {{ font-style:normal; color:var(--ink-3); font-size:11.5px;
-  text-transform:uppercase; letter-spacing:.04em; }}
-.crit a {{ color:var(--ink); }}
-.crit a:hover {{ color:var(--accent); }}
-.crit a.x {{ color:var(--ink-3); padding:0 5px; border-radius:9px;
-  font-size:14px; line-height:1; }}
-.crit a.x:hover {{ background:var(--rule); color:var(--ink); }}
-.rest {{ color:var(--ink-3); font-size:13px; }}
-.rest b {{ color:var(--ink-2); font-weight:500; }}
-/* An unsure reading: shown, never applied. */
-.offer {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; font-size:13px;
-  color:var(--ink-3); }}
-.offer a {{ color:var(--accent); }}
-details.filters {{ max-width:1500px; margin:0 auto; padding:8px 20px 0;
+.odd button {{ padding:4px 9px; font-size:11.5px; }}
+
+.chip {{ display:inline-flex; align-items:center; padding:3px 10px;
+  border:1px solid var(--rule); border-radius:999px; font-size:12.5px;
+  color:var(--ink-2); background:var(--surface); }}
+.chip:hover {{ border-color:var(--accent); color:var(--accent); }}
+.panel {{ max-width:1500px; margin:0 auto; padding:14px 20px 0; display:flex;
+  gap:10px; align-items:center; flex-wrap:wrap; }}
+.panel form {{ display:flex; gap:8px; align-items:center; }}
+.people {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; display:flex;
+  gap:10px; flex-wrap:wrap; }}
+.person {{ display:flex; gap:10px; align-items:center; padding:6px 16px 6px 6px;
+  background:var(--surface); border:1px solid var(--rule); border-radius:999px;
   font-size:13px; color:var(--ink-3); }}
-details.filters summary {{ cursor:pointer; color:var(--ink-3); }}
-details.filters form {{ display:flex; gap:14px; align-items:flex-end;
-  flex-wrap:wrap; margin:10px 0 0; max-width:none; }}
-details.filters label {{ display:flex; flex-direction:column; gap:4px;
-  font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }}
-details.filters input, details.filters select {{ padding:6px 9px; font-size:14px;
-  color:var(--ink); background:var(--surface); border:1px solid var(--rule);
-  border-radius:3px; text-transform:none; letter-spacing:0; }}
+.person:hover {{ border-color:var(--accent); box-shadow:var(--shadow); }}
+.person img {{ width:44px; height:44px; border-radius:50%; object-fit:cover;
+  background:var(--rule); }}
+.person b {{ color:var(--ink); font-size:14.5px; font-weight:600; }}
+.cands {{ max-width:1500px; margin:0 auto; padding:8px 20px 0; display:flex;
+  gap:10px; flex-wrap:wrap; }}
+.cand {{ display:flex; gap:9px; align-items:center; padding:8px;
+  background:var(--surface); border:1px solid var(--rule); border-radius:12px;
+  font-size:12px; color:var(--ink-3); }}
+.cand img {{ width:56px; height:56px; border-radius:8px; object-fit:cover;
+  background:var(--rule); }}
+.cand button {{ padding:6px 10px; font-size:12px; }}
+/* A place list is read down the column, not scanned like a grid of faces:
+   one line each, the count where the eye can compare them. */
+.rows {{ max-width:1500px; margin:6px auto 0; padding:0 20px; }}
+.rows a, .rows div.row {{ display:flex; gap:14px; align-items:baseline;
+  padding:9px 12px; border-bottom:1px solid var(--rule); }}
+.rows a:hover {{ background:var(--surface); }}
+.rows b {{ flex:1; font-weight:550; color:var(--ink); }}
+.rows span {{ color:var(--ink-3); font-size:13px; }}
+.rows form {{ display:inline; }}
+.rows form button {{ padding:4px 10px; font-size:12px; }}
 .more {{ max-width:1500px; margin:0 auto; padding:0 20px 50px; display:flex;
-  gap:12px; align-items:center; }}
-.more a {{ display:inline-block; padding:9px 18px; border:1px solid var(--rule);
-  border-radius:3px; background:var(--surface); color:var(--ink-2);
-  font-size:14px; }}
+  gap:10px; align-items:center; flex-wrap:wrap; }}
+.more a {{ display:inline-flex; align-items:center; height:38px; padding:0 16px;
+  border:1px solid var(--rule); border-radius:10px; background:var(--surface);
+  color:var(--ink-2); font-size:14px; font-weight:550; }}
 .more a:hover {{ border-color:var(--accent); color:var(--accent); }}
+
+/* The map, when it has been asked for. Nothing is written into the page until
+   then, which is the whole of the privacy argument (10.4). */
+.map {{ margin:10px 0 4px; border:1px solid var(--rule); border-radius:12px;
+  overflow:hidden; background:var(--surface); max-width:620px;
+  scroll-margin-top:90px; }}
+#where {{ scroll-margin-top:90px; }}
+.map iframe {{ display:block; width:100%; height:300px; border:0; }}
+/* Previous and next, sitting with the way back. */
+.walk {{ display:inline-flex; gap:14px; align-items:center; margin-left:20px;
+  font-size:13.5px; }}
+.walk a {{ color:var(--ink-2); }}
+.walk a:hover {{ color:var(--accent); }}
 /* Everyone in one photograph, each with the means to say otherwise. Bigger
    than the review grid: this is one picture being looked at carefully, not a
    wall of faces being scanned. */
 .mugs {{ display:flex; gap:12px; flex-wrap:wrap; margin:16px 0 20px; }}
 .mug {{ margin:0; width:170px; background:var(--surface);
-  border:1px solid var(--rule); border-radius:4px; padding:9px; }}
+  border:1px solid var(--rule); border-radius:12px; padding:9px; }}
 .mug img {{ display:block; width:100%; aspect-ratio:1; object-fit:cover;
-  border-radius:3px; background:var(--rule); }}
+  border-radius:8px; background:var(--rule); }}
 .mug figcaption {{ display:block; padding:7px 1px 8px; font-size:13px; }}
 .mug figcaption b {{ font-weight:600; }}
 .mug figcaption span {{ display:block; color:var(--ink-3); font-size:11px; }}
-.mug form {{ display:flex; gap:5px; margin:0; }}
-.mug input[type=text] {{ min-width:0; flex:1; padding:5px 7px; font-size:13px;
-  color:var(--ink); background:var(--ground); border:1px solid var(--rule);
-  border-radius:3px; }}
-.mug button {{ padding:5px 8px; font-size:12px; }}
+.mug form {{ display:flex; gap:5px; }}
+.mug input[type=text] {{ min-width:0; flex:1; padding:5px 8px; font-size:13px;
+  background:var(--ground); border-radius:8px; }}
+.mug button {{ padding:5px 9px; font-size:12px; border-radius:8px; }}
 /* The correction sitting under the fact it corrects, quiet until wanted. */
 .fix {{ margin-top:5px; }}
-.fix form {{ display:flex; gap:6px; margin:0; max-width:none; }}
-.fix input[type=text] {{ padding:5px 9px; font-size:13px; color:var(--ink);
-  background:var(--surface); border:1px solid var(--rule); border-radius:3px; }}
-.fix button {{ padding:5px 11px; font-size:12px; }}
+.fix form {{ display:flex; gap:6px; }}
+.fix input[type=text] {{ padding:5px 9px; font-size:13px; border-radius:8px; }}
+.fix button {{ padding:5px 11px; font-size:12px; border-radius:8px; }}
 tr:not(:hover) .fix {{ opacity:.35; }}
 .fix:focus-within {{ opacity:1 !important; }}
 </style></head><body>
-<header><form action="/" method="get">
-  <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
-  <button type="submit">Search</button>
-</form>
-<nav><a href="/">Photographs</a><a href="/people">People</a><a href="/places">Places</a><a href="/events">Events</a><a href="/odd">Odd ones</a><a href="/review">Review</a></nav></header>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-photo" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 17-5-5-9 8"/></symbol>
+<symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14.5c2.4 0 4 1.6 4.5 4"/></symbol>
+<symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+<symbol id="i-event" viewBox="0 0 24 24"><path d="M4 8h16v12H4z"/><path d="M4 8l3-4h10l3 4"/></symbol>
+<symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+<symbol id="i-q" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5M12 17h0"/></symbol>
+<symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
+</svg>
+<header><div class="bar">
+  <a class="logo" href="/"><span><svg class="ic"><use href="#i-photo"/></svg></span><b>Kuva-arkisto</b></a>
+  <form class="search" action="/" method="get" role="search">
+    <svg class="ic"><use href="#i-search"/></svg>
+    <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
+    {clear}<button type="submit">Search</button>
+  </form>
+  <div class="spacer"></div>
+  <details class="pop browse"><summary><svg class="ic"><use href="#i-grid"/></svg><b>Browse</b><svg class="ic"><use href="#i-chev"/></svg></summary>
+    <div class="menu">
+      <a href="/"><svg class="ic"><use href="#i-photo"/></svg>Photographs</a>
+      <a href="/people"><svg class="ic"><use href="#i-people"/></svg>People</a>
+      <a href="/places"><svg class="ic"><use href="#i-pin"/></svg>Places</a>
+      <a href="/events"><svg class="ic"><use href="#i-event"/></svg>Events</a>
+      <hr>
+      <a href="/review"><svg class="ic"><use href="#i-q"/></svg>Review{badge}</a>
+      <a href="/odd"><svg class="ic"><use href="#i-odd"/></svg>Odd ones</a>
+    </div></details>
+</div></header>
 {body}
+<script>document.addEventListener('click',function(e){{
+document.querySelectorAll('details.pop[open]').forEach(function(d){{
+if(!d.contains(e.target))d.removeAttribute('open');}});}});</script>
 </body></html>"""
 
 
@@ -232,6 +365,40 @@ def create_app(cfg) -> FastAPI:
                 pretrained=cfg.scan.get("embed_pretrained", embed.DEFAULT_PRETRAINED),
             )
         return state["encoder"]
+
+    # Said in the box itself, the box being the whole interface (§7.1).
+    PLACEHOLDER = "Search people, places, years, or describe a scene"
+
+    def open_questions() -> int:
+        """How many questions the review queue holds, for the Browse menu.
+
+        Asked on a connection of its own because every page carries the menu,
+        not only the ones that already hold a connection. A database from before
+        the queue existed has no such table, which is no questions, not a 500.
+        """
+        try:
+            con = db.connect(cfg.database, create=False)
+        except FileNotFoundError:
+            return 0
+        try:
+            return con.execute("SELECT COUNT(*) FROM review_queue "
+                               "WHERE status = 'open'").fetchone()[0]
+        except sqlite3.OperationalError:
+            return 0
+        finally:
+            con.close()
+
+    def layout(title: str, body: str, q: str = "", focus: str = "") -> str:
+        """Every page in the one frame: the box, the way to clear it, the menu.
+
+        `q` arrives already escaped.
+        """
+        clear = ('<a class="clear" href="/" title="Clear the search">'
+                 '<svg class="ic"><use href="#i-x"/></svg></a>' if q else "")
+        n = open_questions()
+        badge = f'<span class="badge">{n:,}</span>' if n else ""
+        return PAGE.format(title=title, q=q, focus=focus, clear=clear,
+                           badge=badge, placeholder=PLACEHOLDER, body=body)
 
     def safe_back(where: str) -> str:
         """A return path, or the front page if it is not one.
@@ -267,6 +434,31 @@ def create_app(cfg) -> FastAPI:
             f'<img loading="lazy" src="/thumb/s/{row["content_hash"]}" alt="">'
             f'<figcaption><b>{html.escape(when)}</b>'
             f'<span>{html.escape(str(right)[:18])}</span></figcaption></a></figure>')
+
+    def month_of(row) -> str:
+        """The heading a photograph files under: its month, or its year alone
+        where the year is all that is known, so a photograph is never filed
+        under a month nobody gave it."""
+        if not row["taken_at"]:
+            return "No date"
+        dt = datetime.fromtimestamp(row["taken_at"])
+        return f"{dt:%Y}" if row["taken_at_precision"] == "year" else f"{dt:%B %Y}"
+
+    def cards_by_month(rows, back) -> str:
+        """A date-ordered grid, named wherever the month changes.
+
+        The headings sit inside the grid and span it, so the page stays one
+        grid and paging need not know about months. Only for grids in date
+        order: a ranked result has no months to speak of.
+        """
+        out, last = [], None
+        for r in rows:
+            m = month_of(r)
+            if m != last:
+                out.append(f'<div class="month">{m}</div>')
+                last = m
+            out.append(card(r, back=back))
+        return "".join(out)
 
     def people_matching(con, q: str) -> str:
         """Named people whose name contains the query.
@@ -516,10 +708,51 @@ def create_app(cfg) -> FastAPI:
             return int(dt.timestamp()) + add * 86400
         return 0 if not end else 4102444800
 
-    def chip_row(r, f) -> str:
-        """What the box understood, and how to take any of it back."""
-        if not r.terms and not r.text:
-            return ""
+    # The icon a chip carries, so the reading chosen shows at a glance: Hartola
+    # the event and Hartola the place must not look alike (§7.1).
+    CHIP_ICONS = {"person": "people", "place": "pin", "event": "event",
+                  "date": "cal"}
+
+    # What each filter says as a chip. A value not listed is shown as given.
+    FILTER_WORDS = {
+        "faces": {"y": "has faces", "n": "no faces"},
+        "who": {"1": "one person", "2": "just two people",
+                "3": "three or more people"},
+        "dsrc": {"exif": "date from EXIF", "filename": "date from the filename",
+                 "folder": "date from the folder"},
+        "psrc": {"gps": "place from the coordinate",
+                 "folder": "place from the folder name"},
+    }
+    FILTER_ICONS = {"from": "cal", "to": "cal", "cam": "camera",
+                    "faces": "people", "who": "people", "dsrc": "sliders",
+                    "psrc": "sliders"}
+
+    def _icon(name: str) -> str:
+        return f'<svg class="ic"><use href="#i-{name}"/></svg>'
+
+    def _filter_label(k: str, v: str) -> str:
+        if k == "from":
+            return f"from {v}"
+        if k == "to":
+            return f"until {v}"
+        if k == "cam":
+            return f"camera {v}"
+        return FILTER_WORDS.get(k, {}).get(v, f"{k} {v}")
+
+    def _face_of(con, person_id: int):
+        return con.execute(
+            """SELECT a.content_hash, x.idx FROM faces x
+                 JOIN assets a ON a.id = x.asset_id
+                WHERE x.person_id = ?
+                ORDER BY x.blur_score DESC LIMIT 1""", (person_id,)).fetchone()
+
+    def chip_row(con, q, r, f) -> str:
+        """Everything the page is searching for, and how to take any of it back.
+
+        Typed or picked, a criterion is shown the same way: a chip carrying the
+        link that removes it. Filters used to show only inside their folded
+        row, which left nothing on the page saying which of them were on (§7.4).
+        """
         seen = {"person": "/person/", "place": "/place/", "event": "/event/"}
         bits = []
         for t in r.terms:
@@ -529,13 +762,29 @@ def create_app(cfg) -> FastAPI:
             label = html.escape(t.label)
             if t.kind in seen and t.ref_id:
                 label = f'<a href="{seen[t.kind]}{t.ref_id}">{label}</a>'
+            icon = _icon(CHIP_ICONS.get(t.kind, "search"))
+            mark = f'<i title="{t.kind}">{icon}</i>'
+            if t.kind == "person":
+                face = _face_of(con, t.ref_id) if t.ref_id else None
+                mark = (f'<img src="/face/{face["content_hash"]}/{face["idx"]}" '
+                        'alt="" title="person">' if face else
+                        f'<i class="av" title="person">{icon}</i>')
             bits.append(
-                f'<span class="crit"><i>{t.kind}</i> {label}'
+                f'<span class="crit" data-kind="{t.kind}">{mark}{label}'
                 f'<a class="x" href="{gone}" title="not this">&times;</a></span>')
-        if r.text and r.terms:
-            bits.append(f'<span class="rest">and <b>{html.escape(r.text)}</b> '
+        for k in FILTERS:
+            if not f.get(k):
+                continue
+            gone = _qs(q, {**f, k: ""})
+            bits.append(
+                '<span class="crit filter" data-kind="filter">'
+                f'{_icon(FILTER_ICONS[k])}{html.escape(_filter_label(k, f[k]))}'
+                f'<a class="x" href="{gone}" title="not this">&times;</a></span>')
+        if r.text and bits:
+            bits.append(f'<span class="rest"><b>{html.escape(r.text)}</b> '
                         'as the description</span>')
-        return f'<div class="chips">{"".join(bits)}</div>' if bits else ""
+        bits.append(filter_row(q, f))
+        return f'<div class="chips">{"".join(bits)}</div>'
 
     def _count_for(con, raw: str, f: dict) -> int:
         """How many photographs another reading of the query would find.
@@ -589,39 +838,40 @@ def create_app(cfg) -> FastAPI:
         return f'<div class="offer">{" ".join(bits)}</div>' if bits else ""
 
     def filter_row(q: str, f: dict) -> str:
-        """The auditing controls, collapsed until wanted (§7.4).
+        """The auditing controls, behind one button at the end of the chips (§7.4).
 
-        Not chips: a chip answers "what am I looking for", these answer "what
+        Not typed: a chip answers "what am I looking for", these answer "what
         do I want to check", and nobody types `place-source is a folder name`
-        as a question.
+        as a question. Once set, each shows as a chip like any other, so the
+        button can stay closed and say only how many are on.
         """
-        def opt(name, value, label, current):
+        def opt(value, label, current):
             sel = " selected" if current == value else ""
             return f'<option value="{value}"{sel}>{label}</option>'
 
         on = sum(1 for k in FILTERS if f.get(k))
-        summary = "Filters" + (f" &middot; {on} on" if on else "")
         sel_faces = "".join([
-            opt("faces", "", "any", f.get("faces")),
-            opt("faces", "y", "with faces", f.get("faces")),
-            opt("faces", "n", "without", f.get("faces"))])
+            opt("", "any", f.get("faces")),
+            opt("y", "with faces", f.get("faces")),
+            opt("n", "without", f.get("faces"))])
         sel_who = "".join([
-            opt("who", "", "any number", f.get("who")),
-            opt("who", "1", "one alone", f.get("who")),
-            opt("who", "2", "just two", f.get("who")),
-            opt("who", "3", "three or more", f.get("who"))])
+            opt("", "any number", f.get("who")),
+            opt("1", "one alone", f.get("who")),
+            opt("2", "just two", f.get("who")),
+            opt("3", "three or more", f.get("who"))])
         sel_dsrc = "".join([
-            opt("dsrc", "", "any", f.get("dsrc")),
-            opt("dsrc", "exif", "EXIF", f.get("dsrc")),
-            opt("dsrc", "filename", "filename", f.get("dsrc")),
-            opt("dsrc", "folder", "folder", f.get("dsrc"))])
+            opt("", "any", f.get("dsrc")),
+            opt("exif", "EXIF", f.get("dsrc")),
+            opt("filename", "filename", f.get("dsrc")),
+            opt("folder", "folder", f.get("dsrc"))])
         sel_psrc = "".join([
-            opt("psrc", "", "any", f.get("psrc")),
-            opt("psrc", "gps", "coordinate", f.get("psrc")),
-            opt("psrc", "folder", "folder name", f.get("psrc"))])
+            opt("", "any", f.get("psrc")),
+            opt("gps", "coordinate", f.get("psrc")),
+            opt("folder", "folder name", f.get("psrc"))])
+        count = f' <span class="badge">{on}</span>' if on else ""
         return (
-            f'<details class="filters"{" open" if on else ""}>'
-            f'<summary>{summary}</summary>'
+            '<details class="pop filters">'
+            f'<summary>{_icon("sliders")}Filters{count}</summary>'
             '<form action="/" method="get">'
             f'<input type="hidden" name="q" value="{html.escape(q)}">'
             '<label>from<input type="text" name="from" placeholder="2019-06" '
@@ -635,8 +885,7 @@ def create_app(cfg) -> FastAPI:
             f'<label>date from<select name="dsrc">{sel_dsrc}</select></label>'
             f'<label>place from<select name="psrc">{sel_psrc}</select></label>'
             '<button type="submit">Apply</button>'
-            f'<a class="chip" href="{_qs(q, {})}" style="padding:7px 12px">'
-            'clear</a>'
+            f'<a class="clearall" href="{_qs(q, {})}">Clear filters</a>'
             '</form></details>')
 
     @app.get("/", response_class=HTMLResponse)
@@ -659,7 +908,7 @@ def create_app(cfg) -> FastAPI:
         # This exact page, so a photograph opened from it can lead back here
         # rather than to the front -- including the page number and the filters.
         here = _qs(q, f, page=page or None, more=more or None)
-        head = chip_row(r, f) + offer_row(con, r, f) + filter_row(q, f)
+        head = chip_row(con, q, r, f) + offer_row(con, r, f)
 
         cols = ("a.id, a.content_hash, a.taken_at, a.taken_at_precision, "
                 "a.camera_model")
@@ -678,9 +927,8 @@ def create_app(cfg) -> FastAPI:
             # filter can produce on a full library and which must not be
             # reported as an empty archive.
             if not total_all:
-                return HTMLResponse(PAGE.format(
+                return HTMLResponse(layout(
                     title="Kuva-arkisto", q="", focus=" autofocus",
-                    placeholder="kids on a beach at sunset",
                     body='<div class="empty"><p>Nothing indexed yet.</p>'
                          '<p><code>mediaidx add &lt;folder&gt;</code></p></div>'))
             if not total:
@@ -697,9 +945,9 @@ def create_app(cfg) -> FastAPI:
                 body = (head + '<div class="empty">'
                         f'<p>No photograph has {asked or "all of that"}.</p>'
                         '</div>')
-                return HTMLResponse(PAGE.format(
+                return HTMLResponse(layout(
                     title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
-                    focus=" autofocus", placeholder="kids on a beach at sunset"))
+                    focus=" autofocus"))
             what = ("photographs" if where else
                     f"photographs &middot; {embedded:,} searchable")
             meta = (f"{total:,} {what} &middot; most recent first"
@@ -707,20 +955,18 @@ def create_app(cfg) -> FastAPI:
                     f"{total_all:,} {what} &middot; most recent first")
             body = (head + f'<div class="meta">{meta}</div>'
                     f'<div class="grid">'
-                    f'{"".join(card(x, back=here) for x in rows)}</div>'
+                    f'{cards_by_month(rows, here)}</div>'
                     + pager(q, f, page, total, PAGE_SIZE))
-            return HTMLResponse(PAGE.format(
+            return HTMLResponse(layout(
                 title=f"{q} — Kuva-arkisto" if q else "Kuva-arkisto",
-                q=html.escape(q), body=body, focus=" autofocus",
-                placeholder="kids on a beach at sunset"))
+                q=html.escape(q), body=body, focus=" autofocus"))
 
         if embedded == 0:
             # The strips still answer, even with nothing to rank: a partial
             # name is exactly what they are for, and having no vectors is no
             # reason to stop finding people by name.
-            return HTMLResponse(PAGE.format(
+            return HTMLResponse(layout(
                 title=f"{q} — Kuva-arkisto", q=html.escape(q), focus=" autofocus",
-                placeholder="kids on a beach at sunset",
                 body=head + people_matching(con, r.text)
                      + places_matching(con, r.text)
                      + events_matching(con, r.text)
@@ -736,9 +982,9 @@ def create_app(cfg) -> FastAPI:
                 strips = (people_matching(con, r.text)
                           + places_matching(con, r.text)
                           + events_matching(con, r.text))
-                return HTMLResponse(PAGE.format(
+                return HTMLResponse(layout(
                     title=f"{q} — Kuva-arkisto", q=html.escape(q),
-                    focus=" autofocus", placeholder="kids on a beach at sunset",
+                    focus=" autofocus",
                     body=head + strips + '<div class="empty">'
                          '<p>Nothing matches all of that.</p></div>'))
 
@@ -757,9 +1003,9 @@ def create_app(cfg) -> FastAPI:
                   + events_matching(con, r.text))
 
         if not window:
-            return HTMLResponse(PAGE.format(
+            return HTMLResponse(layout(
                 title=f"{q} — Kuva-arkisto", q=html.escape(q),
-                focus=" autofocus", placeholder="kids on a beach at sunset",
+                focus=" autofocus",
                 body=head + strips +
                      '<div class="empty"><p>No matching photographs.</p></div>'))
 
@@ -780,9 +1026,9 @@ def create_app(cfg) -> FastAPI:
                      more=more, held=held if not more else 0)
         body = (head + strips + f'<div class="meta">{meta}</div>'
                 f'<div class="grid">{cards}</div>' + tail)
-        return HTMLResponse(PAGE.format(
+        return HTMLResponse(layout(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
-            focus=" autofocus", placeholder="kids on a beach at sunset"))
+            focus=" autofocus"))
 
     def pager(q, f, page, total, size, *, more=0, held=0) -> str:
         """Next and previous, and the way past the cut.
@@ -922,9 +1168,8 @@ def create_app(cfg) -> FastAPI:
 
         if not go:
             if not items:
-                return HTMLResponse(PAGE.format(
+                return HTMLResponse(layout(
                     title="Download — Kuva-arkisto", q=html.escape(q), focus="",
-                    placeholder="kids on a beach at sunset",
                     body='<div class="empty"><p>Nothing to download.</p></div>'))
             minutes = bytes_ / (1024 * 1024) / LINK_MB_PER_S / 60
             capped = ("" if total <= ZIP_MAX_FILES else
@@ -945,9 +1190,9 @@ def create_app(cfg) -> FastAPI:
                 f'<p><a href="{_qs(q, f, go=1).replace("/?", "/zip?")}" '
                 'style="color:var(--accent)"><b>Start the download</b></a>'
                 f' &nbsp; <a href="{_qs(q, f)}">go back</a></p></div>')
-            return HTMLResponse(PAGE.format(
+            return HTMLResponse(layout(
                 title="Download — Kuva-arkisto", q=html.escape(q), body=body,
-                focus="", placeholder="kids on a beach at sunset"))
+                focus=""))
 
         def stream():
             sink = _Sink()
@@ -1367,9 +1612,8 @@ def create_app(cfg) -> FastAPI:
             + f'<table style="font-size:14px">{info}</table>'
             f'<div style="margin-top:14px">{paths}</div></div>'
             + WALK_KEYS)
-        return HTMLResponse(PAGE.format(
-            title=f"{when} — Kuva-arkisto", q="", body=body, focus="",
-            placeholder="kids on a beach at sunset"))
+        return HTMLResponse(layout(
+            title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
 
     def _hash_of(con, asset_id: int):
         r = con.execute("SELECT content_hash FROM assets WHERE id = ?",
@@ -1599,7 +1843,7 @@ def create_app(cfg) -> FastAPI:
         grid = (f'<div class="meta">{total:,} photographs in '
                 f'{html.escape(p["name"])} and everything within it{shown}</div>'
                 f'<div class="grid">'
-                f'{"".join(card(r, back=f"/place/{place_id}") for r in rows)}'
+                f'{cards_by_month(rows, f"/place/{place_id}")}'
                 '</div>')
         return page(f'{p["name"]} — Kuva-arkisto', crumb + listing + grid)
 
@@ -1608,9 +1852,8 @@ def create_app(cfg) -> FastAPI:
     # ----------------------------------------------------------------------
 
     def page(title, body):
-        return HTMLResponse(PAGE.format(
-            title=title, q="", body=body, focus="",
-            placeholder="kids on a beach at sunset"))
+        return HTMLResponse(layout(
+            title=title, q="", body=body, focus=""))
 
     def face_card(hash_, idx, label, href, sub="") -> str:
         return (
@@ -1818,7 +2061,7 @@ def create_app(cfg) -> FastAPI:
                 f'&larr; people</a> &middot; <b>{html.escape(p["name"])}</b> '
                 f'&middot; {len(rows):,} photographs</div>'
                 f'<div class="grid">'
-                f'{"".join(card(r, back=f"/person/{person_id}") for r in rows)}'
+                f'{cards_by_month(rows, f"/person/{person_id}")}'
                 '</div>')
         return page(f'{p["name"]} — Kuva-arkisto', body)
 
@@ -1953,7 +2196,7 @@ def create_app(cfg) -> FastAPI:
                 + event_panel(con, e, back=f"/event/{event_id}")
                 + f'<div class="meta">In order{shown}</div>'
                 + '<div class="grid">'
-                + "".join(card(r, back=f"/event/{event_id}") for r in rows)
+                + cards_by_month(rows, f"/event/{event_id}")
                 + '</div>')
         return page(f"{title} — Kuva-arkisto", body)
 

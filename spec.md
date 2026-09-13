@@ -1333,6 +1333,12 @@ These are deliberately *not* chips. A chip answers "what am I looking for"; thes
 want to check", and most are auditing tools rather than searches — nobody types *place-source is a
 folder name* as a question. They belong on a row that stays out of the way until wanted.
 
+**Set, a filter is a chip all the same.** Found in use, 2026-09-13: folded away, nothing on the page
+said which filters were on, and a result narrowed by a forgotten *just two* reads as an archive with
+photographs missing. So a filter is set in its own place but shown in the one row with everything
+typed, carrying the × that takes it back. The argument above is about where a filter is set, not
+about whether it can be seen.
+
 **Views:** grid, timeline by year and month, people, events, places (browsable as the
 tree: country → region → locality, with counts).
 
@@ -1462,7 +1468,7 @@ framework — the UI is a small part of the work and should stay that way.
 
 | Screen | Purpose |
 |---|---|
-| Search | Query box, chips, collapsed filter row, result grid |
+| Search | Query box, a chip for every criterion typed or picked, filters behind one button, grid headed by month |
 | Photo | Everything known about one photograph, and how to correct it |
 | People | Person list, cluster review, merge and split |
 | Events | Event list and timeline |
