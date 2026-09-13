@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import mimetypes
+import re
 import sqlite3
 import zipfile
 from datetime import datetime
@@ -47,6 +48,7 @@ PAGE = """<!doctype html>
   --accent-soft:#e3ecff; --on-accent:#ffffff;
   --person:#6d28d9; --person-soft:#efe7ff; --date:#0f766e; --date-soft:#dff3ef;
   --place:#c2410c; --place-soft:#fdece1; --event:#be185d; --event-soft:#fce7f1;
+  --no:#dc2626; --no-soft:#fdecec;
   --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.09);
 }}
 @media (prefers-color-scheme:dark) {{
@@ -56,6 +58,7 @@ PAGE = """<!doctype html>
     --accent-soft:#1b2848; --on-accent:#0b1020;
     --person:#c9b0ff; --person-soft:#2a2141; --date:#63d4c4; --date-soft:#14302c;
     --place:#ffab7d; --place-soft:#3a2418; --event:#f7a8cf; --event-soft:#3b1a2c;
+    --no:#ff8f8f; --no-soft:#3d1a1c;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.5);
   }}
 }}
@@ -156,6 +159,15 @@ details.pop > summary:hover, details.pop[open] > summary {{ color:var(--ink);
 .crit[data-kind=event] {{ background:var(--event-soft); color:var(--event); }}
 .crit.filter {{ background:var(--surface); border-color:var(--rule);
   color:var(--ink-2); }}
+.crit[data-kind=not] {{ background:var(--no-soft); color:var(--no);
+  padding-left:3px; }}
+.crit[data-kind=not] img {{ width:28px; height:28px; border-radius:50%;
+  object-fit:cover; filter:grayscale(1); opacity:.75; }}
+.crit[data-kind=mode] {{ background:var(--surface); border-color:var(--ink-3); }}
+.crit a.swap {{ display:grid; place-items:center; width:24px; height:24px;
+  border-radius:50%; opacity:.45; }}
+.crit a.swap:hover {{ opacity:1; background:rgba(127,127,127,.22); }}
+.crit a.swap svg.ic {{ width:15px; height:15px; }}
 .rest {{ color:var(--ink-3); font-size:13.5px; }}
 .rest b {{ color:var(--ink-2); font-weight:550; }}
 /* The auditing filters, one button at the end of the chips. Positioned against
@@ -164,9 +176,9 @@ details.filters {{ position:static; }}
 details.filters > summary {{ height:34px; border-radius:999px;
   border-style:dashed; font-size:13.5px; }}
 details.filters form {{ position:absolute; left:20px; right:20px;
-  top:calc(100% + 8px); z-index:8; max-width:1000px; background:var(--surface);
+  top:calc(100% + 8px); z-index:8; max-width:1080px; background:var(--surface);
   border:1px solid var(--rule); border-radius:14px; box-shadow:var(--shadow);
-  padding:18px 20px; display:flex; gap:16px; align-items:flex-end;
+  padding:18px 20px; display:flex; gap:22px; align-items:flex-start;
   flex-wrap:wrap; }}
 details.filters label {{ display:flex; flex-direction:column; gap:5px;
   font-size:11.5px; font-weight:650; color:var(--ink-3);
@@ -177,6 +189,27 @@ details.filters input, details.filters select {{ height:38px; padding:0 10px;
   text-transform:none; letter-spacing:0; }}
 details.filters .clearall {{ color:var(--ink-3); padding:9px 4px; }}
 details.filters .clearall:hover {{ color:var(--ink); }}
+details.filters fieldset {{ border:0; margin:0; padding:0; flex:1;
+  min-width:230px; display:flex; flex-direction:column; gap:8px; }}
+details.filters legend {{ padding:0 0 8px; font-size:11.5px; font-weight:650;
+  color:var(--ink-3); text-transform:uppercase; letter-spacing:.05em; }}
+details.filters label.choice {{ flex-direction:row; align-items:flex-start;
+  gap:10px; padding:8px 11px; border:1px solid var(--rule); border-radius:10px;
+  font-size:14px; font-weight:550; color:var(--ink); text-transform:none;
+  letter-spacing:0; cursor:pointer; }}
+details.filters label.choice:has(input:checked) {{ border-color:var(--accent);
+  background:var(--accent-soft); }}
+details.filters label.choice:has(input:disabled) {{ opacity:.5; cursor:default; }}
+details.filters label.choice input {{ height:auto; margin:3px 0 0; padding:0;
+  accent-color:var(--accent); }}
+details.filters label.choice small {{ display:block; font-size:12px;
+  font-weight:400; color:var(--ink-3); }}
+details.filters .pickrow {{ display:flex; gap:8px; }}
+details.filters .pickrow > * {{ flex:1; min-width:0; }}
+details.filters select:disabled {{ background:var(--soft); color:var(--ink-3); }}
+details.filters .hint {{ margin:0; font-size:12px; color:var(--ink-3); }}
+details.filters .factions {{ flex-basis:100%; display:flex; gap:12px;
+  align-items:center; }}
 /* An unsure reading: shown, never applied. */
 .offer {{ max-width:1500px; margin:0 auto; padding:10px 20px 0; font-size:13.5px;
   color:var(--ink-2); }}
@@ -318,6 +351,7 @@ tr:not(:hover) .fix {{ opacity:.35; }}
 <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
 <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
 <symbol id="i-q" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5M12 17h0"/></symbol>
+<symbol id="i-not" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
 <symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
 </svg>
 <header><div class="bar">
@@ -342,7 +376,11 @@ tr:not(:hover) .fix {{ opacity:.35; }}
 {body}
 <script>document.addEventListener('click',function(e){{
 document.querySelectorAll('details.pop[open]').forEach(function(d){{
-if(!d.contains(e.target))d.removeAttribute('open');}});}});</script>
+if(!d.contains(e.target))d.removeAttribute('open');}});}});
+function when(f){{var y=f.elements.y,m=f.elements.m,d=f.elements.d;if(!y||!m||!d)return;
+var yes=/^[0-9]{{4}}$/.test(y.value);m.disabled=!yes;d.disabled=!yes||!m.value;}}
+document.addEventListener('change',function(e){{if(e.target.form)when(e.target.form);}});
+document.querySelectorAll('form').forEach(function(f){{when(f);}});</script>
 </body></html>"""
 
 
@@ -599,7 +637,7 @@ def create_app(cfg) -> FastAPI:
     PAGE_SIZE = 120
     MAX_RANKED = 600
 
-    FILTERS = ("from", "to", "cam", "faces", "who", "dsrc", "psrc")
+    FILTERS = ("from", "to", "cam", "dsrc", "psrc")
 
     def _qs(q: str, f: dict, **over) -> str:
         """A link back to this search with something changed."""
@@ -633,6 +671,26 @@ def create_app(cfg) -> FastAPI:
                              HAVING COUNT(DISTINCT person_id) = ?)""")
             args.extend([*pids, len(pids)])
 
+        # Who else (§7.4). Only them: no face in it belongs to anybody else,
+        # and a face nobody has named *is* somebody else -- a stranger in the
+        # background takes the photograph out. Measured 2026-09-13, Tommi and
+        # Ansku are together in 919 photographs and the only people in 270,
+        # the same 270 the old count of exactly two faces found. Counted from
+        # detected faces, so somebody turned away is not among them.
+        if r.mode == "only" and pids:
+            marks = ",".join("?" * len(pids))
+            preds.append(
+                f"""NOT EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id
+                                  AND (x.person_id IS NULL
+                                       OR x.person_id NOT IN ({marks})))""")
+            args.extend(pids)
+        elif r.mode == "nobody":
+            preds.append("NOT EXISTS (SELECT 1 FROM faces x "
+                         "WHERE x.asset_id = a.id)")
+        for t in r.excluded:
+            preds.append("NOT EXISTS (SELECT 1 FROM faces x "
+                         "WHERE x.asset_id = a.id AND x.person_id = ?)")
+            args.append(t.ref_id)
         for t in r.places:
             row = con.execute("SELECT path FROM places WHERE id = ?",
                               (t.ref_id,)).fetchone()
@@ -670,23 +728,6 @@ def create_app(cfg) -> FastAPI:
         if f.get("cam"):
             preds.append("(a.camera_model LIKE ? OR a.camera_make LIKE ?)")
             args.extend([f"%{_like(f['cam'])}%"] * 2)
-        if f.get("faces") == "y":
-            preds.append("EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
-        elif f.get("faces") == "n":
-            preds.append("NOT EXISTS (SELECT 1 FROM faces x WHERE x.asset_id = a.id)")
-        if f.get("who"):
-            # How many people are in it, which is a different question from
-            # which people are in it: the chips say who, this says how many, and
-            # together they ask for the two of them and nobody else. Counted
-            # from detected faces, so somebody turned away is not among them.
-            n = f["who"]
-            if n == "3":
-                preds.append("(SELECT COUNT(*) FROM faces x "
-                             "WHERE x.asset_id = a.id) >= 3")
-            elif n in ("1", "2"):
-                preds.append("(SELECT COUNT(*) FROM faces x "
-                             "WHERE x.asset_id = a.id) = ?")
-                args.append(int(n))
         if f.get("dsrc"):
             preds.append("a.taken_at_source = ?")
             args.append(f["dsrc"])
@@ -711,20 +752,26 @@ def create_app(cfg) -> FastAPI:
     # The icon a chip carries, so the reading chosen shows at a glance: Hartola
     # the event and Hartola the place must not look alike (§7.1).
     CHIP_ICONS = {"person": "people", "place": "pin", "event": "event",
-                  "date": "cal"}
+                  "date": "cal", "mode": "people"}
+    # Who else, as a chip says it, and as the sentence for an empty result
+    # says it: "No photograph has Tommi, Ansku and nobody else."
+    MODE_WORDS = {"only": "only these people", "nobody": "no people"}
+    MODE_SAID = {"only": "nobody else", "nobody": "nobody in it"}
+
+    def _term_words(t) -> str:
+        if t.kind == "mode":
+            return MODE_SAID[t.label]
+        return f"not {t.label}" if t.negated else t.label
 
     # What each filter says as a chip. A value not listed is shown as given.
     FILTER_WORDS = {
-        "faces": {"y": "has faces", "n": "no faces"},
-        "who": {"1": "one person", "2": "just two people",
-                "3": "three or more people"},
         "dsrc": {"exif": "date from EXIF", "filename": "date from the filename",
                  "folder": "date from the folder"},
         "psrc": {"gps": "place from the coordinate",
                  "folder": "place from the folder name"},
     }
     FILTER_ICONS = {"from": "cal", "to": "cal", "cam": "camera",
-                    "faces": "people", "who": "people", "dsrc": "sliders",
+                    "dsrc": "sliders",
                     "psrc": "sliders"}
 
     def _icon(name: str) -> str:
@@ -746,6 +793,53 @@ def create_app(cfg) -> FastAPI:
                 WHERE x.person_id = ?
                 ORDER BY x.blur_score DESC LIMIT 1""", (person_id,)).fetchone()
 
+    def year_counts(con) -> list:
+        """(year, photographs), newest first, for the year list.
+
+        Held until the dates change: the key is the count and the sum of every
+        date, so a scan adding photographs or a date put right by hand both
+        invalidate it, and nothing else makes the page re-count 40,000 rows.
+        """
+        key = tuple(con.execute(
+            "SELECT COUNT(taken_at), TOTAL(taken_at) FROM assets").fetchone())
+        if state.get("years_at") != key:
+            state["years"] = [(r[0], r[1]) for r in con.execute(
+                """SELECT strftime('%Y', taken_at, 'unixepoch', 'localtime') y,
+                          COUNT(*) FROM assets WHERE taken_at IS NOT NULL
+                    GROUP BY y ORDER BY y DESC""")]
+            state["years_at"] = key
+        return state["years"]
+
+    def _picked(con, q: str, f: dict, y: str, m: str, d: str,
+                people: str) -> str:
+        """The search the filter form asks for, written back into the box.
+
+        The date and who else may be in it are picked from lists but kept as
+        the words typing them would leave -- `2016-07`, `only` -- so a picked
+        criterion and a typed one are the same chip, removed the same way and
+        carried by the same link. They live nowhere but `q` (§7.4).
+        """
+        r = query.resolve(con, q, place_counts=subtree_counts(con))
+        drop, add = [], []
+        # "keep" is a date the lists cannot show, `kesä 2016` or a range:
+        # changing the camera must not quietly throw it away.
+        if y != "keep":
+            drop += r.dates
+            when = y if re.fullmatch(r"\d{4}", y or "") else ""
+            if when and m.isdigit() and query.parse_date(f"{when}-{int(m):02d}"):
+                when = f"{when}-{int(m):02d}"
+                if d.isdigit() and query.parse_date(f"{when}-{int(d):02d}"):
+                    when = f"{when}-{int(d):02d}"
+            if when and query.parse_date(when):
+                add.append(when)
+        if people in ("with", "only", "nobody"):
+            drop += [t for t in r.terms if t.kind == "mode"]
+            if people == "only" and r.people:
+                add.append("only")
+            elif people == "nobody":
+                add.append("nobody")
+        return _qs(" ".join([r.without(*drop), *add]).strip(), f)
+
     def chip_row(con, q, r, f) -> str:
         """Everything the page is searching for, and how to take any of it back.
 
@@ -763,14 +857,27 @@ def create_app(cfg) -> FastAPI:
             if t.kind in seen and t.ref_id:
                 label = f'<a href="{seen[t.kind]}{t.ref_id}">{label}</a>'
             icon = _icon(CHIP_ICONS.get(t.kind, "search"))
-            mark = f'<i title="{t.kind}">{icon}</i>'
+            mark, flip = f'<i title="{t.kind}">{icon}</i>', ""
             if t.kind == "person":
                 face = _face_of(con, t.ref_id) if t.ref_id else None
                 mark = (f'<img src="/face/{face["content_hash"]}/{face["idx"]}" '
                         'alt="" title="person">' if face else
                         f'<i class="av" title="person">{icon}</i>')
+                # Out of the photograph and back in, as a plain link: the
+                # query says "without" before the name, or it does not.
+                other = (t.span.split(" ", 1)[1] if t.negated
+                         else f"without {t.span}")
+                why = ("in the photograph after all" if t.negated
+                       else "not in the photograph")
+                flip = (f'<a class="swap" href="{_qs(r.replace(t, other), f)}" '
+                        f'title="{why}">{_icon("not")}</a>')
+                if t.negated:
+                    label = f"not {label}"
+            elif t.kind == "mode":
+                label = MODE_WORDS[t.label]
+            kind = "not" if t.negated else t.kind
             bits.append(
-                f'<span class="crit" data-kind="{t.kind}">{mark}{label}'
+                f'<span class="crit" data-kind="{kind}">{mark}{label}{flip}'
                 f'<a class="x" href="{gone}" title="not this">&times;</a></span>')
         for k in FILTERS:
             if not f.get(k):
@@ -783,7 +890,7 @@ def create_app(cfg) -> FastAPI:
         if r.text and bits:
             bits.append(f'<span class="rest"><b>{html.escape(r.text)}</b> '
                         'as the description</span>')
-        bits.append(filter_row(q, f))
+        bits.append(filter_row(con, q, r, f))
         return f'<div class="chips">{"".join(bits)}</div>'
 
     def _count_for(con, raw: str, f: dict) -> int:
@@ -820,7 +927,8 @@ def create_app(cfg) -> FastAPI:
         # without saying so is not, and the difference only shows as an
         # unexplained empty page.
         for t in r.terms:
-            for alt in t.also:
+            # "without Reno" read as a place would leave "without" in its name.
+            for alt in (() if t.negated else t.also):
                 other = r.raw.replace(t.span, f"{alt.kind}:{t.span}")
                 take = _qs(other, f)
                 # The count has to be the count *this link would give*, which
@@ -837,28 +945,58 @@ def create_app(cfg) -> FastAPI:
                     f'<a href="{take}">{html.escape(alt.label)}</a>{says}.')
         return f'<div class="offer">{" ".join(bits)}</div>' if bits else ""
 
-    def filter_row(q: str, f: dict) -> str:
-        """The auditing controls, behind one button at the end of the chips (§7.4).
+    def filter_row(con, q: str, r, f: dict) -> str:
+        """Who else, when, and the auditing controls, behind one button (§7.4).
 
-        Not typed: a chip answers "what am I looking for", these answer "what
-        do I want to check", and nobody types `place-source is a folder name`
-        as a question. Once set, each shows as a chip like any other, so the
-        button can stay closed and say only how many are on.
+        Who else and the date are criteria like any typed one, and picking
+        them writes their words into the query (`_picked`). The rest answer
+        "what do I want to check" rather than "what am I looking for", and
+        nobody types `place-source is a folder name` as a question. Set, every
+        one shows as a chip, so the button stays closed and counts the filters.
         """
         def opt(value, label, current):
             sel = " selected" if current == value else ""
             return f'<option value="{value}"{sel}>{label}</option>'
 
         on = sum(1 for k in FILTERS if f.get(k))
-        sel_faces = "".join([
-            opt("", "any", f.get("faces")),
-            opt("y", "with faces", f.get("faces")),
-            opt("n", "without", f.get("faces"))])
-        sel_who = "".join([
-            opt("", "any number", f.get("who")),
-            opt("1", "one alone", f.get("who")),
-            opt("2", "just two", f.get("who")),
-            opt("3", "three or more", f.get("who"))])
+        count = f' <span class="badge">{on}</span>' if on else ""
+
+        mode = r.mode or "with"
+
+        def choice(value, title, sub, off=False):
+            chk = " checked" if mode == value else ""
+            dis = " disabled" if off else ""
+            return (f'<label class="choice"><input type="radio" name="people" '
+                    f'value="{value}"{chk}{dis}><span>{title}'
+                    f'<small>{sub}</small></span></label>')
+
+        who = (choice("with", "In the photograph", "anybody else may be too")
+               + choice("only", "Only them",
+                        "no other face in it" if r.people
+                        else "name somebody first", off=not r.people)
+               + choice("nobody", "No people", "no face found at all"))
+
+        # A year, a month and a day the lists can show are shown in them; any
+        # other date (`kesä 2016`, a range) is kept as it was typed.
+        y = mo = dd = keep = ""
+        if (len(r.dates) == 1
+                and re.fullmatch(r"\d{4}(-\d{2}){0,2}", r.dates[0].label)):
+            y, _, rest = r.dates[0].label.partition("-")
+            mo, _, dd = rest.partition("-")
+            mo, dd = (str(int(mo)) if mo else ""), (str(int(dd)) if dd else "")
+        elif r.dates:
+            keep = ", ".join(t.label for t in r.dates)
+        sel_y = ((f'<option value="keep" selected>{html.escape(keep)}</option>'
+                  if keep else "")
+                 + opt("", "any year", None if keep else y)
+                 + "".join(opt(yr, f"{yr} &middot; {n:,}", y)
+                           for yr, n in year_counts(con)))
+        sel_m = opt("", "any month", mo) + "".join(
+            opt(str(i), datetime(2000, i, 1).strftime("%B"), mo)
+            for i in range(1, 13))
+        sel_d = opt("", "any day", dd) + "".join(
+            opt(str(i), str(i), dd) for i in range(1, 32))
+
         sel_dsrc = "".join([
             opt("", "any", f.get("dsrc")),
             opt("exif", "EXIF", f.get("dsrc")),
@@ -868,36 +1006,49 @@ def create_app(cfg) -> FastAPI:
             opt("", "any", f.get("psrc")),
             opt("gps", "coordinate", f.get("psrc")),
             opt("folder", "folder name", f.get("psrc"))])
-        count = f' <span class="badge">{on}</span>' if on else ""
         return (
             '<details class="pop filters">'
             f'<summary>{_icon("sliders")}Filters{count}</summary>'
             '<form action="/" method="get">'
             f'<input type="hidden" name="q" value="{html.escape(q)}">'
+            '<input type="hidden" name="pick" value="1">'
+            f'<fieldset><legend>People</legend>{who}'
+            '<p class="hint">Type <b>without</b> before a name to leave '
+            'somebody out.</p></fieldset>'
+            '<fieldset><legend>When</legend>'
+            f'<div class="pickrow"><select name="y" aria-label="year">{sel_y}</select>'
+            f'<select name="m" aria-label="month">{sel_m}</select>'
+            f'<select name="d" aria-label="day">{sel_d}</select></div>'
+            '<p class="hint">A year is enough. Typing <b>2016-07</b> or '
+            '<b>kesä 2016</b> works too.</p>'
+            '<div class="pickrow">'
             '<label>from<input type="text" name="from" placeholder="2019-06" '
             f'value="{html.escape(f.get("from", ""))}"></label>'
             '<label>to<input type="text" name="to" placeholder="2020" '
-            f'value="{html.escape(f.get("to", ""))}"></label>'
+            f'value="{html.escape(f.get("to", ""))}"></label></div></fieldset>'
+            '<fieldset><legend>Checking</legend>'
             '<label>camera<input type="text" name="cam" placeholder="any" '
             f'value="{html.escape(f.get("cam", ""))}"></label>'
-            f'<label>faces<select name="faces">{sel_faces}</select></label>'
-            f'<label>people in it<select name="who">{sel_who}</select></label>'
             f'<label>date from<select name="dsrc">{sel_dsrc}</select></label>'
             f'<label>place from<select name="psrc">{sel_psrc}</select></label>'
-            '<button type="submit">Apply</button>'
-            f'<a class="clearall" href="{_qs(q, {})}">Clear filters</a>'
+            '</fieldset>'
+            '<div class="factions"><button type="submit">Apply</button>'
+            f'<a class="clearall" href="{_qs(q, {})}">Clear filters</a></div>'
             '</form></details>')
 
     @app.get("/", response_class=HTMLResponse)
     def home(q: str = Query(default=""), page: int = 0, more: int = 0,
              date_from: str = Query(default="", alias="from"),
              to: str = Query(default=""), cam: str = Query(default=""),
-             faces: str = Query(default=""), who: str = Query(default=""),
-             dsrc: str = Query(default=""), psrc: str = Query(default="")):
+             dsrc: str = Query(default=""), psrc: str = Query(default=""),
+             pick: int = 0, y: str = "", m: str = "", d: str = "",
+             people: str = ""):
         con = connect()
         f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
-             "faces": faces.strip(), "who": who.strip(),
              "dsrc": dsrc.strip(), "psrc": psrc.strip()}
+        if pick:
+            return RedirectResponse(_picked(con, q, f, y, m, d, people),
+                                    status_code=303)
         page = max(0, page)
         total_all = con.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         embedded = con.execute(
@@ -938,7 +1089,7 @@ def create_app(cfg) -> FastAPI:
                 # case: three photographs as an event, 1,286 as a municipality.
                 # A filter alone leaves no chips to name, so there is nothing
                 # to list back and the sentence has to stand without one.
-                names = [html.escape(t.label) for t in r.terms]
+                names = [html.escape(_term_words(t)) for t in r.terms]
                 asked = ("all of that" if not names else names[0] if
                          len(names) == 1 else
                          ", ".join(names[:-1]) + " and " + names[-1])
@@ -1151,11 +1302,9 @@ def create_app(cfg) -> FastAPI:
     def zip_results(q: str = Query(default=""), go: int = 0,
                     date_from: str = Query(default="", alias="from"),
                     to: str = Query(default=""), cam: str = Query(default=""),
-                    faces: str = Query(default=""), who: str = Query(default=""),
                     dsrc: str = Query(default=""), psrc: str = Query(default="")):
         con = connect()
         f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
-             "faces": faces.strip(), "who": who.strip(),
              "dsrc": dsrc.strip(), "psrc": psrc.strip()}
         r = query.resolve(con, q, place_counts=subtree_counts(con))
         where, args = _where(con, r, f)

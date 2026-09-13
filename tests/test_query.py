@@ -385,3 +385,66 @@ def test_a_region_named_after_a_city_is_not_the_city(con):
     assert r.terms[0].label.startswith("Helsinki ·") or \
            r.terms[0].label == "Helsinki"
     assert r.terms[0].held == 164
+
+
+# --------------------------------------------------------------------------
+# Who else is in it
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("typed", ["only Ansku", "Ansku only", "vain Ansku",
+                                   "just ansku"])
+def test_only_makes_the_named_the_only_ones(con, typed):
+    r = query.resolve(con, typed, place_counts=ALL_PLACES)
+    assert [t.label for t in r.people] == ["Ansku"]
+    assert r.mode == "only"
+    assert r.text == ""
+
+
+def test_only_with_nobody_named_is_just_a_word(con):
+    """`only child` names nobody, so there is no one for "only" to be about."""
+    r = query.resolve(con, "only child", place_counts=ALL_PLACES)
+    assert r.terms == [] and r.mode is None
+    assert r.text == "only child"
+
+
+@pytest.mark.parametrize("typed", ["Ansku without Emmiliina",
+                                   "Ansku ilman emmiliina",
+                                   "ansku, not Emmiliina"])
+def test_without_leaves_a_person_out(con, typed):
+    r = query.resolve(con, typed, place_counts=ALL_PLACES)
+    assert [t.label for t in r.people] == ["Ansku"]
+    assert [t.label for t in r.excluded] == ["Emmiliina"]
+    assert r.text == ""
+
+
+def test_without_before_anything_else_is_left_alone(con):
+    r = query.resolve(con, "without shoes", place_counts=ALL_PLACES)
+    assert r.terms == [] and r.text == "without shoes"
+
+
+@pytest.mark.parametrize("typed", ["nobody", "no people", "ei ihmisiä",
+                                   "ilman ihmisiä"])
+def test_asking_for_nobody_needs_no_name(con, typed):
+    r = query.resolve(con, f"Alicante {typed}", place_counts=ALL_PLACES)
+    assert r.mode == "nobody"
+    assert [t.kind for t in r.terms] == ["place", "mode"]
+    assert r.text == ""
+
+
+def test_removing_a_without_takes_the_word_with_it(con):
+    r = query.resolve(con, "Ansku ilman Emmiliina beach", place_counts=ALL_PLACES)
+    assert r.without(r.excluded[0]) == "Ansku beach"
+
+
+def test_a_person_turns_into_without_and_back(con):
+    r = query.resolve(con, "Ansku beach", place_counts=ALL_PLACES)
+    out = r.replace(r.people[0], "without Ansku")
+    assert out == "without Ansku beach"
+    back = query.resolve(con, out, place_counts=ALL_PLACES)
+    assert [t.label for t in back.excluded] == ["Ansku"]
+    assert back.replace(back.excluded[0], "Ansku") == "Ansku beach"
+
+
+def test_several_chips_come_out_at_once(con):
+    r = query.resolve(con, "Ansku Alicante 2019 beach", place_counts=ALL_PLACES)
+    assert r.without(*r.places, *r.dates) == "Ansku beach"

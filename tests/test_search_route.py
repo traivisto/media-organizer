@@ -257,17 +257,16 @@ def test_the_other_reading_promises_what_it_delivers(tmp_path):
     assert "30 photograph" not in body       # not what the place holds
 
 
-def test_how_many_people_are_in_it(client):
-    """"Just the two of them" is a different question from "the two of them"."""
-    body = client.get("/", params={"who": "2"}).text
-    assert "just two people" in body         # the filter shows as a chip
-    assert 'class="badge">1<' in body         # and the button counts it
-    assert 'value="2" selected' in body
+def test_nobody_in_it_is_a_chip(client):
+    """No faces at all in this fixture, so every photograph has nobody in it."""
+    body = client.get("/", params={"q": "nobody"}).text
+    assert 'data-kind="mode"' in body
+    assert "150 photographs" in _meta(body)
 
 
 def test_a_filter_matching_nothing_is_not_an_empty_archive(client):
-    """150 photographs are indexed; none has exactly two faces."""
-    body = client.get("/", params={"who": "2"}).text
+    """150 photographs are indexed; none was taken with a Hasselblad."""
+    body = client.get("/", params={"cam": "Hasselblad"}).text
     assert "Nothing indexed yet" not in body
 
 

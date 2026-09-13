@@ -1239,6 +1239,7 @@ Each chip resolves by its own mechanism:
 | Free text (`kids on a beach at sunset`) | text→vector, cosine search over `vec_images` |
 | Quoted or exact term (`"rippijuhlat"`) | FTS5 over captions, folder labels, event and place names |
 | Person name | join through `faces.person_id` |
+| Who else (`only`, `without Emmi`, `nobody`) | no other face / not that person's face / no face at all |
 | Date expression (`kesä 2019`, `2019-06`) | range over `assets.taken_at` |
 | Place name (`Helsinki`, `Finland`) | join through `places`, **including descendants** |
 
@@ -1319,15 +1320,32 @@ scale that is cheap, and the brute-force path computes every similarity regardle
 
 ### 7.4 Filters
 
-Independent of the query, and collapsed by default: date range, camera, has-faces, **how many people
-are in it**, date-source (useful for auditing the 1998–2008 material), place-source (coordinates
-versus folder name). Person, place and event are chips rather than filters, being what the box is
-for.
+Independent of the query, and collapsed by default: date range, camera, date-source (useful for
+auditing the 1998–2008 material), place-source (coordinates versus folder name). Person, place and
+event are chips rather than filters, being what the box is for — and so are who else may be in the
+photograph and a date picked from a list, below.
 
-**How many people is not which people.** The chips say who is in a photograph; this says how many,
-and the two together ask for *just* the two of them rather than the two of them among a crowd —
-measured on this library, Tommi and Ansku appear together in 850 photographs and alone in 246. It
-counts detected faces, so somebody turned away from the camera is not among them.
+**Who else is in it.** The chips say who is in a photograph; one reading more says who else may be.
+Ordinarily anybody may. **Only them** (`only`, `vain`, `just`) means no other face is in it, and
+**nobody** (`nobody`, `no people`, `ei ihmisiä`) means no face was found at all. A name after
+**without** (`ilman`, `not`, `ei`) leaves that person out. These replace a count of faces (*just two*)
+and a has-faces switch, which asked the same questions less directly: *only Tommi and Ansku* is what
+*just two* was used for, and it needs no number kept in step with the names. Measured 2026-09-13,
+Tommi and Ansku are together in 919 photographs and the only people in 270 — the same 270 the face
+count gave — and 21,600 of 39,884 photographs have nobody in them.
+
+Two consequences are deliberate. A face nobody has named is somebody else, so a stranger in the
+background takes a photograph out of *only them*; the alternative would count every unnamed face as
+one of the people asked for. And it counts detected faces, so somebody turned away from the camera
+is not among them. `only` means nothing without a name beside it — *only child* stays a description
+— and `without` binds only to a name that follows it.
+
+**Picked, and written as words.** Who else, and a date — a year from a list with its count, then a
+month and a day only if wanted — can be chosen in the filter form, and choosing writes into the query
+the words typing would have left: `2016-07`, `only`. A criterion therefore lives in one place, and a
+picked one is the same chip as a typed one, removed the same way and carried by the same link. A
+date the lists cannot show, `kesä 2016` or a range, is kept as typed when the form is used for
+something else.
 
 These are deliberately *not* chips. A chip answers "what am I looking for"; these answer "what do I
 want to check", and most are auditing tools rather than searches — nobody types *place-source is a

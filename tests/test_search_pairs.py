@@ -7,6 +7,9 @@ the intersection.
 
 from __future__ import annotations
 
+import re
+from urllib.parse import parse_qs, urlparse
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -38,6 +41,7 @@ def built(tmp_path):
         5: ["Emmi"],
         6: ["Anski"],
         7: ["Tommi", "Anski"],
+        8: [],                          # nobody at all
     }
     persons = {}
     for name in who:
@@ -197,3 +201,96 @@ def test_the_count_is_the_count_not_the_page_size(built):
 def test_counting_nobody_is_zero(built):
     _, _, dbp = built
     assert cluster.count_photos_with_all(_con(dbp), []) == 0
+
+
+# --- who else is in it ----------------------------------------------------
+
+def _found(client, q) -> int:
+    body = client.get("/", params={"q": q}).text
+    if "No photograph has" in body:
+        return 0
+    got = re.search(r'<div class="meta">([\d,]+) photographs', body)
+    return int(got[1].replace(",", ""))
+
+
+@pytest.mark.parametrize("q,n", [
+    ("Tommi and Emmi", 3),              # among others, as before
+    ("only Tommi and Emmi", 2),         # 3 also holds Anski
+    ("vain Tommi", 1),
+    ("Tommi without Anski", 3),         # 1, 2 and 4
+    ("Tommi ja Emmi ilman Anski", 2),
+    ("nobody", 1),                      # 8 holds no face at all
+    ("Emmi nobody", 0),                 # a contradiction finds nothing
+])
+def test_who_else_is_in_it(built, q, n):
+    client, _, _ = built
+    assert _found(client, q) == n
+
+
+def test_a_face_nobody_has_named_is_somebody_else(built):
+    """A stranger in the background takes a photograph out of "only them"."""
+    client, _, dbp = built
+    con = _con(dbp)
+    aid = con.execute("SELECT id FROM assets WHERE content_hash = ?",
+                      (f"{3:064d}",)).fetchone()[0]
+    con.execute("UPDATE faces SET person_id = NULL WHERE asset_id = ? "
+                "AND idx = 2", (aid,))            # Anski, now unnamed
+    con.commit()
+    assert _found(client, "Tommi Emmi") == 3
+    assert _found(client, "only Tommi Emmi") == 2
+
+
+def test_who_else_is_a_chip_and_a_person_can_be_turned_out(built):
+    client, _, _ = built
+    body = client.get("/", params={"q": "only Tommi without Anski"}).text
+    assert 'data-kind="mode"' in body and "only these people" in body
+    assert 'data-kind="not"' in body
+    assert 'href="/?q=only+Tommi+Anski"' in body              # Anski back in
+    assert 'href="/?q=only+without+Tommi+without+Anski"' in body   # Tommi out
+
+
+def test_picking_writes_the_words_typing_would(built):
+    client, _, _ = built
+    r = client.get("/", params={"q": "Tommi", "pick": 1, "y": "2020", "m": "9",
+                                "d": "", "people": "only"},
+                   follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/?q=Tommi+2020-09+only"
+    assert _found(client, "Tommi 2020-09 only") == 1
+
+
+def test_a_picked_date_replaces_the_typed_one(built):
+    client, _, _ = built
+    r = client.get("/", params={"q": "Tommi 2019 only", "pick": 1, "y": "2020",
+                                "m": "", "d": "", "people": "with"},
+                   follow_redirects=False)
+    assert r.headers["location"] == "/?q=Tommi+2020"
+
+
+def test_an_impossible_day_falls_back_to_its_month(built):
+    client, _, _ = built
+    r = client.get("/", params={"q": "Tommi", "pick": 1, "y": "2020", "m": "2",
+                                "d": "31", "people": "with"},
+                   follow_redirects=False)
+    assert r.headers["location"] == "/?q=Tommi+2020-02"
+
+
+def test_a_date_the_lists_cannot_show_is_kept(built):
+    """`kesä 2020` is no single year, month or day; changing the camera must
+    not quietly lose it."""
+    client, _, _ = built
+    body = client.get("/", params={"q": "Tommi kesä 2020"}).text
+    assert 'value="keep" selected' in body
+    r = client.get("/", params={"q": "Tommi kesä 2020", "pick": 1, "y": "keep",
+                                "people": "with"}, follow_redirects=False)
+    assert parse_qs(urlparse(r.headers["location"]).query)["q"] == \
+        ["Tommi kesä 2020"]
+
+
+def test_the_form_shows_what_the_query_holds(built):
+    client, _, _ = built
+    body = client.get("/", params={"q": "Tommi 2020-09-13 only"}).text
+    assert '<option value="2020" selected>' in body
+    assert '<option value="9" selected>' in body
+    assert '<option value="13" selected>' in body
+    assert 'value="only" checked' in body

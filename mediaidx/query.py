@@ -30,6 +30,7 @@ is the whole reason the box does not send the query to a language model first.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -59,6 +60,17 @@ PREFIXES = ("person", "place", "event", "date", "text")
 # the Finnish half of the list is short by nature.
 _JOINERS = {"and", "or", "with", "the", "a", "an", "of", "in", "at", "on",
             "from", "to", "for", "ja", "tai", "seka", "kanssa"}
+
+# Who else may be in it (§7.4). "only" asks for the people named and nobody
+# else, and means nothing without somebody named -- `only child` stays a
+# description. "without" binds to the name after it and to nothing else, so
+# `without shoes` is left exactly as typed.
+ONLY_WORDS = {"only", "just", "vain", "pelkastaan", "ainoastaan"}
+NOT_WORDS = {"without", "not", "except", "ilman", "ei", "paitsi"}
+# Asking for no people at all, which needs no name. Matched after norm(), so
+# `ei ihmisiä` is written here without its umlauts.
+NOBODY_WORDS = {"nobody", "no one", "no people", "ei ihmisia", "ilman ihmisia",
+                "ei ketaan"}
 
 _PUNCT = " \t\r\n,.;:!?()[]{}<>\"'’“”"
 
@@ -209,7 +221,7 @@ def parse_date(span: str) -> tuple[int, int, str] | None:
 @dataclass(frozen=True)
 class Term:
     """One chip: what it is, what it says, and the words it consumed."""
-    kind: str                       # person | place | event | date
+    kind: str                       # person | place | event | date | mode
     label: str
     span: str                       # as typed, so the chip can be removed again
     ref_id: int | None = None       # persons.id, places.id, events.id
@@ -217,6 +229,7 @@ class Term:
     end: int | None = None
     held: int | None = None         # place only: photographs beneath it
     also: tuple = field(default=(), compare=False)   # other readings of the span
+    negated: bool = False           # person only: asked *not* to be in it
 
     @property
     def sure(self) -> bool:
@@ -235,7 +248,21 @@ class Resolved:
 
     @property
     def people(self):
-        return [t for t in self.terms if t.kind == "person"]
+        """Everyone asked to be in it."""
+        return [t for t in self.terms if t.kind == "person" and not t.negated]
+
+    @property
+    def excluded(self):
+        """Everyone asked not to be: `without Emmi`."""
+        return [t for t in self.terms if t.kind == "person" and t.negated]
+
+    @property
+    def mode(self) -> str | None:
+        """`only`, `nobody`, or None for the ordinary reading, where the people
+        named are in it and anybody else may be too. Asking for nobody outranks
+        asking for only them, being the narrower of the two."""
+        said = {t.label for t in self.terms if t.kind == "mode"}
+        return "nobody" if "nobody" in said else "only" if "only" in said else None
 
     @property
     def places(self):
@@ -249,26 +276,31 @@ class Resolved:
     def dates(self):
         return [t for t in self.terms if t.kind == "date"]
 
-    def without(self, term) -> str:
-        """The query with one chip's words removed -- what its x links to.
+    def without(self, *terms) -> str:
+        """The query with chips' words removed -- what an x links to.
 
         Removing a chip is a plain link back to the same search, so the whole
-        interface works with no JavaScript at all.
+        interface works with no JavaScript at all. Several at once is how a
+        date picked from the list replaces the one that was typed.
         """
-        out, dropped = [], False
-        want = norm(term.span).split()
         toks = _tokens(self.raw)
-        i = 0
-        while i < len(toks):
-            if (not dropped
-                    and [norm(t) for t in toks[i:i + len(want)]] == want):
-                i += len(want)
-                dropped = True
-                continue
-            out.append(toks[i])
-            i += 1
-        return " ".join(out)
+        for term in terms:
+            toks = _swap(toks, term, [])
+        return " ".join(toks)
 
+    def replace(self, term, text: str) -> str:
+        """The query with one chip's words said another way: how a person's
+        chip turns into `without` them, and back."""
+        return " ".join(_swap(_tokens(self.raw), term, _tokens(text)))
+
+
+def _swap(toks: list, term, new: list) -> list:
+    """The first run of tokens spelling `term`, replaced by `new`."""
+    want = norm(term.span).split()
+    for i in range(len(toks) - len(want) + 1):
+        if [norm(t) for t in toks[i:i + len(want)]] == want:
+            return toks[:i] + new + toks[i + len(want):]
+    return toks
 
 def _tokens(q: str) -> list:
     return [t for t in (w.strip(_PUNCT) for w in q.split()) if t]
@@ -515,7 +547,7 @@ def resolve(con, q: str, *, place_counts=None) -> Resolved:
     taken = [False] * len(toks)
     forced = [None] * len(toks)
     quoted = [False] * len(toks)
-    terms, offers = [], []
+    placed, offers = [], []           # (term, index of its first word)
 
     # Explicit prefixes bind one token and are never re-read as anything else,
     # which is the whole point of typing one (§7.1).
@@ -553,18 +585,40 @@ def resolve(con, q: str, *, place_counts=None) -> Resolved:
             if not best.sure and not force:
                 offers.append(best)
                 continue
-            terms.append(best)
+            placed.append((best, i))
             for j in window:
                 taken[j] = True
 
+    # `without Emmi`: the word joins the person's chip, so removing the chip
+    # takes both words and the description is not left holding "without".
+    for k, (t, i) in enumerate(placed):
+        b = i - 1
+        if (t.kind == "person" and b >= 0 and not taken[b] and not quoted[b]
+                and not forced[b] and norm(toks[b]) in NOT_WORDS):
+            placed[k] = (dataclasses.replace(t, span=f"{toks[b]} {t.span}",
+                                             negated=True), b)
+            taken[b] = True
+
+    # Who else: read last, because "only" is about the people already found.
+    named = any(t.kind == "person" and not t.negated for t, _ in placed)
+    for n in (2, 1):
+        for i in range(0, len(toks) - n + 1):
+            window = range(i, i + n)
+            if any(taken[j] or quoted[j] or forced[j] for j in window):
+                continue
+            span = " ".join(toks[i:i + n])
+            key = norm(span)
+            mode = ("nobody" if key in NOBODY_WORDS else
+                    "only" if named and key in ONLY_WORDS else None)
+            if mode:
+                placed.append((Term("mode", mode, span), i))
+                for j in window:
+                    taken[j] = True
+
     rest = [t for j, t in enumerate(toks) if not taken[j]]
-    if terms:
-        stripped = [t for t in rest if norm(t) not in _JOINERS]
-        rest = stripped
-    text = " ".join(rest)
+    if placed:
+        rest = [t for t in rest if norm(t) not in _JOINERS]
     # Chips come out in the order they were typed, not the order they resolved.
-    order = {}
-    for t in terms:
-        order[t] = raw.casefold().find(norm(t.span).split()[0])
-    terms.sort(key=lambda t: order.get(t, 0))
-    return Resolved(terms=terms, text=text, raw=raw, offers=offers)
+    placed.sort(key=lambda p: p[1])
+    return Resolved(terms=[t for t, _ in placed], text=" ".join(rest),
+                    raw=raw, offers=offers)
