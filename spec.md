@@ -1240,7 +1240,7 @@ Each chip resolves by its own mechanism:
 | Quoted or exact term (`"rippijuhlat"`) | FTS5 over captions, folder labels, event and place names |
 | Person name | join through `faces.person_id` |
 | Who else (`only`, `without Emmi`, `nobody`) | no other face / not that person's face / no face at all |
-| Date expression (`kesä 2019`, `2019-06`) | range over `assets.taken_at` |
+| Date expression (`kesä 2019`, `2019-06`, `june 2016 to february 2018`) | range over `assets.taken_at` |
 | Place name (`Helsinki`, `Finland`) | join through `places`, **including descendants** |
 
 Where two or more mechanisms rank rather than filter, results merge by reciprocal rank fusion, so a
@@ -1317,6 +1317,11 @@ little diving.
 **Paging.** Results page at a fixed size with a **next page** control, and the total is always the
 total, never the length of one page. The vector search takes `k = offset + limit`; at this library's
 scale that is cheap, and the brute-force path computes every similarity regardless.
+
+**Order.** An exact result is in time order, newest first unless oldest is asked for; a ranked one is
+best match first unless either time order is. The switch sits beside the count, and the arrows, the
+slideshow and every link the page builds carry it. Put in time order, a ranked result is still the
+photographs the cut chose — the order changes which comes first, not which answer.
 
 ### 7.4 Filters
 
@@ -1518,7 +1523,9 @@ everything it knows and let a person put it right.
   from. A conflict is therefore also flagged under the date itself.
 - **The way through the result is on the photograph**: arrows at its sides, brighter when pointed
   at, ← → on the keyboard and Esc back to the result; its position in the result; and a map pin
-  where there is a coordinate, which still loads nothing until pressed (§10.4).
+  where there is a coordinate, which still loads nothing until pressed (§10.4). Back returns to the
+  result at the photograph's own card, on whichever page now holds it: after walking on with the
+  arrows, the browser's back button would return to where the walk began instead.
 - Shows date, camera, dimensions, coordinates, place, event, caption (M5), people, source hint,
   conflict note, and every known path the file lives at.
 - **Corrections in place** (§4.7): the date, the place, and the person on any one face, each beside

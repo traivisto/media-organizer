@@ -40,8 +40,8 @@ from . import cluster
 from . import places as places_mod
 
 # How many words a single chip may span. Place names run to three ("Isle of
-# Wight"); four is slack rather than a considered limit.
-MAX_SPAN = 4
+# Wight"); a range of dates to five ("june 2016 to february 2018").
+MAX_SPAN = 5
 
 # The bound on a year in a *query*, which is not the bound on a date in a file
 # (§5.1). A query for 1980 is a question about an archive that starts in 1998,
@@ -151,8 +151,8 @@ def parse_date(span: str) -> tuple[int, int, str] | None:
     """(start, end, label) for a date expression, or None.
 
     Understands a bare year, ISO year-month and year-month-day, month/year in
-    either order with either separator, a year range, and a month or season
-    named in Finnish or English beside a year.
+    either order with either separator, a year range, a month or season
+    named in Finnish or English beside a year, and a range between any two.
     """
     s = norm(span)
     if not s:
@@ -165,6 +165,18 @@ def parse_date(span: str) -> tuple[int, int, str] | None:
         if _year_ok(y1) and _year_ok(y2) and y1 <= y2:
             a, b = _span_epoch(y1, 1, y2, 12)
             return a, b, f"{y1}–{y2}"
+
+    # A range between any two of the forms below: `june 2016 to february
+    # 2018`, `kesäkuu 2016 – helmikuu 2018`, `2016-06..2018-02`. It runs from
+    # the start of the first to the end of the second, so a range of months
+    # takes the whole of both. A bare hyphen does not separate -- `2016-06` is
+    # one date by itself -- except between two years, above.
+    for sep in (" to ", " till ", " until ", " - ", " – ", " — ", "–", "—", ".."):
+        if s.count(sep) != 1:
+            continue
+        a, b = (parse_date(side) for side in s.split(sep))
+        if a and b and a[0] < b[1]:
+            return a[0], b[1], f"{a[2]} – {b[2]}"
 
     m = re.fullmatch(r"(\d{4})", s)
     if m and _year_ok(int(m[1])):

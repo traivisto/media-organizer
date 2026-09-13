@@ -19,7 +19,8 @@ import sqlite3
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import (parse_qs, parse_qsl, quote_plus, urlencode,
+                          urlparse)
 
 from fastapi import FastAPI, Form, Query
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
@@ -465,6 +466,17 @@ body.playing.idle {{ cursor:none; }}
   background:var(--ink); color:var(--surface); font-weight:600; }}
 .meta a.play:hover {{ opacity:.88; }}
 .meta a.play svg.ic {{ width:15px; height:15px; }}
+/* Back from a photograph lands on its card, clear of the sticky header and
+   outlined so the eye finds it. */
+.grid figure {{ scroll-margin-top:96px; }}
+.grid figure:target {{ outline:3px solid var(--accent); outline-offset:2px; }}
+/* The order, beside the count. */
+.meta .sort {{ display:inline-flex; margin-left:10px; vertical-align:middle;
+  border:1px solid var(--rule); border-radius:8px; overflow:hidden; }}
+.meta .sort a {{ padding:2px 10px; font-size:12.5px; color:var(--ink-2); }}
+.meta .sort a + a {{ border-left:1px solid var(--rule); }}
+.meta .sort a:hover {{ color:var(--ink); background:var(--soft); }}
+.meta .sort a.on {{ background:var(--ink); color:var(--surface); }}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -605,7 +617,7 @@ def create_app(cfg) -> FastAPI:
         if back:
             to += f"?back={quote_plus(back)}"
         return (
-            f'<figure><a href="{to}">'
+            f'<figure id="p{row["id"]}"><a href="{to}">'
             f'<img loading="lazy" src="/thumb/s/{row["content_hash"]}" alt="">'
             f'<figcaption><b>{html.escape(when)}</b>'
             f'<span>{html.escape(str(right)[:18])}</span></figcaption></a></figure>')
@@ -775,6 +787,10 @@ def create_app(cfg) -> FastAPI:
     MAX_RANKED = 600
 
     FILTERS = ("from", "to", "cam", "dsrc", "psrc")
+    # Carried with a search wherever it goes, but not a filter: the order
+    # narrows nothing, so it is neither a chip nor counted on the button.
+    CARRIED = FILTERS + ("order",)
+    ORDERS = ("newest", "oldest")
 
     def _qs(q: str, f: dict, **over) -> str:
         """A link back to this search with something changed."""
@@ -1149,6 +1165,7 @@ def create_app(cfg) -> FastAPI:
             '<form action="/" method="get">'
             f'<input type="hidden" name="q" value="{html.escape(q)}">'
             '<input type="hidden" name="pick" value="1">'
+            f'<input type="hidden" name="order" value="{html.escape(f.get("order", ""))}">'
             f'<fieldset><legend>People</legend>{who}'
             '<p class="hint">Type <b>without</b> before a name to leave '
             'somebody out.</p></fieldset>'
@@ -1170,7 +1187,8 @@ def create_app(cfg) -> FastAPI:
             f'<label>place from<select name="psrc">{sel_psrc}</select></label>'
             '</fieldset>'
             '<div class="factions"><button type="submit">Apply</button>'
-            f'<a class="clearall" href="{_qs(q, {})}">Clear filters</a></div>'
+            f'<a class="clearall" href="{_qs(q, {"order": f.get("order", "")})}">'
+            'Clear filters</a></div>'
             '</form></details>')
 
     @app.get("/", response_class=HTMLResponse)
@@ -1179,10 +1197,11 @@ def create_app(cfg) -> FastAPI:
              to: str = Query(default=""), cam: str = Query(default=""),
              dsrc: str = Query(default=""), psrc: str = Query(default=""),
              pick: int = 0, y: str = "", m: str = "", d: str = "",
-             people: str = ""):
+             people: str = "", order: str = ""):
         con = connect()
         f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
-             "dsrc": dsrc.strip(), "psrc": psrc.strip()}
+             "dsrc": dsrc.strip(), "psrc": psrc.strip(),
+             "order": order if order in ORDERS else ""}
         if pick:
             return RedirectResponse(_picked(con, q, f, y, m, d, people),
                                     status_code=303)
@@ -1207,9 +1226,11 @@ def create_app(cfg) -> FastAPI:
         if not r.text:
             total = con.execute(
                 f"SELECT COUNT(*) FROM assets a{clause}", args).fetchone()[0]
+            way = "ASC" if f["order"] == "oldest" else "DESC"
             rows = con.execute(
                 f"SELECT {cols} FROM assets a{clause} "
-                "ORDER BY a.taken_at DESC, a.id DESC LIMIT ? OFFSET ?",
+                f"ORDER BY COALESCE(a.taken_at,0) {way}, a.id {way} "
+                "LIMIT ? OFFSET ?",
                 [*args, PAGE_SIZE, page * PAGE_SIZE]).fetchall()
             # Genuinely nothing indexed -- not merely nothing matching, which a
             # filter can produce on a full library and which must not be
@@ -1238,9 +1259,9 @@ def create_app(cfg) -> FastAPI:
                     focus=" autofocus"))
             what = ("photographs" if where else
                     f"photographs &middot; {embedded:,} searchable")
-            meta = (f"{total:,} {what} &middot; most recent first"
-                    if where or not q else
-                    f"{total_all:,} {what} &middot; most recent first")
+            meta = ((f"{total:,} {what}" if where or not q else
+                     f"{total_all:,} {what}")
+                    + sort_row(q, f, ranked=False, more=more))
             first = rows[0]["id"] if rows else None
             body = (head + f'<div class="meta">{meta}{play_link(first, here)}</div>'
                     f'<div class="grid">'
@@ -1281,7 +1302,7 @@ def create_app(cfg) -> FastAPI:
         hits = embed.search(con, vec, limit=MAX_RANKED,
                             vec_ok=state["vec_ok"], candidate_ids=cand)
         answers = embed.cut([s for _, s in hits])
-        keep = hits if more else hits[:answers]
+        keep = _in_order(con, hits if more else hits[:answers], f["order"])
         window = keep[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
         # The strips answer a different question from the chips: a chip needs
@@ -1310,7 +1331,8 @@ def create_app(cfg) -> FastAPI:
         held = len(hits) - answers
         meta = (f'{len(keep):,} for &ldquo;{html.escape(r.text)}&rdquo; {scope}'
                 + (f' &middot; {held:,} weaker held back' if held and not more
-                   else ""))
+                   else "")
+                + sort_row(q, f, ranked=True, more=more))
         tail = pager(q, f, page, len(keep), PAGE_SIZE,
                      more=more, held=held if not more else 0)
         body = (head + strips + f'<div class="meta">{meta}'
@@ -1662,6 +1684,61 @@ def create_app(cfg) -> FastAPI:
         return (f'<a class="qlink" href="/review">{_icon("q")}{what} '
                 'about this photograph</a>')
 
+    def _in_order(con, hits: list, order: str) -> list:
+        """A ranked result put in time order, when that is asked for.
+
+        The cut has already chosen which photographs answer (§7.3); this
+        changes only which comes first, in the grid and in the walk alike.
+        """
+        if order not in ORDERS or not hits:
+            return hits
+        ids = [a for a, _ in hits]
+        when = {}
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for row in con.execute(
+                    "SELECT id, COALESCE(taken_at, 0) t FROM assets "
+                    f"WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                when[row["id"]] = (row["t"], row["id"])
+        return sorted(hits, key=lambda h: when.get(h[0], (0, h[0])),
+                      reverse=order == "newest")
+
+    def sort_row(q, f, *, ranked: bool, more) -> str:
+        """The order, as a switch beside the count (§7.3).
+
+        An exact result has no order but time, newest first unless asked
+        otherwise; a ranked one is best match first and may be put in time
+        order instead. Changing it starts again from the first page.
+        """
+        choices = ((("", "Best match"), ("newest", "Newest"),
+                    ("oldest", "Oldest")) if ranked else
+                   (("", "Newest"), ("oldest", "Oldest")))
+        now = f.get("order", "")
+        if not ranked and now == "newest":
+            now = ""
+        links = "".join(
+            f'<a href="{_qs(q, {**f, "order": v}, more=more or None)}"'
+            + (' class="on"' if now == v else "") + f'>{label}</a>'
+            for v, label in choices)
+        return f' <span class="sort">{links}</span>'
+
+    def _to_card(back: str, asset_id: int, at: int) -> str:
+        """The way back, landing on this photograph's card rather than the top.
+
+        The browser's own back button returns to where the grid was left, but
+        only to the page the photograph was opened from: after walking on with
+        the arrows, the card wanted is the one walked to. So the anchor is this
+        photograph, and on a search the page is whichever holds it now.
+        """
+        parts = urlparse(back)
+        if at and parts.path in ("", "/"):
+            pairs = [(k, v) for k, v in parse_qsl(parts.query) if k != "page"]
+            page = (at - 1) // PAGE_SIZE
+            if page:
+                pairs.append(("page", str(page)))
+            back = "/?" + urlencode(pairs) if pairs else "/"
+        return f"{back}#p{asset_id}"
+
     def _search_from(back: str):
         """The search a photograph was opened from, read back out of `back`.
 
@@ -1678,10 +1755,10 @@ def create_app(cfg) -> FastAPI:
         def one(k):
             return (qs.get(k) or [""])[0].strip()
 
-        return (one("q"), {k: one(k) for k in FILTERS},
+        return (one("q"), {k: one(k) for k in CARRIED},
                 1 if one("more") in ("1", "true") else 0)
 
-    def _ranked_ids(con, key, r, where, args, more):
+    def _ranked_ids(con, key, r, where, args, more, order=""):
         """The ranked result, in order, kept for as long as it is being walked.
 
         Arrowing through fifty photographs would otherwise encode the query and
@@ -1699,7 +1776,8 @@ def create_app(cfg) -> FastAPI:
         vec = encoder().encode_text([r.text])[0]
         hits = embed.search(con, vec, limit=MAX_RANKED,
                             vec_ok=state["vec_ok"], candidate_ids=cand)
-        keep = hits if more else hits[:embed.cut([s for _, s in hits])]
+        keep = _in_order(con, hits if more else hits[:embed.cut([s for _, s in hits])],
+                         order)
         ids = [a for a, _ in keep]
         state["ranked_key"], state["ranked_ids"] = key, ids
         return ids
@@ -1729,20 +1807,24 @@ def create_app(cfg) -> FastAPI:
                 return None
             key = (cur["t"], cur["id"])
             # Ordered by date and then id: a burst shares a second, and without
-            # the id the order is not total and the walk could loop.
+            # the id the order is not total and the walk could loop. "Next" is
+            # further down the page: earlier in time newest first, later oldest.
+            oldest = f.get("order") == "oldest"
+            ahead, behind = (">", "<") if oldest else ("<", ">")
+            fwd, rev = ("ASC", "DESC") if oldest else ("DESC", "ASC")
             nxt = con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) < (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) DESC, a.id DESC LIMIT 1""",
+                     WHERE (COALESCE(a.taken_at,0), a.id) {ahead} (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) {fwd}, a.id {fwd} LIMIT 1""",
                 [*key, *args]).fetchone()
             prv = con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) ASC, a.id ASC LIMIT 1""",
+                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) {rev}, a.id {rev} LIMIT 1""",
                 [*key, *args]).fetchone()
             before = con.execute(
                 f"""SELECT COUNT(*) FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}""",
+                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}""",
                 [*key, *args]).fetchone()[0]
             total = con.execute(
                 f"SELECT COUNT(*) FROM assets a"
@@ -1751,7 +1833,7 @@ def create_app(cfg) -> FastAPI:
                     before + 1, total)
 
         ids = _ranked_ids(con, (q, tuple(sorted(f.items())), more),
-                          r, where, args, more)
+                          r, where, args, more, f.get("order", ""))
         if asset_id not in ids:
             return None
         i = ids.index(asset_id)
@@ -1828,21 +1910,24 @@ def create_app(cfg) -> FastAPI:
             if cur is None:
                 return 0, 0, []
             key = (cur["t"], cur["id"])
+            oldest = f.get("order") == "oldest"
+            ahead, behind = (">", "<") if oldest else ("<", ">")
+            way = "ASC" if oldest else "DESC"
             ids = [x["id"] for x in con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) < (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) DESC, a.id DESC LIMIT ?""",
+                     WHERE (COALESCE(a.taken_at,0), a.id) {ahead} (?, ?){pred}
+                     ORDER BY COALESCE(a.taken_at,0) {way}, a.id {way} LIMIT ?""",
                 [*key, *args, n])]
             before = con.execute(
                 f"""SELECT COUNT(*) FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) > (?, ?){pred}""",
+                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}""",
                 [*key, *args]).fetchone()[0]
             total = con.execute(
                 "SELECT COUNT(*) FROM assets a"
                 + (f" WHERE {where}" if where else ""), args).fetchone()[0]
             return total, before + 2, ids
         ranked = _ranked_ids(con, (q, tuple(sorted(f.items())), more),
-                             r, where, args, more)
+                             r, where, args, more, f.get("order", ""))
         if asset_id not in ranked:
             return 0, 0, []
         i = ranked.index(asset_id)
@@ -2012,7 +2097,7 @@ if(st.dataset.play==='1')play();
         not a search: arriving from a person or a place is not a walk."""
         got = _neighbours(con, asset_id, back)
         if got is None:
-            return "", "", ""
+            return "", "", "", 0
         prv, nxt, at, total = got
         b = quote_plus(back)
 
@@ -2025,7 +2110,7 @@ if(st.dataset.play==='1')play();
 
         return (step(prv, "prev", "Previous (&larr;)", "left"),
                 step(nxt, "next", "Next (&rarr;)", "right"),
-                f'<span class="pos">{at:,} of {total:,}</span>')
+                f'<span class="pos">{at:,} of {total:,}</span>', at)
 
     # Arrow keys, because a result set is walked rather than clicked through,
     # and Esc back to it. No framework, and the links work without it.
@@ -2163,7 +2248,7 @@ if(st.dataset.play==='1')play();
                    f'title="Show it on a map (loads a map from '
                    f'{html.escape(host)})">{_icon("pin")}</a>')
 
-        prev_a, next_a, pos = _walk(con, asset_id, back)
+        prev_a, next_a, pos, at = _walk(con, asset_id, back)
         # The slideshow plays from here, and only where there is a result to
         # play through.
         slide = stage = ""
@@ -2190,7 +2275,8 @@ if(st.dataset.play==='1')play();
         body = (
             f'<div class="viewer"><section class="stage"{stage}>'
             '<div class="progress" id="prog"></div><div class="vbar">'
-            f'<a class="vbtn" id="go-back" href="{html.escape(back)}" '
+            f'<a class="vbtn" id="go-back" '
+            f'href="{html.escape(_to_card(back, asset_id, at))}" '
             f'title="Back (Esc)">{_icon("back")}'
             f'{"Back to the results" if pos else "Back"}</a>{pos}'
             f'<span class="spacer"></span>{slide}{pin}'

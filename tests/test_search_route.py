@@ -172,12 +172,12 @@ def test_the_way_back_keeps_the_page(client):
 def test_the_photograph_honours_it(client):
     aid = 1
     body = client.get(f"/photo/{aid}", params={"back": "/?q=Alicante"}).text
-    assert 'href="/?q=Alicante"' in body
+    assert 'href="/?q=Alicante#p1"' in body
 
 
 def test_a_photograph_reached_directly_falls_back_to_the_front(client):
     body = client.get("/photo/1").text
-    assert 'id="go-back" href="/"' in body
+    assert 'id="go-back" href="/#p1"' in body
 
 
 @pytest.mark.parametrize("hostile", [
@@ -187,7 +187,7 @@ def test_the_way_back_is_never_off_this_application(client, hostile):
     """`back` arrives in the URL, so it is only ever followed as a local path."""
     body = client.get("/photo/1", params={"back": hostile}).text
     assert hostile not in body
-    assert 'id="go-back" href="/"' in body
+    assert 'id="go-back" href="/#p1"' in body
 
 
 # --------------------------------------------------------------------------
@@ -403,3 +403,55 @@ def test_a_photograph_from_elsewhere_has_no_slideshow(client):
         f"/photo/{ids[0]}", params={"back": "/?q=Alicante"}).text
     assert 'id="play"' not in client.get(
         f"/photo/{ids[0]}", params={"back": "/person/1"}).text
+
+
+# --------------------------------------------------------------------------
+# The order, and the way back to the card
+# --------------------------------------------------------------------------
+
+def test_the_order_can_be_turned_round(client):
+    newest = _ids_on(client, q="Alicante")
+    oldest = _ids_on(client, q="Alicante", order="oldest")
+    assert oldest == list(reversed(newest))
+    body = client.get("/", params={"q": "Alicante"}).text
+    assert 'class="sort"' in body and "order=oldest" in body
+
+
+def test_the_arrows_and_the_slides_follow_the_order(client):
+    oldest = _ids_on(client, q="Alicante", order="oldest")
+    back = "/?q=Alicante&order=oldest"
+    body = client.get(f"/photo/{oldest[1]}", params={"back": back}).text
+    assert f'/photo/{oldest[0]}?back=' in body
+    assert f'/photo/{oldest[2]}?back=' in body
+    assert "2 of 75" in body
+    d = client.get("/slides", params={"back": back, "at": oldest[0],
+                                      "n": 3}).json()
+    assert [s["id"] for s in d["slides"]] == oldest[1:4]
+
+
+def test_a_ranked_result_can_be_put_in_time_order(client):
+    """The same answers the cut chose, in another order."""
+    best = _ids_on(client, q="text:whatever")
+    newest = _ids_on(client, q="text:whatever", order="newest")
+    assert sorted(newest) == sorted(best)
+    back = "/?q=text:whatever&order=newest"
+    body = client.get(f"/photo/{newest[1]}", params={"back": back}).text
+    assert f'/photo/{newest[0]}?back=' in body
+    assert "2 of 15" in body
+
+
+def test_back_lands_on_the_photograph_in_the_results(client):
+    ids = _ids_on(client, q="Alicante")
+    body = client.get(f"/photo/{ids[3]}", params={"back": "/?q=Alicante"}).text
+    assert f'id="go-back" href="/?q=Alicante#p{ids[3]}"' in body
+    assert f'id="p{ids[3]}"' in client.get("/", params={"q": "Alicante"}).text
+
+
+def test_back_finds_the_page_the_walk_has_reached(client):
+    """Opened on page one and walked past its end, back is page two."""
+    import re
+    ids = _ids_on(client, page=0)
+    body = client.get(f"/photo/{ids[-1]}", params={"back": "/?page=0"}).text
+    nxt = int(re.search(r'href="/photo/(\d+)\?back=[^"]*" id="go-next"', body)[1])
+    after = client.get(f"/photo/{nxt}", params={"back": "/?page=0"}).text
+    assert f'id="go-back" href="/?page=1#p{nxt}"' in after

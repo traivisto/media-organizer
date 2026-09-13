@@ -448,3 +448,28 @@ def test_a_person_turns_into_without_and_back(con):
 def test_several_chips_come_out_at_once(con):
     r = query.resolve(con, "Ansku Alicante 2019 beach", place_counts=ALL_PLACES)
     assert r.without(*r.places, *r.dates) == "Ansku beach"
+
+
+# --------------------------------------------------------------------------
+# Ranges of dates
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["june 2016 to february 2018",
+                                  "kesäkuu 2016 – helmikuu 2018",
+                                  "2016-06..2018-02", "6/2016 - 2/2018",
+                                  "2016-06–2018-02"])
+def test_a_range_of_months_takes_the_whole_of_both(text):
+    first, last = _range(text)
+    assert first == datetime(2016, 6, 1)
+    assert last == datetime(2018, 3, 1)
+
+
+def test_a_backwards_range_is_not_a_date():
+    assert query.parse_date("2018 to 2016") is None
+
+
+def test_a_range_is_one_chip(con):
+    r = query.resolve(con, "Ansku june 2016 to february 2018",
+                      place_counts=ALL_PLACES)
+    assert [t.kind for t in r.terms] == ["person", "date"]
+    assert r.text == ""

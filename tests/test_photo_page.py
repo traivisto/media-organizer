@@ -355,7 +355,7 @@ def test_a_date_conflict_is_flagged_under_the_date(client):
 def test_there_is_always_a_way_back(client):
     c, aid = client
     body = c.get(f"/photo/{aid}", params={"back": "/person/1"}).text
-    assert 'id="go-back" href="/person/1"' in body
+    assert f'id="go-back" href="/person/1#p{aid}"' in body
 
 
 def test_the_pin_is_on_the_picture_only_with_a_coordinate(tmp_path, client):
