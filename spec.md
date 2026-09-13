@@ -1363,7 +1363,16 @@ mediaidx scan [<path>...]         Re-scan for new, changed and missing files.
 mediaidx roots                    List folders previously given to `add`
 mediaidx roots forget <path>      Stop re-scanning it; indexed photos are retained
 
-mediaidx caption <path>...        Run the slow captioning stage over named folders
+mediaidx embed                    Search vectors and thumbnails for what has none
+    --limit N                     Stop after N photographs
+    --workers N                   Reader thread count
+    --batch N                     GPU batch size
+
+mediaidx meta                     Re-read metadata whose stage version is behind the code.
+                                  Headers only; nothing is hashed, no image is decoded
+    --limit N                     Stop after N photographs
+
+mediaidx caption <path>...        Run the slow captioning stage over named folders (M5)
     --model NAME                  Override the configured vision model
     --limit N                     Stop after N images
     --redo                        Re-caption assets that already have one
@@ -1376,8 +1385,15 @@ mediaidx faces                    Run stage 2 over photographs that have no face
 mediaidx faces cluster            Build or update face clusters
     --rebuild                     Recompute from scratch, preserving names
 
+mediaidx places                   Put photographs on the map, by coordinate and by folder name
+    --load                        Rebuild the gazetteer from the extract first
+    --rejected                    List the folder-label matches thrown out by hand
+    --limit N                     How many to list
+
 mediaidx derive                   Rebuild places, events and the review queue
     --no-places                   Leave the places alone; rebuild only events and the queue
+
+mediaidx people                   Who has been named, and how much of the library they cover
 
 mediaidx events                   What the archive says happened, and when
     --unnamed                     Only the ones with no name
@@ -1387,10 +1403,19 @@ mediaidx review                   Open the review queue in the browser
     --no-open                     Print the address instead of opening a browser
 mediaidx serve                    Start the local web UI  (default http://localhost:8710)
 
+mediaidx search <phrase>          Search from the terminal
+    --limit N                     How many results
+
 mediaidx status                   Per-stage counts: done, pending, failed
+    --conflicts                   Where EXIF and the filename disagree
+    --errors                      Files that failed, and why
+    --limit N                     How many to list
+
 mediaidx doctor                   Check GPU, models, exiftool, NAS reachability, DB integrity
 mediaidx export [people] [file]   Write out everything decided by hand, as JSON
 mediaidx import [people] [file]   Read one back, into a rebuilt database if need be
+mediaidx corrections              What has been put right by hand, and where it goes
+    --export FILE                 Write just those out as JSON
 ```
 
 `add` is idempotent and safe to re-run over the whole library at any time.
@@ -1485,17 +1510,25 @@ and two files of one name in different folders both survive, the later numbered.
 
 ## 9. Configuration
 
-TOML, at `%APPDATA%\mediaidx\config.toml`, overridable with `--config`.
+TOML, at `~\.mediaidx\config.toml` — written there by `setup.ps1`, and found through the
+`MEDIAIDX_CONFIG` user environment variable, which that script sets. `--config` overrides both.
+§10.5 says why the runtime is in the profile root rather than `%LOCALAPPDATA%`; a process that
+does not inherit `MEDIAIDX_CONFIG` reads a different file, so pass `--config` explicitly when it
+matters whose configuration is being read.
 
 ```toml
 [paths]
 # Runtime data — MUST NOT be inside OneDrive or any syncing folder. See §10.5.
-database   = "C:/Users/traiv/AppData/Local/mediaidx/photos.db"
-thumbnails = "C:/Users/traiv/AppData/Local/mediaidx/thumbs"
-logs       = "C:/Users/traiv/AppData/Local/mediaidx/logs"
+database   = "C:/Users/traiv/.mediaidx/photos.db"
+thumbnails = "C:/Users/traiv/.mediaidx/thumbs"
+logs       = "C:/Users/traiv/.mediaidx/logs"
 
 # Irreplaceable, tiny, and worth backing up — so this one lives with the project.
 names_export = "C:/Users/traiv/OneDrive/My Digital Solutions/Media classifier/names.json"
+
+# The GeoNames extract behind place search (§6.3). Regenerable; reloaded with
+# `mediaidx places --load`.
+gazetteer  = "C:/Users/traiv/.mediaidx/gazetteer"
 
 # No roots are configured. Folders are indexed by passing them to `add`,
 # and recorded from that; `mediaidx roots` lists what has accumulated.
@@ -1540,7 +1573,10 @@ min_face_px        = 40
 det_size           = 640            # SCRFD input; faces are filtered at 1600 px scale
 face_thumbnails    = true           # crops written during the pass, for the review UI
 cluster_min_size   = 4
+# Two bounds, both in force (§6.1). Near enough is enough on its own; a little
+# further is allowed only when the five nearest named faces name the same person.
 assign_threshold   = 0.42           # cosine distance for incremental assignment
+assign_agreed      = 0.50           # ...and how far it may reach when they agree
 
 [events]
 time_gap_hours     = 4
@@ -1550,6 +1586,15 @@ min_event_assets   = 5              # below this a run is not an event at all
 # question. See 6.4: five would put 1,785 questions in the queue.
 queue_min_assets   = 20
 queue_min_faces    = 10
+
+[places]
+# A folder label matching a place's own name is accepted whatever its size; one
+# matching only an exonym must clear this, or `Nina` resolves to Neenah,
+# Wisconsin (§6.3).
+exonym_min_population = 50000
+
+[tools]
+exiftool = ""                       # empty means: find it on PATH
 ```
 
 Note what is absent: no host, share or library path, and no person-to-folder mapping. Person
@@ -1658,11 +1703,22 @@ of these files and actively dangerous for others.
 
 | File | Location | Why |
 |---|---|---|
-| Source, `spec.md`, `config.toml` | Project folder (OneDrive) | Small, versionable, worth syncing |
+| Source, `spec.md` | Project folder (OneDrive) | Small, versionable, worth syncing |
 | `names.json` export | Project folder (OneDrive) | The only irreplaceable data (P6, P8). Backed up for free, and versioned |
-| `photos.db` | `%LOCALAPPDATA%\mediaidx\` | **Never in OneDrive** |
-| Thumbnail cache | `%LOCALAPPDATA%\mediaidx\` | 1.5 GB of regenerable files; syncing it is pure waste |
-| Logs | `%LOCALAPPDATA%\mediaidx\` | Churns constantly |
+| `config.toml` | `~\.mediaidx\` | Machine-specific: it names paths on *this* machine, so it does not travel with the source. Written by `setup.ps1`, found through `MEDIAIDX_CONFIG` |
+| `photos.db` | `~\.mediaidx\` | **Never in OneDrive** |
+| Thumbnail cache | `~\.mediaidx\` | 1.5 GB of regenerable files; syncing it is pure waste |
+| Logs | `~\.mediaidx\` | Churns constantly |
+| Pre-run snapshots of the handwork | `~\.mediaidx\backups\` | Written before anything that names thousands of faces at once; last ten kept. They undo a bad run, not a dead disk — `names.json` is the backup |
+
+**And the profile root rather than `%LOCALAPPDATA%`,** which would be conventional. Two reasons,
+both found the hard way. The Claude desktop app is an MSIX package, so processes it launches have
+their `AppData\Local` writes redirected into a package-private store under
+`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local\`, where the files are invisible to Explorer
+and to the user's own shells — a silent, thoroughly confusing failure. And `C:\mediaidx`, which an
+earlier version used, is worse still: root-level folders grant `Authenticated Users` Modify, and
+this index holds face embeddings and the names of a family. The profile root is neither
+virtualised nor world-readable.
 
 **A SQLite database must not live in a syncing folder.** Three independent failure modes: OneDrive
 can lock or replace a file mid-transaction, corrupting the database; WAL and shared-memory

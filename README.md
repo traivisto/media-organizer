@@ -29,6 +29,89 @@ M3 is split because only M3a reads files. Clustering and the people UI work
 entirely from the database and the local face crops, so they can be re-run as
 often as a threshold needs changing without touching the NAS again.
 
+## Routine use
+
+Three things recur. Everything after this section is background, for when one of
+them raises a question. The commands are spelled `mediaidx`; if the alias is not
+on your path, see [Use](#use) for the full path to the executable.
+
+### Looking at photographs
+
+```
+mediaidx serve
+```
+
+Then <http://localhost:8710>. Searching, browsing, naming a face, naming an
+event and correcting something the application got wrong all happen there, and
+none of them needs the command line — the UI writes straight to the index. This
+is the only one of the three you will run often.
+
+### New photographs in the archive
+
+Every stage is incremental and does only what is outstanding, so the sequence is
+safe to run whenever, and a run with nothing to do costs seconds:
+
+```
+mediaidx scan            new, changed and missing files
+mediaidx embed           search vectors and thumbnails for the new photographs
+mediaidx faces           detect and vectorise their faces (wants the GPU)
+mediaidx faces cluster   attach the new faces to people already named
+mediaidx derive          places, events and the review queue
+```
+
+**`scan` revisits only the folders that were passed to `add`.** On this library
+those are the year folders, `1998` through `2026` — not `Pictures` itself.
+Photographs dropped into a year that is already indexed are found. A **new**
+top-level folder is not, and nothing will look wrong: `scan` reports no changes,
+because as far as it knows there is nothing there to look at. `mediaidx roots`
+lists what is actually being watched. A new folder is indexed once, by hand, and
+is a root from then on:
+
+```
+mediaidx add "\\TRaDiskStation\Media\Pictures\2027"
+```
+
+Then the same four commands from `embed` onwards. If the folder is mostly of one
+person, `add --person Emmi` seeds the face naming; if its name carries nothing a
+reader would recognise, `add --label "..."` gives it one.
+
+### After a naming session
+
+Naming is done in the UI, but one command afterwards is worth more than the
+session that preceded it:
+
+```
+mediaidx faces cluster
+mediaidx export
+```
+
+A face somebody named by hand is the surest evidence in the database, and
+`cluster` lets it speak: every unnamed face is matched against the named ones,
+and near enough — or a little further, when the five nearest agree — takes the
+name. Corrections made by hand have produced about 75 further named faces each.
+
+`export` then writes `names.json`, the one thing here that cannot be rebuilt
+from the archive. Commit it. The dated snapshots under `~\.mediaidx\backups\`
+are written automatically before anything that names thousands of faces at once,
+but they are local and only the last ten are kept: they protect you from a bad
+run, not from a dead disk.
+
+### Less often
+
+| When | What to run |
+|---|---|
+| Photographs were moved or renamed on the NAS | `scan`, then `derive`. Identity is the content hash, so names and corrections follow the file; anything gone is marked missing, never deleted |
+| The code was updated | `mediaidx meta` re-reads what a new stage version made stale, and `embed` and `faces` do the same for themselves. Schema migrations run on their own |
+| A threshold in `config.toml` changed | `faces cluster --rebuild` recomputes from scratch — about 19 minutes, names preserved by majority vote |
+| Something looks wrong | `doctor` for the environment and the GPU, `status --errors` for files that failed, `status --conflicts` where EXIF and the filename disagree |
+| A folder should no longer be watched | `roots forget <folder>`. Photographs already indexed are kept |
+| **The machine or its disk was replaced** | The index lives outside OneDrive by design, so it is not backed up. `setup.ps1`, `add` each folder, `embed`, `faces`, `faces cluster`, then **`import`** to put every name and correction back from `names.json`, and `derive`. Hours of machine time, and no handwork lost |
+
+That last row is the reason `names.json` exists. Its one delicate step has been
+tested — restoring into a copy of the library with every name and person deleted
+brought all of them back, counts unchanged (spec §8.1) — but the path as a whole,
+from an empty machine, has never been walked.
+
 ## Places
 
 `mediaidx places` puts photographs on the map from two sources, and never
