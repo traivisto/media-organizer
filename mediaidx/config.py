@@ -60,7 +60,13 @@ DEFAULTS: dict = {
         "det_size": 640,
         "face_thumbnails": True,
         "cluster_min_size": 4,
+        # Two bounds, both in force (spec 6.1): near enough is enough on its
+        # own, and a little further is allowed when the five nearest named
+        # faces agree. Both are read from here by cluster.assign, so both
+        # belong here -- a tunable that appears only as a module constant is a
+        # tunable nobody finds.
         "assign_threshold": 0.42,
+        "assign_agreed": 0.50,
     },
     "events": {
         # A gap longer than this ends an event; so does a jump further than
