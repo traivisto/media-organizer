@@ -793,7 +793,12 @@ def cmd_serve(args) -> int:
     if not cfg.database.exists():
         print("no database yet -- run `mediaidx add <folder>` first", file=sys.stderr)
         return 1
-    print(f"  http://{args.host}:{args.port}\n  ctrl-c to stop")
+    if args.read_only:
+        cfg.ui["read_only"] = True
+    print(f"  http://{args.host}:{args.port}"
+          + ("   (viewing copy: nothing can be changed)"
+             if cfg.ui.get("read_only") else "")
+          + "\n  ctrl-c to stop")
     serve.run(cfg, host=args.host, port=args.port)
     return 0
 
@@ -1025,6 +1030,8 @@ def build_parser() -> argparse.ArgumentParser:
     sv = sub.add_parser("serve", help="open the local search UI")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8710)
+    sv.add_argument("--read-only", action="store_true",
+                    help="a viewing copy: the same screens, nothing that changes anything")
     sv.set_defaults(func=cmd_serve)
 
     d = sub.add_parser("doctor", help="check the environment")

@@ -1431,6 +1431,7 @@ mediaidx events                   What the archive says happened, and when
 mediaidx review                   Open the review queue in the browser
     --no-open                     Print the address instead of opening a browser
 mediaidx serve                    Start the local web UI  (default http://localhost:8710)
+    --read-only                   A viewing copy: the same screens, nothing that changes anything
 
 mediaidx search <phrase>          Search from the terminal
     --limit N                     How many results
@@ -1581,6 +1582,29 @@ compressed, because a JPEG does not compress twice.
 which is several times what §1.2's 100 Mbps assumption predicts, and worth re-measuring before that
 number is relied on again. A copy that has gone missing is skipped rather than failing the archive,
 and two files of one name in different folders both survive, the later numbered.
+
+---
+
+### 8.3 A viewing copy
+
+The archive is kept in one place and may be looked at from another: `serve --read-only`, or
+`[ui] read_only = true`, serves the same screens with nothing that changes anything. It exists so
+that a copy on other hardware — a NAS, reached from a phone — can be looked at without being able to
+drift from the database that is kept, which stays the only place names and corrections are made.
+
+Three separate things hold, and each would be enough alone:
+
+- **The database is opened read-only**, so SQLite itself refuses a write. This is the one promise
+  not kept by the application's own code.
+- **Every request that is not a read is refused**, in one place rather than route by route, so a
+  route added later is covered without anyone remembering to.
+- **No form that changes anything is drawn.** The corrections, the naming and merging, the review
+  queue, the folder rejections and *open on this computer* are left out — also in one place — and
+  the page says *Viewing copy*. What is known and where each fact came from stays: *Edit & details*
+  becomes *Details*.
+
+The review queue is not offered. It is where the archive is put right, and that happens where the
+archive is kept.
 
 ---
 

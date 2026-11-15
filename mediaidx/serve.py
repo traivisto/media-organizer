@@ -28,7 +28,8 @@ from urllib.parse import (parse_qs, parse_qsl, quote_plus, urlencode,
 
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
-                               RedirectResponse, Response, StreamingResponse)
+                               PlainTextResponse, RedirectResponse, Response,
+                               StreamingResponse)
 
 from . import cluster
 from . import corrections
@@ -490,6 +491,10 @@ body.playing.idle {{ cursor:none; }}
 .toast {{ position:absolute; left:50%; bottom:18px; transform:translateX(-50%);
   z-index:4; padding:8px 14px; border-radius:10px; background:rgba(20,22,26,.92);
   color:#fff; font-size:13.5px; white-space:nowrap; }}
+/* A viewing copy says so, quietly, where the eye passes on every page. */
+.viewonly {{ padding:4px 10px; border:1px solid var(--rule); border-radius:999px;
+  font-size:12px; font-weight:550; color:var(--ink-3); white-space:nowrap; }}
+@media (max-width:720px) {{ .viewonly {{ display:none; }} }}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -515,6 +520,7 @@ body.playing.idle {{ cursor:none; }}
 <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
 <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
 <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h0"/></symbol>
 <symbol id="i-odd" viewBox="0 0 24 24"><path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z"/></symbol>
 </svg>
 <header><div class="bar">
@@ -524,7 +530,7 @@ body.playing.idle {{ cursor:none; }}
     <input type="search" name="q" value="{q}" placeholder="{placeholder}"{focus}>
     {clear}<button type="submit">Search</button>
   </form>
-  <div class="spacer"></div>
+  <div class="spacer"></div>{mark}
   <details class="pop browse"><summary><svg class="ic"><use href="#i-grid"/></svg><b>Browse</b><svg class="ic"><use href="#i-chev"/></svg></summary>
     <div class="menu">
       <a href="/"><svg class="ic"><use href="#i-photo"/></svg>Photographs</a>
@@ -532,7 +538,7 @@ body.playing.idle {{ cursor:none; }}
       <a href="/places"><svg class="ic"><use href="#i-pin"/></svg>Places</a>
       <a href="/events"><svg class="ic"><use href="#i-event"/></svg>Events</a>
       <hr>
-      <a href="/review"><svg class="ic"><use href="#i-q"/></svg>Review{badge}</a>
+      {review}
       <a href="/odd"><svg class="ic"><use href="#i-odd"/></svg>Odd ones</a>
     </div></details>
 </div></header>
@@ -566,11 +572,36 @@ def create_app(cfg) -> FastAPI:
 
     state: dict = {"encoder": None}
 
+    # A viewing copy (§8.3): the same screens with nothing that changes
+    # anything. Set by `[ui] read_only` or `serve --read-only`.
+    ro = bool(cfg.ui.get("read_only"))
+
     def connect() -> sqlite3.Connection:
-        con = db.connect(cfg.database, create=False)
+        if ro:
+            # Opened so that SQLite itself refuses a write. Hiding the forms
+            # and turning the requests away are both promises made by this
+            # file; this one is kept by the database.
+            path = Path(cfg.database)
+            if not path.exists():
+                raise FileNotFoundError(f"no database at {path}")
+            con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True,
+                                  timeout=30.0, isolation_level=None)
+        else:
+            con = db.connect(cfg.database, create=False)
         con.row_factory = sqlite3.Row
         state["vec_ok"] = embed.vec_index_ready(con)
         return con
+
+    if ro:
+        @app.middleware("http")
+        async def view_only(request: Request, call_next):
+            """Everything that changes something arrives as a POST, so one
+            refusal here covers every such route, including any added later."""
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                return PlainTextResponse(
+                    "This is a viewing copy of the archive. Nothing can be "
+                    "changed here.", status_code=403)
+            return await call_next(request)
 
     def encoder():
         if state["encoder"] is None:
@@ -591,7 +622,7 @@ def create_app(cfg) -> FastAPI:
         the queue existed has no such table, which is no questions, not a 500.
         """
         try:
-            con = db.connect(cfg.database, create=False)
+            con = connect()
         except FileNotFoundError:
             return 0
         try:
@@ -602,6 +633,11 @@ def create_app(cfg) -> FastAPI:
         finally:
             con.close()
 
+    # A form that posts, wherever it is drawn. In a viewing copy none of them
+    # reaches the page: taken out in the one place every page passes through,
+    # so a screen added later cannot forget to leave its buttons off.
+    POST_FORM = re.compile(r'<form\b[^>]*method="post".*?</form>', re.S)
+
     def layout(title: str, body: str, q: str = "", focus: str = "") -> str:
         """Every page in the one frame: the box, the way to clear it, the menu.
 
@@ -609,10 +645,19 @@ def create_app(cfg) -> FastAPI:
         """
         clear = ('<a class="clear" href="/" title="Clear the search">'
                  '<svg class="ic"><use href="#i-x"/></svg></a>' if q else "")
+        if ro:
+            return PAGE.format(
+                title=title, q=q, focus=focus, clear=clear, review="",
+                mark='<span class="viewonly" title="Nothing can be changed '
+                     'here">Viewing copy</span>',
+                placeholder=PLACEHOLDER, body=POST_FORM.sub("", body))
         n = open_questions()
         badge = f'<span class="badge">{n:,}</span>' if n else ""
+        review = ('<a href="/review"><svg class="ic"><use href="#i-q"/></svg>'
+                  f'Review{badge}</a>')
         return PAGE.format(title=title, q=q, focus=focus, clear=clear,
-                           badge=badge, placeholder=PLACEHOLDER, body=body)
+                           review=review, mark="", placeholder=PLACEHOLDER,
+                           body=body)
 
     def safe_back(where: str) -> str:
         """A return path, or the front page if it is not one.
@@ -1672,6 +1717,8 @@ def create_app(cfg) -> FastAPI:
 
     def _fix_form(asset_id, kind, back, *, value="", placeholder="",
                   extra="") -> str:
+        if ro:
+            return ""
         return (
             f'<form method="post" action="/photo/{asset_id}/{kind}">'
             f'<input type="hidden" name="back" value="{html.escape(back)}">'
@@ -1681,6 +1728,8 @@ def create_app(cfg) -> FastAPI:
             '<button type="submit">put it right</button></form>')
 
     def _undo_form(asset_id, kind, back, *, idx=None) -> str:
+        if ro:
+            return ""
         return (f'<form method="post" action="/photo/{asset_id}/uncorrect">'
                 f'<input type="hidden" name="back" value="{html.escape(back)}">'
                 f'<input type="hidden" name="kind" value="{kind}">'
@@ -1695,6 +1744,8 @@ def create_app(cfg) -> FastAPI:
         them may be a question nobody has answered yet. Reaching them from here
         saves hunting for the one that mentions this picture.
         """
+        if ro:                      # answered where the archive is kept
+            return ""
         rows = con.execute(
             """SELECT q.id, q.kind, q.suggestion FROM review_queue q
                 WHERE q.status = 'open' AND (
@@ -2183,8 +2234,8 @@ if(st.dataset.play==='1')play();
             date_note = "put right by hand"
         # 1,294 photographs carry a date conflict, which is worth a line under
         # the date itself rather than only in the details.
-        warn = ('<div class="warn">Its dates disagree &mdash; see Edit &amp; '
-                'details</div>'
+        warn = ('<div class="warn">Its dates disagree &mdash; see '
+                f'{"Details" if ro else "Edit &amp; details"}</div>'
                 if a["conflict_note"] and ("date", -1) not in fixed else "")
         rows = "".join([
             _fact("taken", html.escape(when), note=date_note,
@@ -2288,20 +2339,24 @@ if(st.dataset.play==='1')play();
             slide = slide_controls()
         note = f'<div class="notice">{html.escape(msg)}</div>' if msg else ""
         paths = "".join(f'<div>{html.escape(f["path"])}</div>' for f in files)
-        # Open again after a correction, so several can be made in a row.
+        # Open again after a correction, so several can be made in a row. A
+        # viewing copy keeps the details -- where each fact came from, the
+        # paths, the original -- and leaves out the means of changing them.
+        opener = ("" if ro else
+                  f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
+                  f'<input type="hidden" name="back" value="{html.escape(back)}">'
+                  '<button class="linkish" type="submit">Open it on this computer'
+                  '</button></form>')
         details = (
             f'<details class="edit"{" open" if edit or msg else ""}>'
-            f'<summary>{_icon("pen")}Edit &amp; details</summary>'
+            f'<summary>{_icon("info" if ro else "pen")}'
+            f'{"Details" if ro else "Edit &amp; details"}</summary>'
             + (f'<h3>Who is this?</h3><div class="mugs">{"".join(cards)}</div>'
-               if cards else "")
+               if cards and not ro else "")
             + f'<h3>What is known, and from where</h3>{rows}'
             + '<h3>The original</h3>'
             f'<div class="orig"><a href="/full/{asset_id}">See it at full size</a>'
-            f'<a href="/full/{asset_id}?download=1">Download it</a>'
-            f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
-            f'<input type="hidden" name="back" value="{html.escape(back)}">'
-            '<button class="linkish" type="submit">Open it on this computer'
-            '</button></form></div>'
+            f'<a href="/full/{asset_id}?download=1">Download it</a>{opener}</div>'
             f'<div class="paths">{paths}</div></details>')
         body = (
             f'<div class="viewer"><section class="stage"{stage}>'
@@ -2315,12 +2370,13 @@ if(st.dataset.play==='1')play();
             f'title="See the original at full size">{_icon("full")}</a>'
             f'<a class="vbtn" href="/full/{asset_id}?download=1" '
             f'title="Download the original">{_icon("down")}</a>'
-            f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
-            f'<input type="hidden" name="back" value="{html.escape(back)}">'
-            '<button class="vbtn" type="submit" '
-            'title="Open the file in its application on this computer">'
-            f'{_icon("open")}</button></form>'
-            '</div><div class="pic">'
+            + ("" if ro else
+               f'<form class="openfile" method="post" action="/photo/{asset_id}/open">'
+               f'<input type="hidden" name="back" value="{html.escape(back)}">'
+               '<button class="vbtn" type="submit" '
+               'title="Open the file in its application on this computer">'
+               f'{_icon("open")}</button></form>')
+            + '</div><div class="pic">'
             f'{prev_a}<img src="/thumb/m/{h}" alt="">{next_a}'
             '</div><div class="caption" id="cap"></div>'
             '<div class="nas" id="nas" hidden>The NAS is not answering '
@@ -2332,7 +2388,8 @@ if(st.dataset.play==='1')play();
             + warn
             + f'<div class="facts">{who}{where}{event}{camera}</div>'
             + _questions(con, asset_id) + details + '</aside></div>'
-            + WALK_KEYS + OPEN_JS + (SLIDE_JS if pos else ""))
+            + WALK_KEYS + ("" if ro else OPEN_JS)
+            + (SLIDE_JS if pos else ""))
         return HTMLResponse(layout(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
 
@@ -2567,6 +2624,8 @@ if(st.dataset.play==='1')play();
         These are guesses made from a single word, and the ambiguous ones come
         first: `1 of 16` means fifteen other places carry that name.
         """
+        if ro:
+            return ""
         rows = con.execute(
             """SELECT fp.label, fp.candidates, p.id, p.path,
                       COUNT(a.id) AS n
@@ -2808,6 +2867,8 @@ if(st.dataset.play==='1')play();
                       f'/photo/{r["asset_id"]}')
             for r in faces_rows)
 
+        if ro:          # naming and merging happen where the archive is kept
+            suggestion = shared = panel = strip = ""
         title = c["person"] or f'Unnamed cluster of {c["size"]:,} faces'
         heading = html.escape(title)
         if c["person"]:
@@ -2946,6 +3007,8 @@ if(st.dataset.play==='1')play();
 
     def event_panel(con, e, *, back: str) -> str:
         """Name it, split it, or say it is not worth asking about."""
+        if ro:
+            return ""
         return (
             '<div class="panel">'
             f'<form method="post" action="/event/{e["id"]}/name">'
@@ -3175,6 +3238,13 @@ if(st.dataset.play==='1')play();
 
     @app.get("/review", response_class=HTMLResponse)
     def review():
+        if ro:
+            # Before anything is read: this screen tidies the queue as it
+            # goes, and a viewing copy must not try to.
+            return page("Review — Kuva-arkisto",
+                        '<div class="empty"><p>This is a viewing copy.</p>'
+                        '<p>Questions are answered on the computer that '
+                        'keeps the archive.</p></div>')
         con = connect()
         c = queue_mod.counts(con)
         item = queue_mod.next_item(con)
@@ -3301,7 +3371,8 @@ def run(cfg, host: str = "127.0.0.1", port: int = 8710) -> None:
     # A database indexed before this milestone has no events tables at all, and
     # the Events and Review screens would answer 500 rather than "nothing yet".
     # Migration is idempotent; doing it here covers both `serve` and `review`.
-    con = db.connect(cfg.database, create=False)
-    db.migrate(con)
-    con.close()
+    if not cfg.ui.get("read_only"):
+        con = db.connect(cfg.database, create=False)
+        db.migrate(con)
+        con.close()
     uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")
