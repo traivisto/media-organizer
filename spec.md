@@ -1606,6 +1606,14 @@ Three separate things hold, and each would be enough alone:
 The review queue is not offered. It is where the archive is put right, and that happens where the
 archive is kept.
 
+**Where the files are, here.** The index records each file where the indexing computer saw it
+(§10.3), and a viewing copy on other hardware reaches the same folder some other way — a NAS sees its
+own share as a local folder, a container wherever it was mounted. `[paths.mounts]` maps a stored
+prefix to where that folder is on the serving machine. The stored path is not rewritten: it stays the
+one name a file has, shown as it is stored, and the copy published from the kept database needs no
+editing. What follows the prefix keeps its spelling exactly, since the machine serving the files may
+care about case though the one that listed them did not.
+
 ---
 
 ## 9. Configuration
@@ -1639,6 +1647,12 @@ names_export_extra = [
 
 # No roots are configured. Folders are indexed by passing them to `add`,
 # and recorded from that; `mediaidx roots` lists what has accumulated.
+
+# Only on a machine that serves a viewing copy (§8.3) and reaches the archive
+# differently from the computer that indexed it: where each stored prefix is
+# *here*. The computer that keeps the archive does not need this.
+# [paths.mounts]
+# '\\TRaDiskStation\Media\Pictures' = '/photos'
 
 [scan]
 extensions     = [".jpg", ".jpeg", ".png", ".heic", ".heif"]

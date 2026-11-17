@@ -112,6 +112,10 @@ class Config:
     # storage with its own schedule is worth having, and one that has to be
     # refreshed by hand is one you find stale on the day it matters.
     names_export_extra: list[Path] = field(default_factory=list)
+    # Where a stored path prefix is on this machine, for a viewing copy that
+    # reaches the archive differently from the computer that indexed it
+    # (spec 8.3). Empty on that computer.
+    mounts: dict = field(default_factory=dict)
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
@@ -192,6 +196,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         gazetteer=Path(p.get("gazetteer", data / "gazetteer")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
         names_export_extra=[Path(x) for x in p.get("names_export_extra", [])],
+        mounts={str(k): str(v) for k, v in (p.get("mounts") or {}).items()},
         ui=merged.get("ui", {}),
         scan=merged["scan"],
         models=merged["models"],

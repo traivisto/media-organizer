@@ -603,6 +603,11 @@ def create_app(cfg) -> FastAPI:
                     "changed here.", status_code=403)
             return await call_next(request)
 
+    def on_disk(path: str) -> str:
+        """A stored path as this machine opens it: found under its mount
+        where there is one (spec 8.3), and long-path safe on Windows."""
+        return pathutil.long_path(pathutil.local(path, cfg.mounts))
+
     def encoder():
         if state["encoder"] is None:
             state["encoder"] = embed.Encoder(
@@ -1581,7 +1586,7 @@ def create_app(cfg) -> FastAPI:
             with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as z:
                 for _, path, _, name in items:
                     try:
-                        src = open(pathutil.long_path(path), "rb")
+                        src = open(on_disk(path), "rb")
                     except OSError:
                         continue          # a copy that has gone; the rest still go
                     with src, z.open(name, "w") as dst:
@@ -1614,7 +1619,7 @@ def create_app(cfg) -> FastAPI:
                              "ORDER BY missing_since IS NOT NULL, path",
                              (asset_id,)):
             try:
-                if Path(pathutil.long_path(f["path"])).exists():
+                if Path(on_disk(f["path"])).exists():
                     return f["path"]
             except OSError:
                 continue
@@ -1641,7 +1646,7 @@ def create_app(cfg) -> FastAPI:
         kind, _ = mimetypes.guess_type(path)
         name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
         return FileResponse(
-            pathutil.long_path(path), media_type=kind or "image/jpeg",
+            on_disk(path), media_type=kind or "image/jpeg",
             filename=name if download else None)
 
     # Where a coordinate goes when somebody asks to see it on a map, and the
@@ -2043,7 +2048,7 @@ def create_app(cfg) -> FastAPI:
         if path is None:
             return Response(status_code=503)
         try:
-            im = images.load(pathutil.long_path(path),
+            im = images.load(on_disk(path),
                              max_side=max(320, min(w, VIEW_MAX)))
         except OSError:
             return Response(status_code=503)
@@ -2446,7 +2451,7 @@ if(st.dataset.play==='1')play();
             else:
                 name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
                 try:
-                    open_with_default_app(path)
+                    open_with_default_app(pathutil.local(path, cfg.mounts))
                     said = f"Opening {name}"
                 except OSError as e:
                     status, said = 500, (f"This computer could not open {name}: "

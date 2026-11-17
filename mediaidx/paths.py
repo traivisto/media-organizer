@@ -67,6 +67,45 @@ def display(path: str) -> str:
     return path
 
 
+def _same(a: str, b: str) -> bool:
+    """Whether two path fragments name the same thing on the machine that
+    stored them: Windows cares about neither case nor which slash."""
+    return a.replace("/", "\\").casefold() == b.replace("/", "\\").casefold()
+
+
+def local(path: str, mounts: dict | None, sep: str = os.sep) -> str:
+    """Where a stored path is found on *this* machine.
+
+    The index records each file where the indexing computer saw it, which by
+    the rule above is a UNC path. Another machine may reach the very same folder
+    some other way: a NAS serving its own share sees `\\\\nas\\Media\\Pictures`
+    as `/volume1/Media/Pictures`, and a container sees it wherever it was
+    mounted. `mounts` maps a stored prefix to where that folder is here, and
+    the stored path itself is left alone -- it stays the one name a file has,
+    whichever machine is asking (spec 8.3).
+
+    The longest prefix that matches wins, and only on a whole folder name:
+    `\\\\nas\\Pictures` does not claim `\\\\nas\\Pictures2`. What follows the
+    prefix keeps its spelling exactly, because the machine that serves the
+    files may care about case even though the one that listed them did not.
+    A path no prefix claims comes back as it went in.
+    """
+    for stored in sorted(mounts or {}, key=len, reverse=True):
+        head = stored.rstrip("\\/")
+        if not head or not _same(path[:len(head)], head):
+            continue
+        rest = path[len(head):]
+        if rest and rest[0] not in "\\/":
+            continue                      # a longer name that merely starts alike
+        here = str(mounts[stored])
+        base = here.rstrip("\\/") or here
+        parts = [p for p in rest.replace("\\", "/").split("/") if p]
+        if not parts:
+            return base
+        return (base if base.endswith(sep) else base + sep) + sep.join(parts)
+    return path
+
+
 def is_in_sync_folder(path: str) -> str | None:
     """Return the name of a known sync root containing `path`, if any (§10.5)."""
     lowered = os.path.abspath(path).lower()

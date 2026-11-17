@@ -795,6 +795,10 @@ def cmd_serve(args) -> int:
         return 1
     if args.read_only:
         cfg.ui["read_only"] = True
+    for stored, here in cfg.mounts.items():
+        if not os.path.isdir(here):
+            print(f"warning: {stored} is expected at {here}, which is not there -- "
+                  "originals will not open", file=sys.stderr)
     print(f"  http://{args.host}:{args.port}"
           + ("   (viewing copy: nothing can be changed)"
              if cfg.ui.get("read_only") else "")
