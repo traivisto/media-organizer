@@ -859,7 +859,12 @@ def create_app(cfg) -> FastAPI:
 
     def card(row, score=None, back=None) -> str:
         when = ""
-        if row["taken_at"]:
+        # Not every query that feeds a card selects taken_at_source (only the
+        # date-ordered grid needs it, to hide a scan's meaningless mtime); a
+        # row without the column is assumed dated rather than guessed wrong.
+        no_date = ("taken_at_source" in row.keys()
+                  and row["taken_at_source"] == "mtime")
+        if row["taken_at"] and not no_date:
             dt = datetime.fromtimestamp(row["taken_at"])
             p = row["taken_at_precision"]
             # No %-d / %#d: those are platform-specific. Build the day by hand.
@@ -882,8 +887,10 @@ def create_app(cfg) -> FastAPI:
     def month_of(row) -> str:
         """The heading a photograph files under: its month, or its year alone
         where the year is all that is known, so a photograph is never filed
-        under a month nobody gave it."""
-        if not row["taken_at"]:
+        under a month nobody gave it. A file's mtime is not a date anyone
+        gave it either -- dates.resolve's last resort, never real evidence --
+        so it files under "No date" alongside a photograph with none."""
+        if not row["taken_at"] or row["taken_at_source"] == "mtime":
             return "No date"
         dt = datetime.fromtimestamp(row["taken_at"])
         return f"{dt:%Y}" if row["taken_at_precision"] == "year" else f"{dt:%B %Y}"
@@ -985,11 +992,11 @@ def create_app(cfg) -> FastAPI:
     def place_photos(con, path: str, limit: int):
         esc = _like(path)
         return con.execute(
-            """SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
-                      a.camera_model
+            f"""SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
+                      a.taken_at_source, a.camera_model
                  FROM assets a JOIN places p ON p.id = a.place_id
                 WHERE p.path = ? OR p.path LIKE ? ESCAPE '\\'
-                ORDER BY a.taken_at DESC LIMIT ?""",
+                ORDER BY {_date_order("DESC")} LIMIT ?""",
             (path, esc + "/%", limit)).fetchall()
 
     def places_matching(con, q: str) -> str:
@@ -1048,6 +1055,41 @@ def create_app(cfg) -> FastAPI:
     # narrows nothing, so it is neither a chip nor counted on the button.
     CARRIED = FILTERS + ("order",)
     ORDERS = ("newest", "oldest")
+
+    # A photograph whose only date is a file's mtime (dates.resolve's last
+    # resort, dates.py) carries no real evidence -- a scan's mtime is when it
+    # was copied to the archive, not when it was taken. It is not "the
+    # newest" or "the oldest" photograph; it has no place in the chronology
+    # at all, so it always sorts after every dated photograph, in either
+    # browsing direction, rather than wherever its mtime happens to fall.
+    # COALESCE against NULL, not just 'mtime' itself: an asset inserted with
+    # no source at all (a test fixture, say) is not thereby undated -- only
+    # the one real fallback value means that.
+    _NO_DATE = "COALESCE(a.taken_at_source,'') = 'mtime'"
+
+    def _date_order(way: str) -> str:
+        return f"({_NO_DATE}) ASC, COALESCE(a.taken_at,0) {way}, a.id {way}"
+
+    def _date_cmp(is_ahead: bool, within_op: str, key_nodate: bool,
+                  key_t, key_id) -> tuple[str, list]:
+        """Rows positioned ahead of (or behind) this key in display order.
+
+        `within_op` is the ordinary tuple comparison for rows in the same
+        date-group as this one (">" or "<", by browsing direction -- the
+        caller's existing `ahead`/`behind`). `is_ahead` names which side of
+        the key is wanted, independent of that direction: the whole undated
+        group sits after every dated row regardless of oldest/newest
+        browsing, so asking ahead from a dated row, or behind from an
+        undated one, always pulls in the other group entirely; the other
+        two combinations never cross the group line.
+        """
+        same_group = f"({_NO_DATE})" if key_nodate else f"NOT ({_NO_DATE})"
+        within = f"{same_group} AND (COALESCE(a.taken_at,0), a.id) {within_op} (?, ?)"
+        crosses = (is_ahead and not key_nodate) or (not is_ahead and key_nodate)
+        if not crosses:
+            return within, [key_t, key_id]
+        other_group = f"({_NO_DATE})" if not key_nodate else f"NOT ({_NO_DATE})"
+        return f"(({within}) OR {other_group})", [key_t, key_id]
 
     def _qs(q: str, f: dict, **over) -> str:
         """A link back to this search with something changed."""
@@ -1501,7 +1543,7 @@ def create_app(cfg) -> FastAPI:
                        + offer_row(con, r, f))
 
         cols = ("a.id, a.content_hash, a.taken_at, a.taken_at_precision, "
-                "a.camera_model")
+                "a.taken_at_source, a.camera_model")
         clause = f" WHERE {where}" if where else ""
 
         # Nothing to rank by: the answer is exact, so it is every photograph
@@ -1513,7 +1555,7 @@ def create_app(cfg) -> FastAPI:
             way = "ASC" if f["order"] == "oldest" else "DESC"
             rows = con.execute(
                 f"SELECT {cols} FROM assets a{clause} "
-                f"ORDER BY COALESCE(a.taken_at,0) {way}, a.id {way} "
+                f"ORDER BY {_date_order(way)} "
                 "LIMIT ? OFFSET ?",
                 [*args, PAGE_SIZE, page * PAGE_SIZE]).fetchall()
             # Genuinely nothing indexed -- not merely nothing matching, which a
@@ -2097,31 +2139,34 @@ def create_app(cfg) -> FastAPI:
 
         if not r.text:
             cur = con.execute(
-                "SELECT COALESCE(taken_at, 0) t, id FROM assets WHERE id = ?",
+                "SELECT COALESCE(taken_at, 0) t, id, "
+                f"({_NO_DATE}) AS nodate FROM assets a WHERE id = ?",
                 (asset_id,)).fetchone()
             if cur is None:
                 return None
-            key = (cur["t"], cur["id"])
+            key_t, key_id, key_nodate = cur["t"], cur["id"], bool(cur["nodate"])
             # Ordered by date and then id: a burst shares a second, and without
             # the id the order is not total and the walk could loop. "Next" is
             # further down the page: earlier in time newest first, later oldest.
             oldest = f.get("order") == "oldest"
             ahead, behind = (">", "<") if oldest else ("<", ">")
             fwd, rev = ("ASC", "DESC") if oldest else ("DESC", "ASC")
+            ahead_sql, ahead_args = _date_cmp(True, ahead, key_nodate, key_t, key_id)
+            behind_sql, behind_args = _date_cmp(False, behind, key_nodate, key_t, key_id)
             nxt = con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) {ahead} (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) {fwd}, a.id {fwd} LIMIT 1""",
-                [*key, *args]).fetchone()
+                     WHERE ({ahead_sql}){pred}
+                     ORDER BY {_date_order(fwd)} LIMIT 1""",
+                [*ahead_args, *args]).fetchone()
             prv = con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) {rev}, a.id {rev} LIMIT 1""",
-                [*key, *args]).fetchone()
+                     WHERE ({behind_sql}){pred}
+                     ORDER BY {_date_order(rev)} LIMIT 1""",
+                [*behind_args, *args]).fetchone()
             before = con.execute(
                 f"""SELECT COUNT(*) FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}""",
-                [*key, *args]).fetchone()[0]
+                     WHERE ({behind_sql}){pred}""",
+                [*behind_args, *args]).fetchone()[0]
             total = con.execute(
                 f"SELECT COUNT(*) FROM assets a"
                 + (f" WHERE {where}" if where else ""), args).fetchone()[0]
@@ -2201,23 +2246,26 @@ def create_app(cfg) -> FastAPI:
         pred = f" AND {where}" if where else ""
         if not r.text:
             cur = con.execute(
-                "SELECT COALESCE(taken_at, 0) t, id FROM assets WHERE id = ?",
+                "SELECT COALESCE(taken_at, 0) t, id, "
+                f"({_NO_DATE}) AS nodate FROM assets a WHERE id = ?",
                 (asset_id,)).fetchone()
             if cur is None:
                 return 0, 0, []
-            key = (cur["t"], cur["id"])
+            key_t, key_id, key_nodate = cur["t"], cur["id"], bool(cur["nodate"])
             oldest = f.get("order") == "oldest"
             ahead, behind = (">", "<") if oldest else ("<", ">")
             way = "ASC" if oldest else "DESC"
+            ahead_sql, ahead_args = _date_cmp(True, ahead, key_nodate, key_t, key_id)
+            behind_sql, behind_args = _date_cmp(False, behind, key_nodate, key_t, key_id)
             ids = [x["id"] for x in con.execute(
                 f"""SELECT a.id FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) {ahead} (?, ?){pred}
-                     ORDER BY COALESCE(a.taken_at,0) {way}, a.id {way} LIMIT ?""",
-                [*key, *args, n])]
+                     WHERE ({ahead_sql}){pred}
+                     ORDER BY {_date_order(way)} LIMIT ?""",
+                [*ahead_args, *args, n])]
             before = con.execute(
                 f"""SELECT COUNT(*) FROM assets a
-                     WHERE (COALESCE(a.taken_at,0), a.id) {behind} (?, ?){pred}""",
-                [*key, *args]).fetchone()[0]
+                     WHERE ({behind_sql}){pred}""",
+                [*behind_args, *args]).fetchone()[0]
             total = con.execute(
                 "SELECT COUNT(*) FROM assets a"
                 + (f" WHERE {where}" if where else ""), args).fetchone()[0]
@@ -3151,10 +3199,10 @@ if(st.dataset.play==='1')play();
         if p is None:
             return HTMLResponse("<p>not found</p>", status_code=404)
         rows = con.execute(
-            """SELECT DISTINCT a.id, a.content_hash, a.taken_at,
-                      a.taken_at_precision, a.camera_model
+            f"""SELECT DISTINCT a.id, a.content_hash, a.taken_at,
+                      a.taken_at_precision, a.taken_at_source, a.camera_model
                FROM assets a JOIN faces f ON f.asset_id = a.id
-               WHERE f.person_id = ? ORDER BY a.taken_at DESC LIMIT ?""",
+               WHERE f.person_id = ? ORDER BY {_date_order("DESC")} LIMIT ?""",
             (person_id, limit)).fetchall()
         body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
                 f'&larr; people</a> &middot; <b>{html.escape(p["name"])}</b> '

@@ -399,11 +399,18 @@ def get(con, event_id: int):
 
 
 def assets_of(con, event_id: int, limit: int = 300) -> list:
+    """A scan with no real date (taken_at_source 'mtime', dates.py) still
+    joins the event its mtime happened to fall into -- the grouping itself
+    is a separate, larger question (spec 6.2's gap rule runs on taken_at
+    regardless of its source) -- but within the page it is filed last, same
+    as everywhere else a photograph's date is shown (serve.py's _date_order).
+    """
     return con.execute(
         """SELECT a.id, a.content_hash, a.taken_at, a.taken_at_precision,
-                  a.camera_model
+                  a.taken_at_source, a.camera_model
              FROM event_assets ea JOIN assets a ON a.id = ea.asset_id
-            WHERE ea.event_id = ? ORDER BY a.taken_at LIMIT ?""",
+            WHERE ea.event_id = ?
+            ORDER BY (a.taken_at_source = 'mtime') ASC, a.taken_at ASC LIMIT ?""",
         (event_id, limit)).fetchall()
 
 
