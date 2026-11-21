@@ -36,7 +36,10 @@ import requests
 from . import dates
 
 STAGE = "datestamp"
-STAGE_VERSION = 1
+# 2: the locator now tries both quarter-turns on a portrait scan, where it
+# previously found nothing at all (0 of 204 on the Erkin library) -- every
+# undated asset deserves a second attempt with this version of it.
+STAGE_VERSION = 2
 
 YOLO_REPO = "pike00/yolo-date-stamp-detector"
 YOLO_FILE = "best.pt"
@@ -79,13 +82,37 @@ class Locator:
         self._model = YOLO(weights)
 
     def locate(self, path: str):
-        """(x0, y0, x1, y1, confidence) in pixels, or None."""
-        result = self._model(path, conf=self.conf, device="cpu", verbose=False)[0]
-        if len(result.boxes) == 0:
-            return None
-        box = max(result.boxes, key=lambda b: float(b.conf[0]))
-        x0, y0, x1, y1 = (int(v) for v in box.xyxy[0])
-        return x0, y0, x1, y1, float(box.conf[0])
+        """(x0, y0, x1, y1, confidence, rotation) or None.
+
+        `rotation` is the PIL `rotate()` angle (0, 90 or -90) applied to the
+        image the box was found in, not the original file -- the model was
+        trained on stamps sitting along a photo's bottom edge, and on a
+        portrait scan that edge is a *side* of the frame, rotated a quarter
+        turn one way or the other depending on which way the print went
+        through the scanner. Untouched, the detector simply never finds
+        these: measured on the Erkin library, 0 of 204 portrait scans dated
+        against 189 of 659 landscape ones. Trying both quarter-turns is
+        cheap against a model this size, already running on CPU.
+        """
+        from PIL import Image
+        im = Image.open(path)
+        angles = [0]
+        if im.height > im.width:
+            angles = [0, -90, 90]
+
+        best = None
+        for angle in angles:
+            source = path if angle == 0 else im.rotate(angle, expand=True)
+            result = self._model(source, conf=self.conf, device="cpu",
+                                 verbose=False)[0]
+            if len(result.boxes) == 0:
+                continue
+            box = max(result.boxes, key=lambda b: float(b.conf[0]))
+            conf = float(box.conf[0])
+            if best is None or conf > best[4]:
+                x0, y0, x1, y1 = (int(v) for v in box.xyxy[0])
+                best = (x0, y0, x1, y1, conf, angle)
+        return best
 
 
 def crop_for_reading(path: str, box):
@@ -95,11 +122,15 @@ def crop_for_reading(path: str, box):
     copy a caller may have decoded for another stage: the YOLO box is in the
     original file's pixel space, and a handful of LED digits is exactly the
     kind of small detail a 1600px working copy (sized for face detection)
-    would blur away.
+    would blur away. The same rotation `locate` found the stamp under is
+    applied before cropping, so the digits come out upright for the reader
+    too -- not just found, but legible.
     """
     from PIL import Image
     im = Image.open(path).convert("RGB")
-    x0, y0, x1, y1, _ = box
+    x0, y0, x1, y1, _, angle = box
+    if angle:
+        im = im.rotate(angle, expand=True)
     w, h = im.size
     x0, y0 = max(x0 - CROP_PAD, 0), max(y0 - CROP_PAD, 0)
     x1, y1 = min(x1 + CROP_PAD, w), min(y1 + CROP_PAD, h)
