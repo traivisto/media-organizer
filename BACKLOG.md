@@ -49,3 +49,64 @@ Not designed yet - the likely shape: a separate, explicitly-labeled, opt-in
 step/checkbox for "also delete from iCloud after this completes", kept
 clearly distinct from the organizeMode radios so it can't be picked by
 accident.
+
+## Make the iCloud choices need no thinking
+
+Noted 2026-11-21, when fetching the autumn's photos took a discussion to get
+the options right. For an iCloud source the screen asks questions whose
+answer is always the same, and words them as if it were a local folder:
+
+- **Move vs copy.** The downloaded files sit in
+  `userData/icloud-photos-cache`; the radios only decide whether that cache
+  copy is moved or copied into the archive. iCloud is never touched either
+  way (the note says so, but it has to be read every time). For iCloud the
+  answer is always *move* - copying only leaves a second copy filling C:.
+  Likely shape: with iCloud selected, preselect move, hide or grey out the
+  other modes, and say in one line what happens to the cache.
+- **"Last synced into: Z:\Pictures\Unsorted"** shows the last *local*
+  source folder, not where the sync downloads. It should show the cache
+  folder, or nothing.
+- **The From date.** It has to be worked out by hand from the newest photo
+  already in the archive. Suggest it instead: the newest capture date
+  already in the destination (from the filenames, `YYYYMMDD@HHMMSS-...`), or
+  the last successful sync.
+- **Photos already in the archive come again.** Nothing checks whether a
+  photo is already in the destination: collisions are detected only by exact
+  filename, and every batch numbers from 1, so the overlap day of a date
+  range lands as second copies with new numbers. Kuva-arkisto recognizes
+  them by content and shows them once, but they take space and have to be
+  pruned by hand. Likely fix: before executing, compare each file's capture
+  time + camera (or a content hash) against what the destination month
+  folder already holds and mark matches *skipped - already in archive* in
+  the preview.
+
+## Say how to get the two-factor code
+
+The 2FA step is where a sync stalls. icloudpd's sign-in page asks for the
+code, and it is not obvious where it comes from; on 2026-08-29 it took about
+five minutes from "Two-factor authentication is required" to a working code.
+
+**What works (confirmed 2026-11-21):** on the iPhone, Settings -> [your name]
+-> Sign-In & Security -> Two-Factor Authentication -> **Get Verification
+Code**, and type that code into the sign-in page. It works even when the
+iPhone does not show the "Allow" prompt, and offline. (Apple's trusted-device
+route in the log, `verify/trusteddevice/securitycode`, not SMS.)
+
+Wanted: say this at the moment it is needed, so it never has to be
+remembered - when an iCloud sync starts (the note under the Apple ID field
+on the start screen) and while ICloudSyncView is in `awaitingAuth`, a short
+"Where do I get the code?" with the steps above.
+
+## Merge with Kuva-arkisto into one
+
+Noted 2026-11-21: this app and Kuva-arkisto (the photo archive, `mediaidx`,
+in the `Media classifier` project beside this one) are one workflow - fetch
+and organize here, look through in Explorer, then index and publish to the
+NAS viewer there. Today they are linked only by the *Update photo archive*
+screen, which runs `mediaidx update --events`.
+
+Not designed yet. Questions to settle first: one repository, or one
+application as well; and the languages - this is Electron/TypeScript,
+Kuva-arkisto is Python (and needs the GPU for faces), so a single
+application means either a Python backend behind this UI, or moving the
+fetch-and-organize steps into Kuva-arkisto and its web UI.
