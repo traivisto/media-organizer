@@ -591,11 +591,8 @@ def create_app(cfg) -> FastAPI:
             # Opened so that SQLite itself refuses a write. Hiding the forms
             # and turning the requests away are both promises made by this
             # file; this one is kept by the database.
-            path = Path(cfg.database)
-            if not path.exists():
-                raise FileNotFoundError(f"no database at {path}")
-            con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True,
-                                  timeout=30.0, isolation_level=None)
+            con = db.connect_read_only(cfg.database, timeout=30.0,
+                                       isolation_level=None)
         else:
             con = db.connect(cfg.database, create=False)
         con.row_factory = sqlite3.Row

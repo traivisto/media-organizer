@@ -1466,6 +1466,9 @@ mediaidx serve                    Start the local web UI  (default http://localh
     --read-only                   A viewing copy: the same screens, nothing that changes anything
 mediaidx textmodel               Export the search model's text half for a smaller machine (§7.6)
     --out DIR                     Where to build it
+mediaidx publish                 Bring the viewing copy on the NAS up to date (§8.4)
+    --to DIR                      The project folder, if not [paths] publish_to
+    --dry-run                     Say what would be sent, send nothing
 
 mediaidx search <phrase>          Search from the terminal
     --limit N                     How many results
@@ -1666,6 +1669,35 @@ not have.
 
 ---
 
+### 8.4 Publishing
+
+`mediaidx publish` brings a viewing copy (§8.3) up to date from the computer that keeps the archive,
+into one folder laid out as the Container Manager project in `deploy/nas` expects: `compose.yaml`;
+`app/`, the application the image is built from; and `data/`, holding `config.toml`, the database,
+the thumbnails and the text model (§7.6). It is run after indexing or naming, and `--dry-run` says
+what would be sent without sending it.
+
+- **Only what changed travels**, except the database, which is small beside the thumbnails and is
+  always sent whole. Thumbnails are named by content hash, so a name already there with the right
+  size is the right file. Thumbnails the archive no longer has are removed.
+- **A snapshot, not a copy of the file.** `VACUUM INTO` reads the database in one transaction, so
+  what arrives is consistent even if indexing is writing at the time. It is made locally and then
+  sent, rather than built over the network with the transaction open for the whole crossing, and
+  it is in DELETE mode, which is what lets the NAS open it read-only with nothing beside it.
+- **Nothing half-copied is ever served.** Thumbnails and the text model go first and the database
+  last, so no photograph is served before its thumbnail. Every file is written beside its final
+  name and moved into place in one step; an interrupted publish leaves the previous copy whole, and
+  the database that arrived is checked before publish says it is done.
+- **It refuses to start** in three cases, before writing anything: a folder under an indexed root
+  (P1 — no write there, a viewing copy least of all); a folder holding files it did not put there,
+  since it removes files; and a text model that is missing or was taken from another model than
+  the photographs were indexed with.
+- **A changed application is reported**, because the container runs the image it was built from:
+  the project has to be rebuilt in Container Manager for new code to take effect. A publish that
+  only brings new photographs needs nothing done on the NAS.
+
+---
+
 ## 9. Configuration
 
 TOML, at `~\.mediaidx\config.toml` — written there by `setup.ps1`, and found through the
@@ -1697,6 +1729,10 @@ names_export_extra = [
 
 # No roots are configured. Folders are indexed by passing them to `add`,
 # and recorded from that; `mediaidx roots` lists what has accumulated.
+
+# Where `mediaidx publish` puts the viewing copy (§8.4): a Container Manager
+# project folder on the NAS. Never under an indexed root.
+# publish_to = '//TRaDiskStation/docker/kuva-arkisto'
 
 # The search model's text half alone, from `mediaidx textmodel` (§7.6), on a
 # machine without room for the whole model.

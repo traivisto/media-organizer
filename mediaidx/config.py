@@ -119,6 +119,8 @@ class Config:
     # The search model's text half, exported by `mediaidx textmodel`, for a
     # machine without room for all of it (spec 7.6). None: the whole model.
     text_model: Path | None = None
+    # The Container Manager project folder `mediaidx publish` fills (spec 8.4).
+    publish_to: Path | None = None
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
@@ -201,6 +203,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         names_export_extra=[Path(x) for x in p.get("names_export_extra", [])],
         mounts={str(k): str(v) for k, v in (p.get("mounts") or {}).items()},
         text_model=Path(p["text_model"]) if p.get("text_model") else None,
+        publish_to=Path(p["publish_to"]) if p.get("publish_to") else None,
         ui=merged.get("ui", {}),
         scan=merged["scan"],
         models=merged["models"],

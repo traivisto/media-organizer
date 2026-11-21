@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 SCHEMA_VERSION = 7
 
@@ -313,6 +314,30 @@ CREATE INDEX IF NOT EXISTS idx_assets_taken  ON assets(taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_conf   ON assets(date_conflict);
 CREATE INDEX IF NOT EXISTS idx_stage         ON stage_state(stage, status, version);
 """
+
+
+def read_only_uri(db_path: str | Path) -> str:
+    """The URI that opens a database so SQLite itself refuses a write.
+
+    Built by hand because `Path.as_uri()` turns a network path into
+    `file://server/share/...`, whose `server` SQLite reads as a URI authority
+    and refuses -- found publishing to the NAS, where the database that had
+    just arrived could not be opened to check it. With the authority left
+    empty, `file:////server/share/...`, the path is the whole of it.
+    """
+    path = str(Path(db_path).resolve()).replace("\\", "/")
+    if path.startswith("//"):
+        path = "//" + path
+    elif not path.startswith("/"):
+        path = "/" + path                    # C:/x -> /C:/x, as SQLite expects
+    return "file:" + quote(path, safe="/:") + "?mode=ro"
+
+
+def connect_read_only(db_path: str | Path, **kw) -> sqlite3.Connection:
+    """A connection that cannot write, to a database that must exist."""
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"no database at {db_path}")
+    return sqlite3.connect(read_only_uri(db_path), uri=True, **kw)
 
 
 def connect(db_path: str | Path, *, create: bool = True) -> sqlite3.Connection:

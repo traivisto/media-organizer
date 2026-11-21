@@ -831,7 +831,7 @@ def cmd_textmodel(args) -> int:
     # The same queries ranked over the photographs with both, and cut where the
     # search page would cut them: the comparison the form was chosen by.
     if cfg.database.exists():
-        con = sqlite3.connect(cfg.database.resolve().as_uri() + "?mode=ro", uri=True)
+        con = db.connect_read_only(cfg.database)
         rows = con.execute("SELECT asset_id, embedding FROM image_vectors").fetchall()
         con.close()
         if rows:
@@ -853,6 +853,49 @@ def cmd_textmodel(args) -> int:
                   f"the same ({100 * same / total:.1f}%)")
     print(f"  done. Point [paths] text_model at {out} to search with it.")
     return 0
+def cmd_publish(args) -> int:
+    """Copy a viewing copy to the NAS, or wherever it is served from (spec 8.4)."""
+    from . import publish
+
+    cfg = config_mod.load(args.config)
+    target = args.to or cfg.publish_to
+    if not target:
+        print("where to? Pass --to, or set [paths] publish_to in the config",
+              file=sys.stderr)
+        return 1
+    print(f"{'checking' if args.dry_run else 'publishing to'} {target}")
+    try:
+        done = publish.publish(cfg, target, dry_run=args.dry_run)
+    except publish.PublishError as e:
+        print(f"  not published: {e}", file=sys.stderr)
+        return 1
+    except PermissionError as e:
+        # Not a sleeping NAS: retrying will not help. Said differently so that
+        # nobody waits for a NAS that is answering perfectly well.
+        print(f"  not allowed: {e}\n  This account may not write there. Give it "
+              "read/write on that folder in DSM, or publish somewhere it may write. "
+              "Any copy already there is still whole.", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"  stopped: {e}\n  Any copy already there is still whole; run it "
+              "again when the NAS answers.", file=sys.stderr)
+        return 1
+
+    verb = "would send" if args.dry_run else "sent"
+    print(f"  {done['photographs']:,} photographs; thumbnails: {verb} "
+          f"{done['thumbs_copied']:,} ({done['thumbs_bytes'] / 1e9:.2f} GB), "
+          f"{'would remove' if args.dry_run else 'removed'} {done['thumbs_removed']:,}")
+    if done["text_model_copied"]:
+        print(f"  text model: {verb} {', '.join(done['text_model_copied'])}")
+    print(f"  database: {verb} {done['database_bytes'] / 1e9:.2f} GB")
+    if done["app_changed"]:
+        print(f"  the application changed ({len(done['app_changed'])} files): rebuild "
+              "the project in Container Manager for it to take effect")
+    if not args.dry_run:
+        print(f"  done in {done['seconds']}s")
+    return 0
+
+
 # --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
@@ -1089,6 +1132,13 @@ def build_parser() -> argparse.ArgumentParser:
     tm.add_argument("--out", help="where to build it (default: [paths] "
                     "text_model, or textmodel beside the database)")
     tm.set_defaults(func=cmd_textmodel)
+
+    pb = sub.add_parser("publish", help="copy a viewing copy to the NAS: "
+                        "database, thumbnails, text model, application")
+    pb.add_argument("--to", help="the project folder (default: [paths] publish_to)")
+    pb.add_argument("--dry-run", action="store_true",
+                    help="say what would be sent, send nothing")
+    pb.set_defaults(func=cmd_publish)
 
     d = sub.add_parser("doctor", help="check the environment")
     d.set_defaults(func=cmd_doctor)
