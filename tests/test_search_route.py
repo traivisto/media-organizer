@@ -323,6 +323,15 @@ def test_a_photograph_opened_from_elsewhere_has_no_arrows(client):
     assert "of 150" not in body
 
 
+def test_the_walk_answers_a_swipe(client):
+    """On a phone the arrows are where the thumb is not (spec 8.5)."""
+    ids = _ids_on(client, q="Alicante")
+    body = client.get(f"/photo/{ids[1]}", params={"back": "/?q=Alicante"}).text
+    assert "touchstart" in body and "go-next" in body
+    alone = client.get(f"/photo/{ids[1]}", params={"back": "/person/1"}).text
+    assert "touchstart" not in alone, "nothing to swipe to"
+
+
 def test_the_ranked_result_is_walked_in_its_own_order(client):
     ids = _ids_on(client, q="text:whatever")
     back = "/?q=text%3Awhatever"

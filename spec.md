@@ -1698,6 +1698,31 @@ what would be sent without sending it.
   the project has to be rebuilt in Container Manager for new code to take effect. A publish that
   only brings new photographs needs nothing done on the NAS.
 
+### 8.5 On a phone
+
+The viewing copy is reached from a phone as often as from a desk, so every screen is laid out for
+both, held either way. Found in use, 2026-11-21: in portrait everything was small and awkward. The
+cause was one rule broken in two places — nothing may be wider than the screen. The search box
+would not shrink below its own default width, which pushed the Browse button past the edge, and a
+browser given a page wider than itself lays all of it out wider and shrinks it to fit. And the
+Slideshow button, floated and not cleared, reached into the grid below it, which narrowed the grid
+to one column and left half the screen blank.
+
+- **Portrait** (up to 720 px wide): the search button goes, the keyboard's own Go key searching
+  instead; the box keeps a 16 px font, below which a phone zooms the page when it is touched. Results
+  are three across and edge to edge, as a phone's own gallery has them. On the photograph the way
+  back is an arrow, and the original at full size — one tap away in Details — and full screen,
+  which a phone does not offer a page, leave the bar.
+- **Landscape** (up to 500 px tall): the header scrolls away with the page instead of standing over
+  a third of it, the photograph's page drops it altogether since the bar above the picture already
+  leads back, and the picture takes the height of the screen.
+- **A swipe** steps through the result as the arrows do, pressing the same links, so the slideshow
+  steps on one too. Only a mostly sideways movement of 50 px or more counts, so scrolling the page or
+  pinching the picture does not.
+
+Checked 2026-11-21 at 320 × 640, 375 × 812, 812 × 375 and 1440 × 900 over thirteen kinds of page:
+none is wider than its screen.
+
 ---
 
 ## 9. Configuration
@@ -2061,10 +2086,10 @@ and a `frames` table linking sampled frames to a parent asset is the only struct
 
 ### 12.1 Access from a phone
 
-Also deferred. The UI is a local web page, so serving it to the LAN is a config change
-(§10.4) rather than construction work. What it would additionally need is a responsive layout and
-some thought about authentication, neither of which should shape the v1 design. Until then the UI
-is desktop-only and bound to `127.0.0.1`.
+**Done 2026-11-21**, by a different route than the one sketched here. The computer that keeps the
+archive still serves only itself, bound to `127.0.0.1`; a phone reaches the viewing copy on the NAS
+(§8.3, §8.4) — at home on the LAN and away over Tailscale — which can change nothing, and so needs
+no login for anyone who can reach it (guests are on a separate network). The layout is §8.5.
 
 ---
 
@@ -2113,7 +2138,7 @@ None blocking.
   its speed penalty does not matter.
 - **Storage location** — split (§10.5). Source, config and the names export sit in the project
   folder and sync; the database, thumbnails and logs go to `%LOCALAPPDATA%\mediaidx\` and must not.
-- **Phone access** — deferred (§12.1). Does not shape the v1 design.
+- **Phone access** — done 2026-11-21 through the viewing copy on the NAS (§8.3–8.5, §12.1).
 - **Photos with no metadata at all** — filename patterns become date rule 2, ahead of the folder
   name (§5.1). WhatsApp images, which carry no EXIF whatsoever, are dated from
   `IMG-20190608-WA0012.jpg` and tagged with a source hint.

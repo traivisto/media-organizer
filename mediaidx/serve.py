@@ -499,6 +499,69 @@ body.playing.idle {{ cursor:none; }}
 .viewonly {{ padding:4px 10px; border:1px solid var(--rule); border-radius:999px;
   font-size:12px; font-weight:550; color:var(--ink-3); white-space:nowrap; }}
 @media (max-width:720px) {{ .viewonly {{ display:none; }} }}
+/* The count line holds its Slideshow button. Floated and not cleared, the
+   button reached into the grid below, and a grid beside a float shrinks to
+   the room left over: on a phone, one narrow column and a blank half. */
+.meta::after {{ content:""; display:table; clear:both; }}
+/* A phone, held upright (spec 8.5). Nothing may be wider than the screen: one
+   element that is makes the browser lay the whole page out wider and shrink it
+   to fit, which is what made every page small and awkward. */
+@media (max-width:720px) {{
+  .bar {{ gap:8px; padding:8px 10px; }}
+  /* A text box will not shrink below its own default width unless told it
+     may; on the narrowest phones that pushed Browse off the screen. */
+  .search {{ height:42px; padding:0 4px 0 12px; min-width:0; }}
+  .search input {{ width:0; }}
+  /* The keyboard's own Go key searches; the button only took the room. */
+  .search button {{ display:none; }}
+  /* Below 16px a phone zooms the page when the box is touched. */
+  .search input {{ font-size:16px; }}
+  details.browse > summary {{ padding:0 9px; }}
+  details.browse > summary svg.ic:last-child {{ display:none; }}
+  .chips {{ padding:10px 10px 0; gap:6px; }}
+  .crit {{ height:32px; font-size:13px; }}
+  details.filters form {{ left:8px; right:8px; padding:14px; gap:16px; }}
+  details.filters fieldset {{ min-width:0; flex-basis:100%; }}
+  .meta, .offer, .crumb {{ padding-left:12px; padding-right:12px; }}
+  .meta a.play {{ height:32px; margin-top:-5px; padding:0 12px; }}
+  /* Three across, edge to edge, as a phone's own gallery has them. */
+  .grid {{ grid-template-columns:repeat(3,1fr); gap:3px; padding:8px 3px 30px; }}
+  .grid figure {{ border-radius:3px; }}
+  .month {{ padding:16px 9px 4px; font-size:14px; }}
+  .faces {{ grid-template-columns:repeat(auto-fill,minmax(96px,1fr));
+    gap:8px; padding:10px 10px 30px; }}
+  .people, .rows, .cands, .panel, .more {{ padding-left:10px; padding-right:10px; }}
+  /* The photograph: the way back as an arrow alone, and what is one tap away
+     in Details -- the original at full size -- or what a phone cannot do
+     -- fill the screen from a page -- left off the bar. */
+  .vbar {{ padding:6px 4px; gap:0; }}
+  .vbtn {{ min-width:36px; padding:0 8px; }}
+  #go-back {{ font-size:0; gap:0; }}
+  .vbar .pos {{ white-space:nowrap; margin-left:2px; font-size:13px; }}
+  #fs, .vbar a.vbtn[href^="/full/"]:not([href*="download"]) {{ display:none; }}
+  .pic {{ padding:0 0 10px; }}
+  .pic img {{ border-radius:0; }}
+  .arrow {{ width:40px; height:40px; background:rgba(0,0,0,.3); }}
+  .arrow.prev {{ left:6px; }}
+  .arrow.next {{ right:6px; }}
+  .side {{ padding:16px 14px 36px; }}
+  .caption {{ left:12px; right:12px; }}
+  .nas {{ right:8px; }}
+}}
+/* A phone on its side: the photograph takes the height, and the header scrolls
+   away with the page rather than standing over a third of it. */
+@media (max-height:500px) {{
+  header {{ position:static; }}
+  /* On the photograph the bar above it already leads back; the search box
+     would only push the picture off the bottom of the screen. */
+  body:has(.viewer) header {{ display:none; }}
+  .viewer {{ flex-direction:column; min-height:0; }}
+  .stage {{ position:static; height:auto; }}
+  .pic {{ padding:0 56px 8px; }}
+  .pic img {{ max-height:calc(100vh - 60px); max-height:calc(100dvh - 60px); }}
+  .side {{ width:auto; border-left:0; }}
+  details.filters form {{ max-height:calc(100vh - 110px); overflow:auto; }}
+}}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
@@ -2266,6 +2329,22 @@ if(st.dataset.play==='1')play();
         "if(!k)return;var a=document.getElementById(k);"
         "if(a){e.preventDefault();a.click();}});</script>")
 
+    # And a swipe, because on a phone the arrows are where the thumb is not.
+    # It presses the same links, so the slideshow, which takes those clicks
+    # over while it plays, steps on a swipe too. Mostly sideways and at least
+    # 50 px, so scrolling the page or pinching the picture is not a swipe.
+    SWIPE_JS = (
+        "<script>(function(){var p=document.querySelector('.pic');if(!p)return;"
+        "var x=null,y=0;"
+        "p.addEventListener('touchstart',function(e){"
+        "if(e.touches.length!==1){x=null;return;}"
+        "x=e.touches[0].clientX;y=e.touches[0].clientY;},{passive:true});"
+        "p.addEventListener('touchend',function(e){if(x===null)return;"
+        "var t=e.changedTouches[0],dx=t.clientX-x,dy=t.clientY-y;x=null;"
+        "if(Math.abs(dx)<50||Math.abs(dx)<1.5*Math.abs(dy))return;"
+        "var a=document.getElementById(dx<0?'go-next':'go-prev');"
+        "if(a)a.click();});})();</script>")
+
     @app.get("/photo/{asset_id}", response_class=HTMLResponse)
     def photo(asset_id: int, back: str = Query(default="/"),
               msg: str = Query(default=""), map: int = 0, edit: int = 0,
@@ -2453,7 +2532,7 @@ if(st.dataset.play==='1')play();
             + warn
             + f'<div class="facts">{who}{where}{event}{camera}</div>'
             + _questions(con, asset_id) + details + '</aside></div>'
-            + WALK_KEYS + ("" if ro else OPEN_JS)
+            + WALK_KEYS + (SWIPE_JS if pos else "") + ("" if ro else OPEN_JS)
             + (SLIDE_JS if pos else ""))
         return HTMLResponse(layout(
             title=f"{when} — Kuva-arkisto", q="", body=body, focus=""))
