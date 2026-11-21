@@ -5,67 +5,112 @@ made searchable, with nothing leaving the machine and no original file ever touc
 
 Full design: [spec.md](spec.md).
 
-## Status
+## Everyday use
 
-**M4c complete** — one search box answers across people, places, dates and what
-a photograph shows, all at once; every photograph says what is known about it and
-on what evidence; and anything the application got wrong can be put right in a
-way no rebuild can undo. There is also a finite queue of questions to work
-through.
-
-| Milestone | Scope | State |
+| I want to… | Where | How |
 |---|---|---|
-| M1 | Scan, hash, EXIF, filename/folder dates, schema, `status`, `doctor` | **done** |
-| M2 | Search vectors, thumbnails, search UI | **done** |
-| M3a | Faces: detection, embeddings, face crops | **done** |
-| M3b | Clustering, naming, people UI | **done** |
-| M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
-| M4b | Events, review queue, review UI | **done** |
-| M4c | Unified search, photo screen, corrections | **done** |
-| M5 | Captions | |
-| M6 | Video | deferred |
+| Look at and search photographs | Any browser: phone, tablet, PC | <https://tradiskst.synology.me:8443> (away from home with Tailscale on) |
+| Bring in new photographs | The PC | Media Organizer, a look in Explorer, then **Update photo archive** |
+| Name faces, fix mistakes, name events | The PC only | `mediaidx serve`, then `mediaidx update` and `mediaidx export` |
 
-M3 is split because only M3a reads files. Clustering and the people UI work
-entirely from the database and the local face crops, so they can be re-run as
-often as a threshold needs changing without touching the NAS again.
+The commands are spelled `mediaidx`; if the alias is not on your path, see
+[Use](#use) for the full path to the executable.
 
-## Routine use
+### Who can change what
 
-Three things recur. Everything after this section is background, for when one of
-them raises a question. The commands are spelled `mediaidx`; if the alias is not
-on your path, see [Use](#use) for the full path to the executable.
+- **The NAS viewer only shows.** Anyone on the home network, or on your
+  Tailscale, can browse and search it, but it has no forms and refuses every
+  change. A guest cannot break anything.
+- **Changes are made on the PC**, in `mediaidx serve` at
+  <http://localhost:8710>. It answers only on that machine, not the network,
+  and the index sits in your Windows profile, so other accounts on the PC cannot
+  open it either.
+- **Changes live in the index, never in the photographs.** A name given to a
+  face is not written into the file, so it does not show in iCloud, Photos or
+  any other program — only here.
+- **The NAS sees a change after the next publish.** `mediaidx update` (or
+  Media Organizer's button) ends with one.
 
-### Looking at photographs
+### New photographs
 
-```
-mediaidx serve
-```
+1. **Fetch them** with Media Organizer (the `media-organizer` project beside
+   this one):
+   - Source **iCloud**, your Apple ID.
+   - **From**: the day of the newest photograph already in the archive — look
+     at the last file in the newest month folder. **To**: today.
+   - **Rename and move into Year/Month folders in a destination**. This moves
+     only the copy downloaded to the PC; nothing is ever deleted from iCloud.
+   - Destination `Z:\Pictures`, then **Scan**, check the preview, and run it.
+   - **The two-factor code:** on the iPhone, *Settings → your name → Sign-In &
+     Security → Two-Factor Authentication → Get Verification Code*, and type it
+     into the sign-in page that opened in the browser. This works even when the
+     phone shows no prompt.
+2. **Look through them.** The *Done* screen lists the folders they went into,
+   each with an **Open** button. Delete in Explorer what you don't want. The
+   first day of the range overlaps the last fetch: photographs from it that are
+   already in the archive come again with new numbers (`…-001`, `…-002`) and can
+   be deleted too.
+3. **Update the archive**: **Update photo archive…** in Media Organizer (on the
+   *Done* screen, or later from its start screen), or here:
 
-Then <http://localhost:8710>. Searching, browsing, naming a face, naming an
-event and correcting something the application got wrong all happen there, and
-none of them needs the command line — the UI writes straight to the index. This
-is the only one of the three you will run often.
+   ```
+   mediaidx update
+   ```
 
-### New photographs in the archive
+   It finds the new and removed files, builds search vectors and thumbnails,
+   finds faces and gives them the names of people already known, works out
+   places and events, and publishes to the NAS — then says how many photographs
+   and faces were new. A minute when there is little to do. A new year folder,
+   `Pictures\2027` in January, is added by itself.
 
-Two steps, with a look in between. **Media Organizer** (the `media-organizer`
-project beside this one) fetches photographs from iCloud or a folder and moves
-them, named, into `Pictures\YYYY\YYYY MM`. Look through them in Explorer and
-delete what you don't want; then, from Media Organizer's *Update photo
-archive* button or here:
+### Naming faces and correcting things
 
-```
-mediaidx update
-```
+1. On the PC: `mediaidx serve`, then <http://localhost:8710>. Name faces
+   under *People*, correct a wrong name on a photograph's page, name events,
+   answer the *Review* questions, reject a wrongly guessed place under *Places*.
+   Each change is saved as you make it.
+2. Afterwards:
 
-That is the whole sequence below, ending with `publish` so the NAS viewer has
-the new photographs too, and a count of what changed (spec §8.6). A new year
-folder beside the others, `Pictures\2027` in January, is added by it and said
-so. `--no-publish` leaves the NAS alone.
+   ```
+   mediaidx update
+   mediaidx export
+   ```
 
-The stages one at a time, for when one of them needs looking at. Every stage is
-incremental and does only what is outstanding, so the sequence is safe to run
-whenever, and a run with nothing to do costs seconds:
+   `update` lets the new names spread — every unnamed face that looks like a
+   named one takes the name; corrections made by hand have produced about 75
+   further named faces each — and publishes to the NAS. `export` writes
+   `names.json`, the one thing here that cannot be rebuilt from the archive:
+   every name, correction, event name, rejected place, and the folders passed to
+   `add`. Commit it. It also writes a copy to every path in `names_export_extra`
+   (on this machine, the NAS backup folder); if one cannot be written it says so
+   and exits non-zero rather than letting a sleeping disk look like a backup.
+
+The dated snapshots under `~\.mediaidx\backups\` are a different thing: written
+automatically before anything that names thousands of faces at once, local, and
+only the last ten kept. They protect you from a bad run, not from a dead disk.
+
+### Less often
+
+| When | What to run |
+|---|---|
+| A folder other than a year was added to `Pictures` | `mediaidx add "<folder>"` once (see below), then `mediaidx update` |
+| Photographs were moved or renamed on the NAS | `mediaidx update`. Identity is the content hash, so names and corrections follow the file; anything gone is marked missing, never deleted |
+| The code was updated | `mediaidx meta` re-reads what a new stage version made stale, and `update` does the rest. Schema migrations run on their own. If `publish` says the application changed, rebuild the project on the NAS ([deploy/nas/README.md](deploy/nas/README.md#afterwards)) |
+| A threshold in `config.toml` changed | `faces cluster --rebuild` recomputes from scratch — about 19 minutes, names preserved by majority vote |
+| Something looks wrong | `doctor` for the environment and the GPU, `status --errors` for files that failed, `status --conflicts` where EXIF and the filename disagree |
+| A folder should no longer be watched | `roots forget <folder>`. Photographs already indexed are kept |
+| **The machine or its disk was replaced** | The index lives outside OneDrive by design, so it is not backed up. `setup.ps1`, `add` each folder, `embed`, `faces`, `faces cluster`, then **`import`** to put every name and correction back from `names.json`, and `derive`. Hours of machine time, and no handwork lost |
+
+That last row is the reason `names.json` exists. Its one delicate step has been
+tested — restoring into a copy of the library with every name and person deleted
+brought all of them back, counts unchanged (spec §8.1) — but the path as a whole,
+from an empty machine, has never been walked.
+
+### The stages one at a time
+
+`update` runs these in order, stopping at the first that fails; run one alone
+when it needs looking at. Every stage is incremental and does only what is
+outstanding, so each is safe to run whenever:
 
 ```
 mediaidx scan            new, changed and missing files
@@ -73,6 +118,7 @@ mediaidx embed           search vectors and thumbnails for the new photographs
 mediaidx faces           detect and vectorise their faces (wants the GPU)
 mediaidx faces cluster   attach the new faces to people already named
 mediaidx derive          places, events and the review queue
+mediaidx publish         bring the NAS viewer up to date
 ```
 
 **`scan` revisits only the folders that were passed to `add`.** On this library
@@ -88,52 +134,35 @@ on:
 mediaidx add "\\TRaDiskStation\Media\Pictures\Kesäleiri"
 ```
 
-Then the same four commands from `embed` onwards. If the folder is mostly of one
-person, `add --person Emmi` seeds the face naming; if its name carries nothing a
-reader would recognise, `add --label "..."` gives it one.
+If the folder is mostly of one person, `add --person Emmi` seeds the face
+naming; if its name carries nothing a reader would recognise, `add --label
+"..."` gives it one.
 
-### After a naming session
+## Status
 
-Naming is done in the UI, but one command afterwards is worth more than the
-session that preceded it:
+**M4c complete, and a viewing copy on the NAS** — one search box answers across
+people, places, dates and what a photograph shows, all at once; every
+photograph says what is known about it and on what evidence; anything the
+application got wrong can be put right in a way no rebuild can undo; and a
+read-only copy is served from the NAS to any browser, phones included (spec
+§8.3–8.6).
 
-```
-mediaidx faces cluster
-mediaidx export
-```
+| Milestone | Scope | State |
+|---|---|---|
+| M1 | Scan, hash, EXIF, filename/folder dates, schema, `status`, `doctor` | **done** |
+| M2 | Search vectors, thumbnails, search UI | **done** |
+| M3a | Faces: detection, embeddings, face crops | **done** |
+| M3b | Clustering, naming, people UI | **done** |
+| M4a | Places: gazetteer, geocoding, hierarchy, UI | **done** |
+| M4b | Events, review queue, review UI | **done** |
+| M4c | Unified search, photo screen, corrections | **done** |
+| NAS | Read-only viewing copy, publish, phone layout, `update` | **done** |
+| M5 | Captions | |
+| M6 | Video | deferred |
 
-A face somebody named by hand is the surest evidence in the database, and
-`cluster` lets it speak: every unnamed face is matched against the named ones,
-and near enough — or a little further, when the five nearest agree — takes the
-name. Corrections made by hand have produced about 75 further named faces each.
-
-`export` then writes `names.json`, the one thing here that cannot be rebuilt
-from the archive — every name, correction, event name, rejected place, and the
-folders you passed to `add` with their labels and hints. Commit it. It also
-writes a copy to every path in `names_export_extra`, which on this machine is
-the NAS, where the regular backups reach it; if one of those cannot be written
-the command says so and exits non-zero rather than letting a sleeping disk look
-like a backup.
-
-The dated snapshots under `~\.mediaidx\backups\` are a different thing: written
-automatically before anything that names thousands of faces at once, local, and
-only the last ten kept. They protect you from a bad run, not from a dead disk.
-
-### Less often
-
-| When | What to run |
-|---|---|
-| Photographs were moved or renamed on the NAS | `scan`, then `derive`. Identity is the content hash, so names and corrections follow the file; anything gone is marked missing, never deleted |
-| The code was updated | `mediaidx meta` re-reads what a new stage version made stale, and `embed` and `faces` do the same for themselves. Schema migrations run on their own |
-| A threshold in `config.toml` changed | `faces cluster --rebuild` recomputes from scratch — about 19 minutes, names preserved by majority vote |
-| Something looks wrong | `doctor` for the environment and the GPU, `status --errors` for files that failed, `status --conflicts` where EXIF and the filename disagree |
-| A folder should no longer be watched | `roots forget <folder>`. Photographs already indexed are kept |
-| **The machine or its disk was replaced** | The index lives outside OneDrive by design, so it is not backed up. `setup.ps1`, `add` each folder, `embed`, `faces`, `faces cluster`, then **`import`** to put every name and correction back from `names.json`, and `derive`. Hours of machine time, and no handwork lost |
-
-That last row is the reason `names.json` exists. Its one delicate step has been
-tested — restoring into a copy of the library with every name and person deleted
-brought all of them back, counts unchanged (spec §8.1) — but the path as a whole,
-from an empty machine, has never been walked.
+M3 is split because only M3a reads files. Clustering and the people UI work
+entirely from the database and the local face crops, so they can be re-run as
+often as a threshold needs changing without touching the NAS again.
 
 ## Places
 
@@ -323,6 +352,10 @@ mediaidx review                       work through the questions, largest first
 mediaidx meta                         re-read metadata whose stage version is behind
 mediaidx search "a phrase"            free-text search from the terminal
 mediaidx serve                        the local UI, http://localhost:8710
+mediaidx update                       new photographs end to end, then publish
+mediaidx update --no-publish          the same, leaving the NAS alone
+mediaidx publish                      bring the NAS viewer up to date
+mediaidx export                       write names.json, and its copies
 ```
 
 Everything is safe to re-run. An unchanged file is skipped without being opened,
@@ -350,7 +383,7 @@ pass, never in the code. `tests/test_config.py` asserts this.
 pytest
 ```
 
-237 tests covering date resolution, filename and folder parsing, the sanity bounds
+Some 580 tests covering date resolution, filename and folder parsing, the sanity bounds
 that stop a serial number being read as a date, GPS hemispheres, scope
 containment, the read-only guarantee, face storage and crop geometry, clustering,
 naming, merging and searching by person, the gazetteer and both ways into it, event
