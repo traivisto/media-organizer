@@ -60,8 +60,10 @@ it into a link.
 http://tradiskstation.<tailnet>.ts.net:8710
 ```
 
-The `<tailnet>` part is your own; the Tailscale app on the phone shows the whole name under the
-NAS's entry, as does the admin console's **Machines** page. It is an ordinary web address, so
+This tailnet is `tail99a690.ts.net`, so the link is
+`http://tradiskstation.tail99a690.ts.net:8710` — provided the NAS is called `tradiskstation` in
+Tailscale too; the admin console's **Machines** page shows the name it really has, and the Tailscale
+app on the phone shows the whole address under the NAS's entry. It is an ordinary web address, so
 WhatsApp makes it a link, and the same link works at home and away for anybody whose phone has
 Tailscale on — at home Tailscale carries the traffic straight across the house, not out and back.
 It needs MagicDNS, which is on unless it has been turned off in the admin console's **DNS** page.
