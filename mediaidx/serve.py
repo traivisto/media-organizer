@@ -253,9 +253,13 @@ figcaption b {{ color:var(--ink-2); font-weight:550; }}
   opacity:0; transition:opacity .2s; pointer-events:none; }}
 .grid figure:not(.odd) figcaption b,
 .grid figure:not(.odd) figcaption span {{ color:#fff; }}
-.grid figure:not(.odd):hover figcaption,
 .grid figure:not(.odd) a:focus-visible figcaption {{ opacity:1; }}
-.grid figure:not(.odd):hover img {{ transform:scale(1.04); }}
+/* Only where there is a pointer to hover with: on a touch screen :hover sticks
+   to whatever was tapped last, and left a date laid over one photograph. */
+@media (hover:hover) {{
+  .grid figure:not(.odd):hover figcaption {{ opacity:1; }}
+  .grid figure:not(.odd):hover img {{ transform:scale(1.04); }}
+}}
 /* Where the month changes. Inside the grid and spanning it, so the page stays
    one grid and paging does not have to know about months. */
 .month {{ grid-column:1/-1; padding:18px 0 4px; font-weight:650; font-size:15px;
@@ -470,22 +474,30 @@ body.playing .vbar {{ transition:opacity .4s; }}
 body.playing.idle .vbar, body.playing.idle .arrow {{ opacity:0 !important;
   pointer-events:none; }}
 body.playing.idle {{ cursor:none; }}
-.meta a.play {{ float:right; display:inline-flex; gap:7px; align-items:center;
-  height:34px; margin-top:-7px; padding:0 14px; border-radius:10px;
-  background:var(--ink); color:var(--surface); font-weight:600; }}
+.meta a.play {{ display:inline-flex; gap:7px; align-items:center; height:32px;
+  padding:0 14px; border-radius:999px; background:var(--ink);
+  color:var(--surface); font-size:13.5px; font-weight:600; }}
 .meta a.play:hover {{ opacity:.88; }}
 .meta a.play svg.ic {{ width:15px; height:15px; }}
 /* Back from a photograph lands on its card, clear of the sticky header and
    outlined so the eye finds it. */
 .grid figure {{ scroll-margin-top:96px; }}
 .grid figure:target {{ outline:3px solid var(--accent); outline-offset:2px; }}
-/* The order, beside the count. */
-.meta .sort {{ display:inline-flex; margin-left:10px; vertical-align:middle;
-  border:1px solid var(--rule); border-radius:8px; overflow:hidden; }}
-.meta .sort a {{ padding:2px 10px; font-size:12.5px; color:var(--ink-2); }}
-.meta .sort a + a {{ border-left:1px solid var(--rule); }}
-.meta .sort a:hover {{ color:var(--ink); background:var(--soft); }}
-.meta .sort a.on {{ background:var(--ink); color:var(--surface); }}
+/* The count, then the order and the slideshow, as one toolbar: on one line
+   where they fit, and the controls on a line of their own, to the right, where
+   they do not. A flex row rather than a float, which is what put the Slideshow
+   button over the order on a phone. */
+.toolbar {{ max-width:1500px; margin:0 auto; }}
+.toolbar .meta {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }}
+.toolbar .sort {{ margin-left:auto; }}
+/* The order: a segmented control, the same height as the button beside it. */
+.meta .sort {{ display:inline-flex; padding:2px; gap:2px; height:32px;
+  background:var(--soft); border-radius:999px; }}
+.meta .sort a {{ display:inline-flex; align-items:center; padding:0 12px;
+  border-radius:999px; font-size:13px; font-weight:550; color:var(--ink-2); }}
+.meta .sort a:hover {{ color:var(--ink); }}
+.meta .sort a.on {{ background:var(--surface); color:var(--ink);
+  box-shadow:0 1px 2px rgba(16,24,40,.12); }}
 /* Opening the file in its application, and the line that answers. */
 .vbar form {{ display:flex; }}
 .orig .linkish {{ padding:0; border:0; background:none; color:var(--accent);
@@ -499,10 +511,6 @@ body.playing.idle {{ cursor:none; }}
 .viewonly {{ padding:4px 10px; border:1px solid var(--rule); border-radius:999px;
   font-size:12px; font-weight:550; color:var(--ink-3); white-space:nowrap; }}
 @media (max-width:720px) {{ .viewonly {{ display:none; }} }}
-/* The count line holds its Slideshow button. Floated and not cleared, the
-   button reached into the grid below, and a grid beside a float shrinks to
-   the room left over: on a phone, one narrow column and a blank half. */
-.meta::after {{ content:""; display:table; clear:both; }}
 /* A phone, held upright (spec 8.5). Nothing may be wider than the screen: one
    element that is makes the browser lay the whole page out wider and shrink it
    to fit, which is what made every page small and awkward. */
@@ -523,7 +531,13 @@ body.playing.idle {{ cursor:none; }}
   details.filters form {{ left:8px; right:8px; padding:14px; gap:16px; }}
   details.filters fieldset {{ min-width:0; flex-basis:100%; }}
   .meta, .offer, .crumb {{ padding-left:12px; padding-right:12px; }}
-  .meta a.play {{ height:32px; margin-top:-5px; padding:0 12px; }}
+  /* The slideshow as its symbol alone, so the controls fit beside a short
+     count and the count keeps its line when it is long. */
+  .meta a.play {{ width:32px; padding:0; gap:0; font-size:0;
+    justify-content:center; }}
+  .meta .sort a {{ padding:0 10px; }}
+  /* The search box takes the room the spacer took on a wide screen. */
+  .bar > .spacer {{ display:none; }}
   /* Three across, edge to edge, as a phone's own gallery has them. */
   .grid {{ grid-template-columns:repeat(3,1fr); gap:3px; padding:8px 3px 30px; }}
   .grid figure {{ border-radius:3px; }}
@@ -1463,7 +1477,8 @@ def create_app(cfg) -> FastAPI:
                      f"{total_all:,} {what}")
                     + sort_row(q, f, ranked=False, more=more))
             first = rows[0]["id"] if rows else None
-            body = (head + f'<div class="meta">{meta}{play_link(first, here)}</div>'
+            body = (head + '<div class="toolbar">'
+                    f'<div class="meta">{meta}{play_link(first, here)}</div></div>'
                     f'<div class="grid">'
                     f'{cards_by_month(rows, here)}</div>'
                     + pager(q, f, page, total, PAGE_SIZE))
@@ -1535,8 +1550,8 @@ def create_app(cfg) -> FastAPI:
                 + sort_row(q, f, ranked=True, more=more))
         tail = pager(q, f, page, len(keep), PAGE_SIZE,
                      more=more, held=held if not more else 0)
-        body = (head + strips + f'<div class="meta">{meta}'
-                f'{play_link(ids[0], here)}</div>'
+        body = (head + strips + '<div class="toolbar">'
+                f'<div class="meta">{meta}{play_link(ids[0], here)}</div></div>'
                 f'<div class="grid">{cards}</div>' + tail)
         return HTMLResponse(layout(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
@@ -1926,7 +1941,7 @@ def create_app(cfg) -> FastAPI:
             f'<a href="{_qs(q, {**f, "order": v}, more=more or None)}"'
             + (' class="on"' if now == v else "") + f'>{label}</a>'
             for v, label in choices)
-        return f' <span class="sort">{links}</span>'
+        return f'<span class="sort">{links}</span>'
 
     def _to_card(back: str, asset_id: int, at: int) -> str:
         """The way back, landing on this photograph's card rather than the top.
@@ -2185,7 +2200,7 @@ def create_app(cfg) -> FastAPI:
         if first_id is None:
             return ""
         return (f'<a class="play" href="/photo/{first_id}?play=1&back='
-                f'{quote_plus(here)}">{_icon("play")}Slideshow</a>')
+                f'{quote_plus(here)}" title="Slideshow">{_icon("play")}Slideshow</a>')
 
     def slide_controls() -> str:
         return (
