@@ -203,6 +203,91 @@ def parse_groups(raw: str) -> datetime | None:
     return dates.valid_stamp_date(dt)
 
 
+# --------------------------------------------------------------------------
+# Breaking a disagreement, when it can be broken honestly
+# --------------------------------------------------------------------------
+#
+# Two readers differing is not automatically a dead end. A scanned folder's
+# frame order tracks time closely -- consecutive frames from the same roll are
+# minutes or days apart, never months (observed directly: KUVA777, KUVA783,
+# KUVA793 all read "87 6 2x" once agreement succeeded on them). So when the
+# two readings differ, whichever is closer to an already-dated neighbour in
+# the same folder is the more plausible one -- and when neither reading has
+# anything to be close *to*, or both are equally far, there is no honest way
+# to prefer one over the other, and it stays undated. This never invents a
+# date where neither reader proposed one; it only breaks a tie between two
+# the readers already gave.
+
+_FRAME_NO = re.compile(r"(\d+)")
+
+MAX_NEIGHBOR_GAP_DAYS = 120   # beyond this, "nearby in the roll" is not good evidence
+
+
+def _frame_number(path: str) -> int | None:
+    import os
+    stem = os.path.splitext(os.path.basename(path))[0]
+    m = _FRAME_NO.search(stem)
+    return int(m.group(1)) if m else None
+
+
+def neighbor_date(con, path: str):
+    """The camera-stamp date of the nearest other photograph in this folder.
+
+    Nearest by frame number, not by filename text: `Kuva10` sorts before
+    `Kuva2` as text but comes after it on the roll, and frame order is the
+    only thing being trusted here.
+    """
+    import os
+    frame = _frame_number(path)
+    if frame is None:
+        return None
+
+    row = con.execute(
+        "SELECT folder_id FROM files WHERE path = ? LIMIT 1", (path,)).fetchone()
+    if row is None:
+        return None
+
+    best_date, best_gap = None, None
+    for r in con.execute(
+            """SELECT f.path, a.taken_at FROM files f JOIN assets a ON a.id = f.asset_id
+                 WHERE f.folder_id = ? AND a.taken_at_source = 'camera_stamp'
+                   AND f.missing_since IS NULL""",
+            (row["folder_id"],)):
+        other_frame = _frame_number(r["path"])
+        if other_frame is None or r["path"] == path:
+            continue
+        gap = abs(other_frame - frame)
+        if best_gap is None or gap < best_gap:
+            best_gap, best_date = gap, r["taken_at"]
+    if best_date is None:
+        return None
+    from datetime import datetime as _dt
+    return _dt.fromtimestamp(best_date)
+
+
+def resolve_disagreement(candidates: list, neighbor):
+    """Pick the more plausible of two differing readings, or None.
+
+    `candidates` is the parsed (possibly-None) date from each reader.
+    `neighbor` is `neighbor_date`'s result. Returns a date only when exactly
+    one candidate is both valid and close enough to the neighbour to call it
+    the more plausible one -- never when there is nothing to compare against,
+    and never when both (or neither) are equally close.
+    """
+    unique = {d for d in candidates if d is not None}
+    if not unique or neighbor is None:
+        return None
+    scored = sorted(unique, key=lambda d: abs((d - neighbor).days))
+    if len(scored) == 1:
+        best = scored[0]
+        return best if abs((best - neighbor).days) <= MAX_NEIGHBOR_GAP_DAYS else None
+    best, second = scored[0], scored[1]
+    best_gap, second_gap = abs((best - neighbor).days), abs((second - neighbor).days)
+    if best_gap > MAX_NEIGHBOR_GAP_DAYS or best_gap == second_gap:
+        return None
+    return best
+
+
 @dataclass
 class StampResult:
     box_conf: float

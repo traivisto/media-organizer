@@ -511,8 +511,11 @@ def cmd_datestamp(args) -> int:
         return 130
 
     print(f"\n\n  dated        {st.dated:>9,}")
+    if st.dated_by_neighbor:
+        print(f"  +neighbour   {st.dated_by_neighbor:>9,}   readers disagreed; kept the "
+              "one closer to a dated neighbour -- flagged for a glance")
     print(f"  no stamp     {st.no_stamp_found:>9,}")
-    print(f"  disagreed    {st.disagreed:>9,}   the two readers differed -- left undated")
+    print(f"  disagreed    {st.disagreed:>9,}   still unresolved -- left undated")
     if st.failed:
         print(f"  failed       {st.failed:>9,}   `mediaidx status --errors`")
     print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")

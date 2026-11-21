@@ -26,6 +26,7 @@ class DateStampStats:
     considered: int = 0
     done: int = 0
     dated: int = 0
+    dated_by_neighbor: int = 0
     no_stamp_found: int = 0
     disagreed: int = 0
     failed: int = 0
@@ -92,9 +93,7 @@ def run(con, cfg, *, limit: int | None = None, progress=None) -> DateStampStats:
 
             if result is None:
                 st.no_stamp_found += 1
-            elif not result.agreed:
-                st.disagreed += 1
-            else:
+            elif result.agreed:
                 # The guard on taken_at_source, not just the WHERE clause that
                 # selected this asset: a correction may have landed on it
                 # since `pending()` ran, and a hand-settled date always wins.
@@ -105,6 +104,29 @@ def run(con, cfg, *, limit: int | None = None, progress=None) -> DateStampStats:
                     (int(result.date.timestamp()), asset_id))
                 if cur.rowcount:
                     st.dated += 1
+            else:
+                # Two readers differed -- see if the neighbour tiebreak
+                # (datestamp.resolve_disagreement) can still settle it. Assets
+                # already written earlier in *this* run are visible here too
+                # (same connection, same open transaction), so resolving them
+                # in asset-id order lets one dated frame anchor the next.
+                parsed = [datestamp.parse_groups(v) for v in result.raw.values()]
+                nb = datestamp.neighbor_date(con, path)
+                picked = datestamp.resolve_disagreement(parsed, nb)
+                if picked is None:
+                    st.disagreed += 1
+                else:
+                    note = (f"two readers disagreed ({result.raw}); kept the one "
+                            f"closer to a neighbouring frame's date ({nb:%Y-%m-%d})")
+                    cur = con.execute(
+                        """UPDATE assets SET taken_at = ?, taken_at_source = 'camera_stamp',
+                             taken_at_precision = 'day', date_conflict = 1, conflict_note = ?
+                           WHERE id = ? AND taken_at_source IN ('folder', 'mtime')""",
+                        (int(picked.timestamp()), note, asset_id))
+                    if cur.rowcount:
+                        st.dated_by_neighbor += 1
+                    else:
+                        st.disagreed += 1
 
             db.set_stage(con, asset_id, datestamp.STAGE, datestamp.STAGE_VERSION,
                         "done", now)
@@ -132,7 +154,8 @@ def render_progress(st: DateStampStats, stream=None) -> None:
     stream = stream or sys.stderr
     stream.write(
         f"\r  considered {st.done:>6,} / {st.considered:,}   "
-        f"dated {st.dated:>5,}   no stamp {st.no_stamp_found:>5,}   "
+        f"dated {st.dated:>5,}   +neighbour {st.dated_by_neighbor:>4,}   "
+        f"no stamp {st.no_stamp_found:>5,}   "
         f"disagreed {st.disagreed:>4,}   failed {st.failed:>4,}   "
         f"{st.rate:>4.1f} img/s   {st.elapsed:>5.0f}s")
     stream.flush()
