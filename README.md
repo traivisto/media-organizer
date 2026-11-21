@@ -48,8 +48,24 @@ is the only one of the three you will run often.
 
 ### New photographs in the archive
 
-Every stage is incremental and does only what is outstanding, so the sequence is
-safe to run whenever, and a run with nothing to do costs seconds:
+Two steps, with a look in between. **Media Organizer** (the `media-organizer`
+project beside this one) fetches photographs from iCloud or a folder and moves
+them, named, into `Pictures\YYYY\YYYY MM`. Look through them in Explorer and
+delete what you don't want; then, from Media Organizer's *Update photo
+archive* button or here:
+
+```
+mediaidx update
+```
+
+That is the whole sequence below, ending with `publish` so the NAS viewer has
+the new photographs too, and a count of what changed (spec §8.6). A new year
+folder beside the others, `Pictures\2027` in January, is added by it and said
+so. `--no-publish` leaves the NAS alone.
+
+The stages one at a time, for when one of them needs looking at. Every stage is
+incremental and does only what is outstanding, so the sequence is safe to run
+whenever, and a run with nothing to do costs seconds:
 
 ```
 mediaidx scan            new, changed and missing files
@@ -64,11 +80,12 @@ those are the year folders, `1998` through `2026` — not `Pictures` itself.
 Photographs dropped into a year that is already indexed are found. A **new**
 top-level folder is not, and nothing will look wrong: `scan` reports no changes,
 because as far as it knows there is nothing there to look at. `mediaidx roots`
-lists what is actually being watched. A new folder is indexed once, by hand, and
-is a root from then on:
+lists what is actually being watched. `update` adds a new *year* folder by
+itself; any other new folder is indexed once, by hand, and is a root from then
+on:
 
 ```
-mediaidx add "\\TRaDiskStation\Media\Pictures\2027"
+mediaidx add "\\TRaDiskStation\Media\Pictures\Kesäleiri"
 ```
 
 Then the same four commands from `embed` onwards. If the folder is mostly of one

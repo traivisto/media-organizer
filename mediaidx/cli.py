@@ -897,6 +897,82 @@ def cmd_publish(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# update
+# --------------------------------------------------------------------------
+
+def cmd_update(args) -> int:
+    """New photographs in the archive, end to end (README, Routine use)."""
+    from . import update as up
+
+    def emit(**event):
+        if args.events:
+            up.emit(**event)
+
+    cfg, con = _open(args, create=False)
+    roots = [r["path"] for r in con.execute(
+        "SELECT path FROM folders WHERE is_root = 1 ORDER BY path")]
+    if not roots:
+        print("no roots recorded yet -- use `mediaidx add <folder>` first",
+              file=sys.stderr)
+        emit(done=True, ok=False, failed="scan", error="no roots recorded yet")
+        return 1
+
+    try:
+        added = up.new_year_folders(roots)
+    except OSError as e:
+        print(f"the archive does not answer: {e}\n  Nothing was changed; run it "
+              "again when the NAS is awake.", file=sys.stderr)
+        emit(done=True, ok=False, failed="scan", error=f"the archive does not answer: {e}")
+        return 1
+    for path in added:
+        print(f"a new year folder, indexed from now on: {path}")
+    emit(added_roots=added)
+
+    before = up.counts(con)
+    publish_to = None if args.no_publish else cfg.publish_to
+    common = dict(config=args.config, limit=None, workers=None)
+    ns = argparse.Namespace
+    stages = [
+        ("scan", lambda: cmd_scan(ns(**common, paths=roots + added))),
+        ("embed", lambda: cmd_embed(ns(**{**common, "workers": 8}, batch=32))),
+        ("faces", lambda: cmd_faces(ns(**{**common, "workers": 8}, action=None,
+                                       cpu=False, rebuild=False))),
+        # `faces cluster` refuses a library with no faces at all; here that is
+        # simply nothing to do.
+        ("cluster", lambda: cmd_faces(ns(**common, action="cluster", rebuild=False))
+         if up.counts(con).faces else 0),
+        ("derive", lambda: cmd_derive(ns(**common, no_places=False))),
+    ]
+    if publish_to:
+        stages.append(("publish", lambda: cmd_publish(ns(**common, to=None,
+                                                         dry_run=False))))
+
+    for i, (name, run) in enumerate(stages, 1):
+        print(f"\n== {i}/{len(stages)}  {name}", flush=True)
+        emit(stage=name, index=i, total=len(stages))
+        rc = run()
+        sys.stdout.flush()
+        if rc != 0:
+            print(f"\nstopped at {name}. What was done before it is kept; "
+                  "`mediaidx update` again carries on from there.", file=sys.stderr)
+            emit(done=True, ok=False, failed=name, error=f"{name} did not finish")
+            return rc
+
+    changed = up.difference(before, up.counts(con))
+    print("\nupdated")
+    print(f"  new photographs   {changed['photographs']:>10,}")
+    if changed["missing_files"]:
+        print(f"  files now missing {changed['missing_files']:>10,}")
+    print(f"  new faces         {changed['faces']:>10,}")
+    print(f"  newly named faces {changed['named_faces']:>10,}")
+    print("  published to the NAS" if publish_to else
+          "  not published" + ("" if args.no_publish else
+                               " -- no [paths] publish_to in the config"))
+    emit(done=True, ok=True, published=bool(publish_to), added_roots=added, **changed)
+    return 0
+
+
+# --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
 
@@ -1139,6 +1215,14 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--dry-run", action="store_true",
                     help="say what would be sent, send nothing")
     pb.set_defaults(func=cmd_publish)
+
+    up = sub.add_parser("update", help="new photographs, end to end: scan, embed, "
+                        "faces, cluster, derive, publish")
+    up.add_argument("--no-publish", action="store_true",
+                    help="leave the NAS copy as it is")
+    up.add_argument("--events", action="store_true",
+                    help="also write one json line per stage, for a program to read")
+    up.set_defaults(func=cmd_update)
 
     d = sub.add_parser("doctor", help="check the environment")
     d.set_defaults(func=cmd_doctor)

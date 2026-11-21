@@ -1469,6 +1469,10 @@ mediaidx textmodel               Export the search model's text half for a small
 mediaidx publish                 Bring the viewing copy on the NAS up to date (§8.4)
     --to DIR                      The project folder, if not [paths] publish_to
     --dry-run                     Say what would be sent, send nothing
+mediaidx update                  New photographs end to end: scan, embed, faces, faces cluster,
+                                  derive, publish (§8.6)
+    --no-publish                  Leave the NAS copy as it is
+    --events                      Also one json line per stage, for a program to read
 
 mediaidx search <phrase>          Search from the terminal
     --limit N                     How many results
@@ -1724,6 +1728,37 @@ Checked 2026-11-21 at 320 × 640, 375 × 812, 812 × 375 and 1440 × 900 over th
 none is wider than its screen.
 
 ---
+
+### 8.6 One update, and Media Organizer
+
+New photographs reach the archive in two steps, deliberately apart. **Media Organizer** (a separate
+Electron application, `media-organizer` beside this repository) fetches them from iCloud or a
+folder, names them and moves them into `Pictures\YYYY\YYYY MM`. The owner then looks through them in
+Explorer and deletes what is not wanted. Only then does `mediaidx update` index what is there, so a
+photograph deleted at that point never enters the index at all.
+
+- **`mediaidx update` is the README's routine sequence as one command**: `scan`, `embed`, `faces`,
+  `faces cluster`, `derive`, then `publish` when `[paths] publish_to` is set. Each stage is the
+  existing command, run unchanged and in that order; the first that fails stops the run, and since
+  every stage is incremental, running it again carries on. It ends with what changed: new
+  photographs, files now missing, new faces and newly named faces, counted from the database
+  before and after.
+- **A new year folder is added by itself.** `scan` revisits only roots, so `Pictures\2027` would
+  otherwise be silently ignored in January. Beside a root whose name is a year (`19xx`/`20xx`),
+  any sibling folder named as a year that is not a root yet is passed to `add` and announced.
+  Only a parent that already holds a year root is looked in, and only year names count, so
+  `Unsorted`, `Scans` and the person folders stay out as they were chosen to. A parent that cannot
+  be listed stops the run: a NAS asleep must not look like a year with nothing new.
+- **`--events`** adds lines beginning `@@mediaidx ` followed by one JSON object: `{added_roots}`
+  first, `{stage, index, total}` as each stage starts, and finally `{done, ok, ...}` with the
+  counts and `published`, or `{done, ok: false, failed, error}`. Everything else is the ordinary
+  human output. This is what Media Organizer reads.
+- **Media Organizer** has an *Update photo archive* screen, reached from its start screen and
+  from the screen after a batch is moved, which also lists the folders the batch went into with
+  an Open button for each. It runs `~\.mediaidx\venv\Scripts\mediaidx.exe update --events`
+  (`mediaidxPath` in its config overrides the location), shows the stages and the latest output
+  line, can cancel (the whole process tree, since `mediaidx.exe` is a launcher for python), and
+  keeps the full output under its `userData\archive-update-logs`.
 
 ## 9. Configuration
 
