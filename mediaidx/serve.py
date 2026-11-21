@@ -1180,7 +1180,13 @@ def create_app(cfg) -> FastAPI:
         if f.get("cam"):
             preds.append("(a.camera_model LIKE ? OR a.camera_make LIKE ?)")
             args.extend([f"%{_like(f['cam'])}%"] * 2)
-        if f.get("dsrc"):
+        if f.get("dsrc") == "conflict":
+            # Not a source but a quality: a date that disagrees with itself
+            # (EXIF vs filename) or was only settled by the neighbour
+            # tiebreak (datestamp.py) -- worth a glance either way (spec:
+            # date_conflict is the same flag the photo page's warning reads).
+            preds.append("a.date_conflict = 1")
+        elif f.get("dsrc"):
             preds.append("a.taken_at_source = ?")
             args.append(f["dsrc"])
         if f.get("psrc"):
@@ -1218,7 +1224,8 @@ def create_app(cfg) -> FastAPI:
     # What each filter says as a chip. A value not listed is shown as given.
     FILTER_WORDS = {
         "dsrc": {"exif": "date from EXIF", "filename": "date from the filename",
-                 "folder": "date from the folder"},
+                 "folder": "date from the folder", "mtime": "no date",
+                 "conflict": "date uncertain"},
         "psrc": {"gps": "place from the coordinate",
                  "folder": "place from the folder name"},
     }
@@ -1457,7 +1464,9 @@ def create_app(cfg) -> FastAPI:
             opt("", "any", f.get("dsrc")),
             opt("exif", "EXIF", f.get("dsrc")),
             opt("filename", "filename", f.get("dsrc")),
-            opt("folder", "folder", f.get("dsrc"))])
+            opt("folder", "folder", f.get("dsrc")),
+            opt("mtime", "no date", f.get("dsrc")),
+            opt("conflict", "uncertain", f.get("dsrc"))])
         sel_psrc = "".join([
             opt("", "any", f.get("psrc")),
             opt("gps", "coordinate", f.get("psrc")),
