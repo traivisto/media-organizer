@@ -50,14 +50,14 @@ Before starting, check one path. In File Station, right-click the shared folder 
 
 ## The address
 
-**At home, the one to use and to share:**
+**At home and away, the one to use and to share:**
 
 ```
 https://tradiskst.synology.me:8443
 ```
 
-It works in every browser on every device on the home network, Tailscale or not, and WhatsApp makes
-it a link. Set up 2026-11-21, after two other addresses failed on a phone:
+It works in every browser on every device on the home network, Tailscale or not; away from home it
+works with Tailscale on (below); and WhatsApp makes it a link. Set up 2026-11-21, after two other addresses failed on a phone:
 
 - `http://TRaDiskStation:8710` is answered by Windows' own name lookup, which phones do not have.
 - Chrome on an iPhone refuses a page that is not encrypted, so no `http://` address will do there —
@@ -83,12 +83,20 @@ How it is made, all in DSM, with no port opened to the internet:
 The NAS's address is fixed in the router, which the name depends on. If it ever changes, change
 the DDNS entry and the reverse proxy's destination with it.
 
-**Away from home**, Tailscale is the only way in, by design. The NAS's Tailscale name,
-`tradiskstation.tail99a690.ts.net` (tailnet `tail99a690.ts.net`), serves `http://` on port 8710,
-which works in Safari but not in Chrome on an iPhone. Not set up yet, either of two would give an
-encrypted address away from home as well: Tailscale Serve on the NAS
-(`https://tradiskstation.tail99a690.ts.net`), or the NAS as a Tailscale subnet router for
-`192.168.86.0/24`, after which the home link above works away too, with Tailscale on.
+**Away from home** the same link works with Tailscale on, and nothing works without it — by design,
+since nothing is open to the internet. Set up 2026-11-21 and tried over mobile data:
+
+- The NAS is a Tailscale **subnet router** for `192.168.86.253/32` — its own address and nothing
+  else, approved in the admin console under **Machines** → the NAS → **Edit route settings**.
+  The name `tradiskst.synology.me` already answers `192.168.86.253` everywhere; with the route, a
+  phone away from home reaches that address through Tailscale.
+- Only the NAS, not the whole `192.168.86.0/24`: that is Google Wifi's default range and common in
+  other homes, where a phone would take the address for one on the local network. The narrower
+  route wins over a local network's, and it gives Tailscale no way into the rest of the house.
+- On the phone, the Tailscale app's **Use Tailscale subnets** has to be on, which it is by default.
+
+The NAS's own Tailscale name, `tradiskstation.tail99a690.ts.net`, serves `http://` on port 8710,
+which Safari opens and Chrome on an iPhone does not; it is not needed for anything above.
 
 If DSM's firewall is on (**Control Panel** → **Security** → **Firewall**), allow TCP port 8443 from
 the home network, and 8710 from the home network and from Tailscale (`100.64.0.0/10`).
