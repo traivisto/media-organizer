@@ -1,0 +1,40 @@
+# Kuva-arkisto's viewing copy as a Container Manager project (spec 8.3).
+#
+# Lives in /volume1/docker/kuva-arkisto beside two folders `mediaidx publish`
+# fills from the computer that keeps the archive:
+#   app/   the application, from which the image is built
+#   data/  photos.db, thumbs/, textmodel/ and config.toml
+#
+# Everything it is given is read-only, and so is the container itself: a
+# viewing copy has nothing to write, and cannot.
+
+services:
+  kuva-arkisto:
+    build:
+      context: ./app
+      dockerfile: deploy/nas/Dockerfile
+    image: kuva-arkisto:viewer
+    container_name: kuva-arkisto
+    restart: unless-stopped
+    ports:
+      - "8710:8710"
+    volumes:
+      - ./data:/data:ro
+      - /volume1/Media/Pictures:/photos:ro
+    environment:
+      - TZ=Europe/Helsinki
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Root inside, with nothing root can do but read: every right is dropped
+    # except reading past file permissions, which the NAS's own ACLs on the
+    # Pictures share would otherwise decide for it.
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
+    # The text model holds about a gigabyte while somebody is searching (spec
+    # 7.6). The limit keeps a fault from taking memory the NAS itself needs.
+    mem_limit: 1800m

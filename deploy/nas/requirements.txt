@@ -1,0 +1,22 @@
+# What a viewing copy needs to run (spec 8.3), and nothing else: no torch, no
+# face detection, no exiftool binary. The versions are the ones the computer
+# that keeps the archive runs, so the two read the index the same way.
+
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn==0.52.4
+# FastAPI will not register a route with form fields without it, even in a
+# copy where no form is ever drawn.
+python-multipart==0.0.32
+numpy==2.5.3
+pillow==12.3.0
+pillow-heif==1.7.0
+sqlite-vec==0.1.9
+# Described search with the exported text half (spec 7.6). The CPU build of
+# the same version the PC exports with.
+onnxruntime==1.29.0
+tokenizers==0.23.2
+# Imported by the command line at start-up, though a viewing copy hashes and
+# reads EXIF from nothing.
+blake3==1.0.9
+pyexiftool==0.5.6

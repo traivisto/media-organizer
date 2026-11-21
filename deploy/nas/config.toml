@@ -1,0 +1,19 @@
+# The viewing copy's configuration, as the container sees it (spec 8.3, 9).
+# Published into data/ beside the database; paths are inside the container.
+
+[paths]
+database   = "/data/photos.db"
+thumbnails = "/data/thumbs"
+logs       = "/tmp/logs"
+text_model = "/data/textmodel"
+
+# Where the index's stored paths are inside the container: compose.yaml mounts
+# the NAS's own Pictures folder at /photos.
+[paths.mounts]
+'\\TRaDiskStation\Media\Pictures' = '/photos'
+
+[ui]
+read_only = true
+# The DS725+ has two cores with two threads each; leave the rest to the NAS.
+text_threads = 2
+text_model_idle_minutes = 10
