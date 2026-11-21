@@ -339,6 +339,8 @@ def cmd_embed(args) -> int:
 def cmd_faces(args) -> int:
     if args.action == "cluster":
         return cmd_faces_cluster(args)
+    if args.action == "ages":
+        return cmd_faces_ages(args)
 
     from . import face_pass
     from . import faces as faces_mod
@@ -375,6 +377,33 @@ def cmd_faces(args) -> int:
     if st.failed:
         print(f"  failed      {st.failed:>9,}   `mediaidx status --errors`")
     print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_faces_ages(args) -> int:
+    from . import age_pass
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    todo = age_pass.pending(con, args.limit)
+    if not todo:
+        print("nothing pending -- every face already has an age estimate")
+        return 0
+    print(f"{len(todo):,} faces pending"
+          + (f", processing {args.limit:,}" if args.limit else ""))
+    print("  reads cached thumbnails only; the archive is not touched")
+
+    st = age_pass.run(con, cfg, limit=args.limit,
+                      progress=age_pass.render_progress,
+                      device="cpu" if args.cpu else "cuda")
+
+    print(f"\n\n  aged          {st.done:>9,}")
+    if st.missing_thumb:
+        print(f"  no thumbnail  {st.missing_thumb:>9,}   "
+              "`mediaidx faces` writes them; re-run after")
+    if st.failed:
+        print(f"  failed        {st.failed:>9,}")
+    print(f"  {st.rate:.1f} faces/s over {st.elapsed:.0f}s")
     return 0
 
 
@@ -450,6 +479,43 @@ def cmd_meta(args) -> int:
     if st.failed:
         print(f"  failed           {st.failed:>10,}   `mediaidx status --errors`")
     print(f"  {st.rate:.1f} files/s over {st.elapsed:.0f}s")
+    return 0
+
+
+def cmd_datestamp(args) -> int:
+    from . import datestamp, datestamp_pass
+    cfg, con = _open(args, create=False)
+    db.migrate(con)
+
+    todo = datestamp_pass.pending(con, limit=args.limit)
+    if not todo:
+        print("nothing pending -- every undated photograph has been tried")
+        return 0
+
+    if not datestamp.ollama_available():
+        print("\n  Ollama is not answering at localhost:11434 -- start it and "
+              "re-run.\n  (reading a located stamp needs it; nothing is lost by "
+              "waiting.)", file=sys.stderr)
+        return 1
+
+    print(f"{len(todo):,} undated photographs pending"
+          + (f", processing {args.limit:,}" if args.limit else ""))
+    print("  EXIF and the filename already failed on every one of these; "
+          "a real digital\n  photo never reaches this list")
+    print("  loading the locator (first run downloads it) ...")
+    try:
+        st = datestamp_pass.run(con, cfg, limit=args.limit,
+                                progress=datestamp_pass.render_progress)
+    except KeyboardInterrupt:
+        print("\n  interrupted -- committed chunks are kept; re-run to continue")
+        return 130
+
+    print(f"\n\n  dated        {st.dated:>9,}")
+    print(f"  no stamp     {st.no_stamp_found:>9,}")
+    print(f"  disagreed    {st.disagreed:>9,}   the two readers differed -- left undated")
+    if st.failed:
+        print(f"  failed       {st.failed:>9,}   `mediaidx status --errors`")
+    print(f"  {st.rate:.1f} img/s over {st.elapsed:.0f}s")
     return 0
 
 
@@ -1200,9 +1266,11 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--batch", type=int, default=32, help="GPU batch size")
     e.set_defaults(func=cmd_embed)
 
-    fa = sub.add_parser("faces", help="detect and embed faces; `faces cluster` groups them")
-    fa.add_argument("action", nargs="?", choices=["cluster"],
-                    help="'cluster' to group faces into people; omit to detect")
+    fa = sub.add_parser("faces", help="detect and embed faces; `faces cluster` groups them, "
+                                      "`faces ages` estimates age and gender")
+    fa.add_argument("action", nargs="?", choices=["cluster", "ages"],
+                    help="'cluster' to group faces into people, 'ages' to estimate "
+                         "age/gender from cached thumbnails; omit to detect")
     fa.add_argument("--limit", type=int, help="stop after N photographs")
     fa.add_argument("--workers", type=int, default=8)
     fa.add_argument("--cpu", action="store_true",
@@ -1214,6 +1282,11 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("meta", help="re-read metadata for photographs whose stage is behind")
     m.add_argument("--limit", type=int, default=None)
     m.set_defaults(func=cmd_meta)
+
+    ds = sub.add_parser("datestamp", help="read a camera's own printed date stamp "
+                                          "off scans EXIF and the filename could not date")
+    ds.add_argument("--limit", type=int, default=None)
+    ds.set_defaults(func=cmd_datestamp)
 
     pl = sub.add_parser("places", help="put photographs on the map, by coordinate and by folder")
     pl.add_argument("--load", action="store_true",

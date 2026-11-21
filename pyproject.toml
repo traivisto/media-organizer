@@ -33,6 +33,13 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",  # form posts: naming and merging clusters
+    # Camera date-stamp localisation on scans EXIF and the filename cannot
+    # date (spec ...). AGPL-3.0 -- only the pretrained weights and plain
+    # inference are used here, never its own OCR pipeline. Reading the crop
+    # is a local Ollama model, not this library.
+    "ultralytics>=8.4",
+    "huggingface_hub>=0.25",
+    "requests>=2.30",
 ]
 
 [project.optional-dependencies]

@@ -177,6 +177,78 @@ class Detector:
         return out
 
 
+@dataclass
+class AgeEstimator:
+    """buffalo_l's genderage head, run on the cached face thumbnail.
+
+    Deliberately not part of `Detector`: that class is loaded once per
+    40,000-image pass and detection+recognition are the only models worth
+    their GPU time there (see the module docstring). Age is wanted for faces
+    already detected and embedded -- 27,000-odd of them before this existed --
+    and re-running detection over the whole archive just to get it would mean
+    reading every photograph off the NAS a second time. The cached thumbnail
+    already sits on local disk from the first pass, so this works from that
+    instead and never touches the archive again.
+
+    The trade-off: `Attribute.get` wants the asset's own bbox against the full
+    frame, to crop and scale around it. The thumbnail is already that crop,
+    at `images.FACE_MARGIN` margin and a known size (`images.py`), so the
+    original bbox is reconstructed from that geometry rather than read from
+    disk -- there is nothing else to align to, and a rough estimate is all
+    this was ever asked for (spec: relative ordering, not absolute age).
+    """
+    model_name: str = DEFAULT_MODEL
+    device: str = "cuda"
+
+    def __post_init__(self):
+        preload_cuda()
+        from insightface.app import FaceAnalysis
+
+        if self.device == "cuda" and not cuda_available():
+            self.device = "cpu"
+        providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                     if self.device == "cuda" else ["CPUExecutionProvider"])
+
+        # FaceAnalysis insists on a detection model being present (it asserts
+        # so in its own __init__) even though it is never called here -- only
+        # genderage.get() runs, against the geometry reconstructed in
+        # estimate(). The unused detector is dead weight in memory, not in
+        # time: it is loaded, never invoked.
+        with contextlib.redirect_stdout(io.StringIO()):
+            app = FaceAnalysis(name=self.model_name,
+                               allowed_modules=["detection", "genderage"],
+                               providers=providers)
+            app.prepare(ctx_id=0 if self.device == "cuda" else -1,
+                        det_size=(DET_SIZE, DET_SIZE))
+
+        self._model = app.models["genderage"]
+
+    def estimate(self, thumb) -> tuple[int, int] | None:
+        """(gender, age) from a square face thumbnail, or None on failure.
+
+        `thumb` is the cached crop `images.write_face_thumb` wrote: a square
+        PIL image, the face centred in it with `images.FACE_MARGIN` margin
+        on every side. That geometry is inverted here to the bbox
+        `Attribute.get` expects, in the thumbnail's own pixel space -- no
+        other image exists to compute a real one from.
+        """
+        from insightface.app.common import Face
+        from .images import FACE_MARGIN
+        import numpy as np
+
+        side = min(thumb.size)
+        face_side = side / (1 + 2 * FACE_MARGIN)
+        pad = (side - face_side) / 2
+        bbox = np.array([pad, pad, pad + face_side, pad + face_side])
+
+        bgr = np.ascontiguousarray(np.asarray(thumb.convert("RGB"))[:, :, ::-1])
+        try:
+            gender, age = self._model.get(bgr, Face(bbox=bbox))
+        except Exception:
+            return None
+        return int(gender), int(age)
+
+
 # --------------------------------------------------------------------------
 # storage
 # --------------------------------------------------------------------------

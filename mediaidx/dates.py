@@ -23,6 +23,13 @@ from datetime import date, datetime, timedelta
 # parsing.
 MIN_DATE = datetime(1990, 1, 1)
 
+# A camera's own date stamp is not a false-positive risk the way a number
+# pulled from a filename is -- it was printed by hardware, onto the print, at
+# the time. The bound only needs to rule out a misread digit producing a
+# year nothing in the archive could be from (spec: scanned prints going back
+# to the 1970s).
+MIN_STAMP_DATE = datetime(1970, 1, 1)
+
 SECOND, DAY, MONTH, YEAR = "second", "day", "month", "year"
 
 _PRECISION_WINDOW = {
@@ -41,6 +48,12 @@ def _valid(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt if MIN_DATE <= dt <= _max_date() else None
+
+
+def valid_stamp_date(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt if MIN_STAMP_DATE <= dt <= _max_date() else None
 
 
 # --------------------------------------------------------------------------

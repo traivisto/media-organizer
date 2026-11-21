@@ -94,6 +94,17 @@ DEFAULTS: dict = {
     "tools": {
         "exiftool": "",  # empty means: find it on PATH
     },
+    "datestamp": {
+        # Below this, the located box is too uncertain a crop to bother
+        # reading at all (spec: measured against the model's own validation
+        # set and this library's scans alike).
+        "conf_threshold": 0.6,
+        # Both run locally through Ollama; a date is kept only when they
+        # agree letter for letter (datestamp.py). Add a third to make
+        # agreement harder to reach by accident, never to replace either --
+        # two independent readings is the whole safety margin.
+        "ollama_models": ["gemma4:12b", "qwen3.5:9b"],
+    },
 }
 
 
@@ -130,6 +141,7 @@ class Config:
     events: dict = field(default_factory=dict)
     places: dict = field(default_factory=dict)
     tools: dict = field(default_factory=dict)
+    datestamp: dict = field(default_factory=dict)
     ui: dict = field(default_factory=dict)
     # Defaulted so that constructing a Config by hand -- which the tests do --
     # does not have to know about a gazetteer to talk about faces.
@@ -216,5 +228,6 @@ def load(path: str | os.PathLike | None = None) -> Config:
         events=merged["events"],
         places=merged["places"],
         tools=merged["tools"],
+        datestamp=merged["datestamp"],
         source=cfg_path if cfg_path.exists() else None,
     )

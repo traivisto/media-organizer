@@ -383,6 +383,12 @@ ADDED_COLUMNS = {
         ("place_id", "INTEGER REFERENCES places(id)"),
         ("place_source", "TEXT"),
     ],
+    "faces": [
+        # From the cached thumbnail, not a fresh detection (see age_pass.py) --
+        # a rough estimate for sorting one person's photographs, not a fact.
+        ("age", "INTEGER"),
+        ("gender", "INTEGER"),   # insightface convention: 0 female, 1 male
+    ],
 }
 
 
