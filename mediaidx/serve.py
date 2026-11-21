@@ -487,9 +487,13 @@ body.playing.idle {{ cursor:none; }}
    where they fit, and the controls on a line of their own, to the right, where
    they do not. A flex row rather than a float, which is what put the Slideshow
    button over the order on a phone. */
-.toolbar {{ max-width:1500px; margin:0 auto; }}
+.toolbar {{ position:relative; max-width:1500px; margin:0 auto; }}
 .toolbar .meta {{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }}
-.toolbar .sort {{ margin-left:auto; }}
+/* The controls as one group, so that when the line is too short they move to
+   the next together, to the right, rather than one at a time. */
+.toolbar .tools {{ display:flex; align-items:center; gap:8px; margin-left:auto; }}
+.toolbar details.filters > summary {{ height:32px; font-size:13.5px; }}
+.toolbar details.filters form {{ top:calc(100% + 6px); }}
 /* The order: a segmented control, the same height as the button beside it. */
 .meta .sort {{ display:inline-flex; padding:2px; gap:2px; height:32px;
   background:var(--soft); border-radius:999px; }}
@@ -535,7 +539,14 @@ body.playing.idle {{ cursor:none; }}
      count and the count keeps its line when it is long. */
   .meta a.play {{ width:32px; padding:0; gap:0; font-size:0;
     justify-content:center; }}
-  .meta .sort a {{ padding:0 10px; }}
+  .meta .sort a {{ padding:0 9px; }}
+  /* One line above the photographs: the count alone, without what
+     qualifies it, and Filters as its symbol and how many are on. */
+  .meta .aside, .meta .sort .w {{ display:none; }}
+  .toolbar .meta, .toolbar .tools {{ gap:6px; }}
+  .toolbar details.filters > summary {{ width:auto; min-width:32px;
+    padding:0 8px; gap:4px; font-size:0; border-style:solid; }}
+  .toolbar details.filters > summary .badge {{ font-size:11px; }}
   /* The search box takes the room the spacer took on a wide screen. */
   .bar > .spacer {{ display:none; }}
   /* Three across, edge to edge, as a phone's own gallery has them. */
@@ -1207,7 +1218,7 @@ def create_app(cfg) -> FastAPI:
                 add.append("nobody")
         return _qs(" ".join([r.without(*drop), *add]).strip(), f)
 
-    def chip_row(con, q, r, f) -> str:
+    def chip_row(con, q, r, f, *, filters: bool = True) -> str:
         """Everything the page is searching for, and how to take any of it back.
 
         Typed or picked, a criterion is shown the same way: a chip carrying the
@@ -1257,8 +1268,12 @@ def create_app(cfg) -> FastAPI:
         if r.text and bits:
             bits.append(f'<span class="rest"><b>{html.escape(r.text)}</b> '
                         'as the description</span>')
-        bits.append(filter_row(con, q, r, f))
-        return f'<div class="chips">{"".join(bits)}</div>'
+        # Beside the results the Filters button sits in the toolbar above
+        # them; where there are none to show it stays here, since a filter is
+        # often the very thing to change.
+        if filters:
+            bits.append(filter_row(con, q, r, f))
+        return f'<div class="chips">{"".join(bits)}</div>' if bits else ""
 
     def _count_for(con, raw: str, f: dict) -> int:
         """How many photographs another reading of the query would find.
@@ -1430,6 +1445,10 @@ def create_app(cfg) -> FastAPI:
         # rather than to the front -- including the page number and the filters.
         here = _qs(q, f, page=page or None, more=more or None)
         head = chip_row(con, q, r, f) + offer_row(con, r, f)
+        # Above a page of results: the chips alone, Filters being in the
+        # toolbar with the count, the order and the slideshow.
+        top = lambda: (chip_row(con, q, r, f, filters=False)
+                       + offer_row(con, r, f))
 
         cols = ("a.id, a.content_hash, a.taken_at, a.taken_at_precision, "
                 "a.camera_model")
@@ -1471,14 +1490,16 @@ def create_app(cfg) -> FastAPI:
                 return HTMLResponse(layout(
                     title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
                     focus=" autofocus"))
-            what = ("photographs" if where else
-                    f"photographs &middot; {embedded:,} searchable")
-            meta = ((f"{total:,} {what}" if where or not q else
-                     f"{total_all:,} {what}")
-                    + sort_row(q, f, ranked=False, more=more))
+            # What matters first; what qualifies it in an aside, which a phone
+            # leaves out to keep the toolbar to one line.
+            meta = (f"{total if where or not q else total_all:,} photographs"
+                    + ("" if where else
+                       f'<span class="aside"> &middot; {embedded:,} searchable</span>'))
             first = rows[0]["id"] if rows else None
-            body = (head + '<div class="toolbar">'
-                    f'<div class="meta">{meta}{play_link(first, here)}</div></div>'
+            body = (top() + '<div class="toolbar"><div class="meta">'
+                    f'{meta}<span class="tools">{filter_row(con, q, r, f)}'
+                    f'{sort_row(q, f, ranked=False, more=more)}'
+                    f'{play_link(first, here)}</span></div></div>'
                     f'<div class="grid">'
                     f'{cards_by_month(rows, here)}</div>'
                     + pager(q, f, page, total, PAGE_SIZE))
@@ -1544,14 +1565,16 @@ def create_app(cfg) -> FastAPI:
 
         scope = f"of {len(cand):,} matching" if cand else f"of {embedded:,} searchable"
         held = len(hits) - answers
-        meta = (f'{len(keep):,} for &ldquo;{html.escape(r.text)}&rdquo; {scope}'
+        meta = (f'{len(keep):,} photographs<span class="aside"> for '
+                f'&ldquo;{html.escape(r.text)}&rdquo; {scope}'
                 + (f' &middot; {held:,} weaker held back' if held and not more
-                   else "")
-                + sort_row(q, f, ranked=True, more=more))
+                   else "") + '</span>')
         tail = pager(q, f, page, len(keep), PAGE_SIZE,
                      more=more, held=held if not more else 0)
-        body = (head + strips + '<div class="toolbar">'
-                f'<div class="meta">{meta}{play_link(ids[0], here)}</div></div>'
+        body = (top() + strips + '<div class="toolbar"><div class="meta">'
+                f'{meta}<span class="tools">{filter_row(con, q, r, f)}'
+                f'{sort_row(q, f, ranked=True, more=more)}'
+                f'{play_link(ids[0], here)}</span></div></div>'
                 f'<div class="grid">{cards}</div>' + tail)
         return HTMLResponse(layout(
             title=f"{q} — Kuva-arkisto", q=html.escape(q), body=body,
@@ -1931,7 +1954,7 @@ def create_app(cfg) -> FastAPI:
         otherwise; a ranked one is best match first and may be put in time
         order instead. Changing it starts again from the first page.
         """
-        choices = ((("", "Best match"), ("newest", "Newest"),
+        choices = ((("", 'Best<span class="w"> match</span>'), ("newest", "Newest"),
                     ("oldest", "Oldest")) if ranked else
                    (("", "Newest"), ("oldest", "Oldest")))
         now = f.get("order", "")

@@ -133,7 +133,7 @@ def test_the_cut_holds_the_weak_results_back(client):
     """Fifteen close matches, 135 unrelated: the page shows the fifteen."""
     body = client.get("/", params={"q": "text:whatever"}).text
     meta = _meta(body)
-    assert "15 for" in meta
+    assert meta.startswith("15 photographs") and "for &ldquo;whatever" in meta
     assert "held back" in meta
     assert "show " in body and "weaker" in body
 
