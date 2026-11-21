@@ -46,36 +46,52 @@ Before starting, check one path. In File Station, right-click the shared folder 
 4. **Next**, then **Done**, with *Start the project once it is created* ticked. Container Manager now
    builds the image: it downloads Python and the libraries the viewing copy uses, about 200 MB, and
    takes a few minutes the first time. When the project shows **Running**, it is up.
-5. Open it in a browser — see *The address* below for which one.
+5. Open it in a browser: `https://tradiskst.synology.me:8443` at home — see *The address* below.
 
 ## The address
 
-`http://TRaDiskStation:8710` works from a Windows PC at home and from nothing else: the bare name is
-answered by Windows' own name lookup, which phones do not have. Found 2026-11-21, when a phone found
-the page only by its IP address, and an IP address is no use for sharing — WhatsApp does not turn
-it into a link.
-
-**The one to use and to share is the NAS's Tailscale name:**
+**At home, the one to use and to share:**
 
 ```
-http://tradiskstation.<tailnet>.ts.net:8710
+https://tradiskst.synology.me:8443
 ```
 
-This tailnet is `tail99a690.ts.net`, so the link is
-`http://tradiskstation.tail99a690.ts.net:8710` — provided the NAS is called `tradiskstation` in
-Tailscale too; the admin console's **Machines** page shows the name it really has, and the Tailscale
-app on the phone shows the whole address under the NAS's entry. It is an ordinary web address, so
-WhatsApp makes it a link, and the same link works at home and away for anybody whose phone has
-Tailscale on — at home Tailscale carries the traffic straight across the house, not out and back.
-It needs MagicDNS, which is on unless it has been turned off in the admin console's **DNS** page.
+It works in every browser on every device on the home network, Tailscale or not, and WhatsApp makes
+it a link. Set up 2026-11-21, after two other addresses failed on a phone:
 
-Without Tailscale, at home only: `http://TRaDiskStation.local:8710` on an iPhone, an iPad or a Mac,
-which find the NAS by Bonjour; otherwise the IP address, `http://192.168.86.253:8710` on
-2026-11-21 — and that one changes if the router ever hands the NAS another, unless it is reserved
-for the NAS in the router's settings.
+- `http://TRaDiskStation:8710` is answered by Windows' own name lookup, which phones do not have.
+- Chrome on an iPhone refuses a page that is not encrypted, so no `http://` address will do there —
+  not the IP address, not `.local`, not the Tailscale name. An encrypted page needs a certificate,
+  and a certificate needs a name in public DNS.
 
-If DSM's firewall is on (**Control Panel** → **Security** → **Firewall**), add a rule allowing TCP
-port 8710 from the home network and from Tailscale (`100.64.0.0/10`).
+How it is made, all in DSM, with no port opened to the internet:
+
+1. **Control Panel → External Access → DDNS**: the Synology name `tradiskst.synology.me`, with its
+   **External address (IPv4)** set by hand to the NAS's address on the home network,
+   `192.168.86.253`, instead of *Auto*. So the name leads to the NAS from inside the house only;
+   from outside it leads to an address nobody there can reach.
+2. With it, DSM fetched a Let's Encrypt certificate for `tradiskst.synology.me` and
+   `*.tradiskst.synology.me`, and renews it itself.
+3. **Control Panel → Login Portal → Advanced → Reverse Proxy**: source **HTTPS**,
+   `tradiskst.synology.me`, port **8443** → destination **HTTP**, `192.168.86.253`, port **8710**.
+   Port 443 is refused as reserved for DSM. The destination must be the NAS's own address:
+   `localhost` and `127.0.0.1` answer *502 Bad Gateway*, because Container Manager's published ports
+   do not listen there.
+4. **Control Panel → Security → Certificate → Settings**: the rule `*:8443` uses the synology.me
+   certificate.
+
+The NAS's address is fixed in the router, which the name depends on. If it ever changes, change
+the DDNS entry and the reverse proxy's destination with it.
+
+**Away from home**, Tailscale is the only way in, by design. The NAS's Tailscale name,
+`tradiskstation.tail99a690.ts.net` (tailnet `tail99a690.ts.net`), serves `http://` on port 8710,
+which works in Safari but not in Chrome on an iPhone. Not set up yet, either of two would give an
+encrypted address away from home as well: Tailscale Serve on the NAS
+(`https://tradiskstation.tail99a690.ts.net`), or the NAS as a Tailscale subnet router for
+`192.168.86.0/24`, after which the home link above works away too, with Tailscale on.
+
+If DSM's firewall is on (**Control Panel** → **Security** → **Firewall**), allow TCP port 8443 from
+the home network, and 8710 from the home network and from Tailscale (`100.64.0.0/10`).
 
 ## Afterwards
 
