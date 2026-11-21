@@ -44,6 +44,7 @@ from . import paths as pathutil
 from . import places as places_mod
 from . import query
 from . import queue as queue_mod
+from . import searchlog
 from . import textmodel
 
 PAGE = """<!doctype html>
@@ -685,6 +686,8 @@ def create_app(cfg) -> FastAPI:
     # A viewing copy (§8.3): the same screens with nothing that changes
     # anything. Set by `[ui] read_only` or `serve --read-only`.
     ro = bool(cfg.ui.get("read_only"))
+    # Every search asked, one json line each (`mediaidx searches` reads it).
+    search_log = cfg.search_log
 
     def connect() -> sqlite3.Connection:
         if ro:
@@ -1450,12 +1453,29 @@ def create_app(cfg) -> FastAPI:
             '</form></details>')
 
     @app.get("/", response_class=HTMLResponse)
-    def home(q: str = Query(default=""), page: int = 0, more: int = 0,
-             date_from: str = Query(default="", alias="from"),
+    def home(request: Request, q: str = Query(default=""), page: int = 0,
+             more: int = 0, date_from: str = Query(default="", alias="from"),
              to: str = Query(default=""), cam: str = Query(default=""),
              dsrc: str = Query(default=""), psrc: str = Query(default=""),
              pick: int = 0, y: str = "", m: str = "", d: str = "",
              people: str = "", order: str = ""):
+        hit: dict = {}
+        response = _home(hit, q, page, more, date_from, to, cam, dsrc, psrc,
+                         pick, y, m, d, people, order)
+        # One line per search asked, not per page of it: the first page only,
+        # and nothing for the front page with nothing asked.
+        filters = {"from": date_from, "to": to, "cam": cam, "dsrc": dsrc,
+                   "psrc": psrc}
+        if search_log and "r" in hit and page <= 0 and not more and (
+                q.strip() or any(v.strip() for v in filters.values())):
+            searchlog.record(search_log, searchlog.entry(
+                where="nas" if ro else "pc", ip=searchlog.client_ip(request),
+                q=q, resolved=hit["r"], filters=filters, found=hit.get("n"),
+                ranked=hit.get("ranked", False)))
+        return response
+
+    def _home(hit, q, page, more, date_from, to, cam, dsrc, psrc, pick, y, m,
+              d, people, order):
         con = connect()
         f = {"from": date_from.strip(), "to": to.strip(), "cam": cam.strip(),
              "dsrc": dsrc.strip(), "psrc": psrc.strip(),
@@ -1469,6 +1489,7 @@ def create_app(cfg) -> FastAPI:
             "SELECT COUNT(*) FROM image_vectors").fetchone()[0]
 
         r = query.resolve(con, q, place_counts=subtree_counts(con))
+        hit["r"], hit["n"] = r, 0
         where, args = _where(con, r, f)
         # This exact page, so a photograph opened from it can lead back here
         # rather than to the front -- including the page number and the filters.
@@ -1488,6 +1509,7 @@ def create_app(cfg) -> FastAPI:
         if not r.text:
             total = con.execute(
                 f"SELECT COUNT(*) FROM assets a{clause}", args).fetchone()[0]
+            hit["n"] = total
             way = "ASC" if f["order"] == "oldest" else "DESC"
             rows = con.execute(
                 f"SELECT {cols} FROM assets a{clause} "
@@ -1569,6 +1591,7 @@ def create_app(cfg) -> FastAPI:
         answers = embed.cut([s for _, s in hits])
         keep = _in_order(con, hits if more else hits[:answers], f["order"])
         window = keep[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+        hit["n"], hit["ranked"] = len(keep), True
 
         # The strips answer a different question from the chips: a chip needs
         # the whole name, so "emm" resolves to nothing, and the strip is what

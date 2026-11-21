@@ -6,6 +6,9 @@ database   = "/data/photos.db"
 thumbnails = "/data/thumbs"
 logs       = "/tmp/logs"
 text_model = "/data/textmodel"
+# The one thing the viewing copy writes: what was searched for, read on the PC
+# by `mediaidx searches` (spec 8.7). docker-compose.yml mounts logs/ here.
+search_log = "/logs/searches.jsonl"
 
 # Where the index's stored paths are inside the container: docker-compose.yml mounts
 # the NAS's own Pictures folder at /photos.

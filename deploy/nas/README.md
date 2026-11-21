@@ -18,6 +18,7 @@ kuva-arkisto/
   README.md            this file
   app/                 the application the image is built from
   data/                config.toml, photos.db, thumbs/, textmodel/
+  logs/                searches.jsonl: what was searched for (`mediaidx searches` on the PC)
 ```
 
 All of it is written by `mediaidx publish` on the PC; nothing in it is edited by hand. The

@@ -8,6 +8,7 @@ Container Manager project in deploy/nas expects:
     <target>/README.md     how to set it up in Container Manager
     <target>/app/       the application, from which the image is built
     <target>/data/      config.toml, photos.db, thumbs/, textmodel/
+    <target>/logs/      the one folder the container writes: its search log
 
 Run after indexing or naming on the computer that keeps the archive. It copies
 only what has changed, except the database, which is small beside the rest and
@@ -211,6 +212,9 @@ def publish(cfg, target, *, dry_run: bool = False, workers: int = 8,
     t0 = time.time()
     target.mkdir(parents=True, exist_ok=True)
     _put(json.dumps({"started": int(t0)}).encode(), target / MARK)
+    # Where the viewing copy writes its search log (spec 8.7). Made here so
+    # the project's mount finds it; never emptied, never copied over.
+    (target / "logs").mkdir(exist_ok=True)
 
     for rel in done["files_changed"]:
         if rel in wanted:

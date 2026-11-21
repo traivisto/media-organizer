@@ -897,6 +897,65 @@ def cmd_publish(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# searches
+# --------------------------------------------------------------------------
+
+def search_logs(cfg) -> list:
+    """This machine's search log, and the viewing copy's beside its project."""
+    logs = [cfg.search_log] if cfg.search_log else []
+    if cfg.publish_to:
+        logs.append(pathlib.Path(cfg.publish_to) / "logs" / "searches.jsonl")
+    return logs
+
+
+def cmd_searches(args) -> int:
+    """What has been searched for, on the PC and on the NAS (spec 8.7)."""
+    from datetime import timedelta
+    from . import searchlog
+    cfg = config_mod.load(args.config)
+    entries, missing = searchlog.read(search_logs(cfg))
+    if args.days:
+        since = (datetime.now() - timedelta(days=args.days)).isoformat()
+        entries = [e for e in entries if e.get("t", "") >= since]
+    for m in missing:
+        print(f"(no log yet at {m})")
+    if not entries:
+        print("no searches recorded" + (f" in the last {args.days} days"
+                                        if args.days else ""))
+        return 0
+
+    s = searchlog.summary(entries, top=args.limit)
+    print(f"{s['count']:,} searches   {s['first'][:16].replace('T', ' ')}"
+          f"  to  {s['last'][:16].replace('T', ' ')}")
+    print("  " + ", ".join(f"{n:,} on the {w.upper()}"
+                           for w, n in s["by_where"].most_common()))
+
+    def block(title, pairs):
+        if not pairs:
+            return
+        print(f"\n{title}")
+        for label, n in pairs:
+            print(f"  {n:>5,}  {label}")
+
+    block("from", s["by_ip"])
+    block("most searched", s["common"])
+    block("found nothing", s["nothing"])
+    block("no name, place, event or date understood in it", s["unread"])
+
+    print("\nlatest")
+    for e in s["recent"]:
+        read = [*e.get("people", []), *e.get("places", []), *e.get("events", []),
+                *e.get("dates", [])]
+        how = (" -> " + ", ".join(read) if read else "") + (
+            f" + \"{e['text']}\"" if e.get("text") and read else "")
+        found = "?" if e.get("found") is None else f"{e['found']:,}"
+        q = e.get("q") or "(filters only)"
+        print(f"  {e.get('t', '')[:16].replace('T', ' ')}  {e.get('where', '?'):<3}"
+              f"  {e.get('ip', ''):<15}  {found:>6}  {q}{how}")
+    return 0
+
+
+# --------------------------------------------------------------------------
 # update
 # --------------------------------------------------------------------------
 
@@ -1229,6 +1288,12 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--dry-run", action="store_true",
                     help="say what would be sent, send nothing")
     pb.set_defaults(func=cmd_publish)
+
+    sl = sub.add_parser("searches", help="what has been searched for, on the PC "
+                        "and on the NAS")
+    sl.add_argument("--days", type=int, help="only the last N days")
+    sl.add_argument("--limit", type=int, default=15, help="lines in each list")
+    sl.set_defaults(func=cmd_searches)
 
     up = sub.add_parser("update", help="new photographs, end to end: scan, embed, "
                         "faces, cluster, derive, export, publish")

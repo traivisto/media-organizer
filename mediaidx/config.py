@@ -121,6 +121,9 @@ class Config:
     text_model: Path | None = None
     # The Container Manager project folder `mediaidx publish` fills (spec 8.4).
     publish_to: Path | None = None
+    # Every search `serve` answers, one json line each; None writes nothing.
+    # Loaded configurations default to searches.jsonl in `logs`.
+    search_log: Path | None = None
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
@@ -193,11 +196,13 @@ def load(path: str | os.PathLike | None = None) -> Config:
 
     p = merged.get("paths", {})
     data = _local_data_dir()
+    logs = Path(p.get("logs", data / "logs"))
 
     return Config(
         database=Path(p.get("database", data / "photos.db")),
         thumbnails=Path(p.get("thumbnails", data / "thumbs")),
-        logs=Path(p.get("logs", data / "logs")),
+        logs=logs,
+        search_log=Path(p["search_log"]) if p.get("search_log") else logs / "searches.jsonl",
         gazetteer=Path(p.get("gazetteer", data / "gazetteer")),
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
         names_export_extra=[Path(x) for x in p.get("names_export_extra", [])],

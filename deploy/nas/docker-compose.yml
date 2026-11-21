@@ -6,8 +6,8 @@
 #   app/   the application, from which the image is built
 #   data/  photos.db, thumbs/, textmodel/ and config.toml
 #
-# Everything it is given is read-only, and so is the container itself: a
-# viewing copy has nothing to write, and cannot.
+# Everything it is given is read-only, and so is the container itself, with
+# one exception: logs/, where it writes the search log (spec 8.7).
 
 services:
   kuva-arkisto:
@@ -25,18 +25,23 @@ services:
     volumes:
       - ./data:/data:ro
       - /volume1/Media/Pictures:/photos:ro
+      - ./logs:/logs
     environment:
       - TZ=Europe/Helsinki
     read_only: true
     tmpfs:
       - /tmp
-    # Root inside, with nothing root can do but read: every right is dropped
-    # except reading past file permissions, which the NAS's own ACLs on the
-    # Pictures share would otherwise decide for it.
+    # Root inside, with little root can do: every right is dropped except
+    # reading past file permissions, which the NAS's own ACLs on the Pictures
+    # share would otherwise decide for it, and writing past them, for logs/ --
+    # a folder made over SMB that root would not otherwise be let into. Every
+    # other mount and the container itself are read-only, so logs/ is the only
+    # place that second right reaches.
     cap_drop:
       - ALL
     cap_add:
       - DAC_READ_SEARCH
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
     # The text model holds about a gigabyte while somebody is searching (spec

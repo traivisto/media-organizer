@@ -96,7 +96,8 @@ only the last ten kept. They protect you from a bad run, not from a dead disk.
 | When | What to run |
 |---|---|
 | A folder other than a year was added to `Pictures` | `mediaidx add "<folder>"` once (see below), then `mediaidx update` |
-| Photographs were moved or renamed on the NAS | `mediaidx update`. Identity is the content hash, so names and corrections follow the file; anything gone is marked missing, never deleted |
+| Photographs were moved or renamed on the NAS | `mediaidx update`. Identity is the content hash, so names and corrections follow the file; anything gone is marked missing and no longer shown, never deleted |
+| What has been searched for, and what search answers badly | `mediaidx searches` — the PC's and the NAS's searches: who searched (by address), the most searched, what found nothing, and what search did not understand as a person, place, event or date |
 | The code was updated | `mediaidx meta` re-reads what a new stage version made stale, and `update` does the rest. Schema migrations run on their own. If `publish` says the application changed, rebuild the project on the NAS ([deploy/nas/README.md](deploy/nas/README.md#afterwards)) |
 | A threshold in `config.toml` changed | `faces cluster --rebuild` recomputes from scratch — about 19 minutes, names preserved by majority vote |
 | Something looks wrong | `doctor` for the environment and the GPU, `status --errors` for files that failed, `status --conflicts` where EXIF and the filename disagree |
@@ -359,6 +360,8 @@ mediaidx update                       new photographs or names end to end, then 
 mediaidx update --no-publish          the same, leaving the NAS alone
 mediaidx publish                      bring the NAS viewer up to date
 mediaidx export                       write names.json, and its copies
+mediaidx searches                     what was searched for, on the PC and the NAS
+mediaidx searches --days 30           only the last month
 ```
 
 Everything is safe to re-run. An unchanged file is skipped without being opened,

@@ -1764,6 +1764,30 @@ photograph deleted at that point never enters the index at all.
   line, can cancel (the whole process tree, since `mediaidx.exe` is a launcher for python), and
   keeps the full output under its `userData\archive-update-logs`.
 
+### 8.7 The search log
+
+Asked for on 2026-11-21, for two things at once: seeing how the archive is used, and finding what
+search answers badly. Every search the home page answers is appended as one JSON line to
+`[paths] search_log` — by default `searches.jsonl` in `logs` on the PC, and `/logs/searches.jsonl`
+in the viewing copy, the one folder its container may write (`logs/` beside the project, which
+`publish` makes and never touches again; the container gets `DAC_OVERRIDE` so that root may write
+into a folder made over SMB, every other mount being read-only).
+
+- **One line per search, not per page:** the first page only, nothing for `more`, nothing for the
+  front page with nothing asked. A filter alone is a search.
+- **What a line holds:** the time; `pc` or `nas`; the address it came from — the first
+  `X-Forwarded-For` entry where there is one, since behind DSM's reverse proxy every request
+  arrives from the NAS itself (the owner's choice, so that a device can be told apart; whether
+  traffic through the Tailscale subnet route keeps its own address there is not yet verified);
+  what was typed; how it was read — people, places, events, dates and who-else, by the labels their
+  chips carry, and the description left over; filters; how many photographs it found; and whether
+  that was a ranking.
+- **A log that cannot be written never stops a search.** It is said once, on stderr.
+- **`mediaidx searches`** reads the PC's log and the viewing copy's (`<publish_to>/logs`) and prints
+  totals, the addresses, the most searched, those that found nothing, those in which nothing was
+  read as a person, place, event or date — where a name the archive does not know, or one
+  misspelled (`Anskun`), shows up — and the latest. `--days N` narrows it.
+
 ## 9. Configuration
 
 TOML, at `~\.mediaidx\config.toml` — written there by `setup.ps1`, and found through the
