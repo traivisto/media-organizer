@@ -1653,7 +1653,8 @@ care about case though the one that listed them did not.
 
 **As a container.** `deploy/nas/` holds a Container Manager project for a Synology NAS: an image of
 Python and only what a viewing copy runs on — no torch, no face detection; 512 MB — and a compose
-file giving it the published data and the NAS's own Pictures folder, both read-only. The container
+file giving it the published data and the NAS's own Pictures folder, both read-only. Its
+`README.md` is the setup guide, and is published beside the project. The container
 itself is read-only too, with every capability dropped but reading past file permissions, and a
 memory limit of 1.8 GB. It runs on Helsinki time, because dates are shown and date searches resolved
 in local time, and on UTC a photograph taken at 00:30 would move to the day before.
@@ -1672,7 +1673,8 @@ not have.
 ### 8.4 Publishing
 
 `mediaidx publish` brings a viewing copy (§8.3) up to date from the computer that keeps the archive,
-into one folder laid out as the Container Manager project in `deploy/nas` expects: `compose.yaml`;
+into one folder laid out as the Container Manager project in `deploy/nas` expects: `docker-compose.yml`
+and the setup guide, `README.md`;
 `app/`, the application the image is built from; and `data/`, holding `config.toml`, the database,
 the thumbnails and the text model (§7.6). It is run after indexing or naming, and `--dry-run` says
 what would be sent without sending it.

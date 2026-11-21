@@ -71,7 +71,8 @@ def _files(folder):
 def test_the_first_publish_lays_out_the_project(kept):
     cfg, _, target = kept
     done = publish.publish(cfg, target, log=_quiet)
-    assert (target / "compose.yaml").is_file()
+    assert (target / "docker-compose.yml").is_file()
+    assert (target / "README.md").is_file()
     assert (target / "data" / "config.toml").is_file()
     assert (target / "app" / "deploy" / "nas" / "Dockerfile").is_file()
     assert (target / "app" / "mediaidx" / "serve.py").is_file()
@@ -102,11 +103,11 @@ def test_what_the_nas_builds_from_has_unix_line_endings(kept, monkeypatch, tmp_p
     deploy = tmp_path / "deploy"
     deploy.mkdir()
     for name in ("Dockerfile", "Dockerfile.dockerignore", "requirements.txt",
-                 "compose.yaml", "config.toml"):
+                 "docker-compose.yml", "README.md", "config.toml"):
         (deploy / name).write_bytes(b"RUN a \\\r\n && b\r\n")
     monkeypatch.setattr(publish, "DEPLOY", deploy)
     publish.publish(cfg, target, log=_quiet)
-    for f in ("app/deploy/nas/Dockerfile", "compose.yaml", "data/config.toml"):
+    for f in ("app/deploy/nas/Dockerfile", "docker-compose.yml", "data/config.toml"):
         assert b"\r" not in (target / f).read_bytes(), f
 
 
@@ -175,7 +176,7 @@ def test_a_failed_send_leaves_the_previous_database_in_place(kept, monkeypatch):
 def test_a_dry_run_writes_nothing(kept):
     cfg, _, target = kept
     done = publish.publish(cfg, target, dry_run=True, log=_quiet)
-    assert done["thumbs_copied"] == 15 and "compose.yaml" in done["files_changed"]
+    assert done["thumbs_copied"] == 15 and "docker-compose.yml" in done["files_changed"]
     assert not target.exists()
 
 
@@ -237,3 +238,14 @@ def test_the_read_only_uri_really_opens_read_only(kept):
     con.close()
     with pytest.raises(FileNotFoundError):
         db.connect_read_only(cfg.database.with_name("none.db"))
+
+
+def test_a_compose_file_by_an_older_name_is_taken_away(kept):
+    """Container Manager must not be offered two compose files."""
+    cfg, _, target = kept
+    publish.publish(cfg, target, log=_quiet)
+    (target / "compose.yaml").write_text("services: {}", encoding="utf-8")
+    done = publish.publish(cfg, target, log=_quiet)
+    assert "compose.yaml" in done["files_changed"]
+    assert not (target / "compose.yaml").exists()
+    assert (target / "docker-compose.yml").is_file()

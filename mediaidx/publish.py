@@ -4,7 +4,8 @@ The archive is kept on one computer and looked at from another (spec 8.3).
 `publish` copies what the viewing copy serves into one folder, laid out as the
 Container Manager project in deploy/nas expects:
 
-    <target>/compose.yaml
+    <target>/docker-compose.yml
+    <target>/README.md     how to set it up in Container Manager
     <target>/app/       the application, from which the image is built
     <target>/data/      config.toml, photos.db, thumbs/, textmodel/
 
@@ -45,6 +46,7 @@ DEPLOY = PACKAGE.parent / "deploy" / "nas"
 # What the image is built from, beside the package itself.
 BUILD_FILES = ("Dockerfile", "Dockerfile.dockerignore", "requirements.txt")
 THUMB_DIRS = ("s", "m", "faces")
+RETIRED = ("compose.yaml",)
 
 
 class PublishError(Exception):
@@ -152,7 +154,8 @@ def publish(cfg, target, *, dry_run: bool = False, workers: int = 8,
               for n in BUILD_FILES}
     for py in sorted(PACKAGE.glob("*.py")):
         wanted[f"app/mediaidx/{py.name}"] = py.read_bytes()
-    wanted["compose.yaml"] = _unix((DEPLOY / "compose.yaml").read_bytes())
+    wanted["docker-compose.yml"] = _unix((DEPLOY / "docker-compose.yml").read_bytes())
+    wanted["README.md"] = _unix((DEPLOY / "README.md").read_bytes())
     wanted["data/config.toml"] = _unix((DEPLOY / "config.toml").read_bytes())
     changed = [rel for rel, body in wanted.items()
                if not (target / rel).is_file() or (target / rel).read_bytes() != body]
@@ -160,6 +163,10 @@ def publish(cfg, target, *, dry_run: bool = False, workers: int = 8,
     if (target / "app" / "mediaidx").is_dir():
         stale = [f"app/mediaidx/{p.name}" for p in (target / "app" / "mediaidx").iterdir()
                  if p.is_file() and f"app/mediaidx/{p.name}" not in wanted]
+    # Names this project's files once had, taken away so Container Manager is
+    # never offered two compose files to choose between.
+    if (target / MARK).exists():
+        stale += [old for old in RETIRED if (target / old).is_file()]
     done["app_changed"] = sorted(r for r in changed + stale if r.startswith("app/"))
     done["files_changed"] = sorted(changed + stale)
 

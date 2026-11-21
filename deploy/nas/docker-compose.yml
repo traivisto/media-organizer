@@ -1,7 +1,8 @@
 # Kuva-arkisto's viewing copy as a Container Manager project (spec 8.3).
 #
 # Lives in /volume1/docker/kuva-arkisto beside two folders `mediaidx publish`
-# fills from the computer that keeps the archive:
+# fills from the computer that keeps the archive (README.md says how to set
+# it up):
 #   app/   the application, from which the image is built
 #   data/  photos.db, thumbs/, textmodel/ and config.toml
 #

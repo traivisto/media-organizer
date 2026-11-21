@@ -7,7 +7,7 @@ thumbnails = "/data/thumbs"
 logs       = "/tmp/logs"
 text_model = "/data/textmodel"
 
-# Where the index's stored paths are inside the container: compose.yaml mounts
+# Where the index's stored paths are inside the container: docker-compose.yml mounts
 # the NAS's own Pictures folder at /photos.
 [paths.mounts]
 '\\TRaDiskStation\Media\Pictures' = '/photos'
