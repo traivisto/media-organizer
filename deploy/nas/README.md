@@ -45,8 +45,31 @@ Before starting, check one path. In File Station, right-click the shared folder 
 4. **Next**, then **Done**, with *Start the project once it is created* ticked. Container Manager now
    builds the image: it downloads Python and the libraries the viewing copy uses, about 200 MB, and
    takes a few minutes the first time. When the project shows **Running**, it is up.
-5. Open `http://TRaDiskStation:8710` in a browser at home. Away from home, with Tailscale on, use
-   the NAS's Tailscale name or address instead of `TRaDiskStation`, with the same `:8710`.
+5. Open it in a browser — see *The address* below for which one.
+
+## The address
+
+`http://TRaDiskStation:8710` works from a Windows PC at home and from nothing else: the bare name is
+answered by Windows' own name lookup, which phones do not have. Found 2026-11-21, when a phone found
+the page only by its IP address, and an IP address is no use for sharing — WhatsApp does not turn
+it into a link.
+
+**The one to use and to share is the NAS's Tailscale name:**
+
+```
+http://tradiskstation.<tailnet>.ts.net:8710
+```
+
+The `<tailnet>` part is your own; the Tailscale app on the phone shows the whole name under the
+NAS's entry, as does the admin console's **Machines** page. It is an ordinary web address, so
+WhatsApp makes it a link, and the same link works at home and away for anybody whose phone has
+Tailscale on — at home Tailscale carries the traffic straight across the house, not out and back.
+It needs MagicDNS, which is on unless it has been turned off in the admin console's **DNS** page.
+
+Without Tailscale, at home only: `http://TRaDiskStation.local:8710` on an iPhone, an iPad or a Mac,
+which find the NAS by Bonjour; otherwise the IP address, `http://192.168.86.253:8710` on
+2026-11-21 — and that one changes if the router ever hands the NAS another, unless it is reserved
+for the NAS in the router's settings.
 
 If DSM's firewall is on (**Control Panel** → **Security** → **Firewall**), add a rule allowing TCP
 port 8710 from the home network and from Tailscale (`100.64.0.0/10`).
@@ -68,7 +91,7 @@ model is held; the project's limit is 1.8 GB.
 
 | What happens | Why, and what to do |
 |---|---|
-| The page does not open | Is the project **Running**? Is port 8710 allowed by the firewall? From another device, try the NAS's IP address instead of its name. |
+| The page does not open | Is the project **Running**? Is port 8710 allowed by the firewall? Is the address one the device can look up (*The address*, above)? Try the IP address to tell the two apart. |
 | Photographs show, but *See the original* says *not reachable* | The originals are not where the project mounts them: check `Media` is on `/volume1`, as above. The log says so at start-up too. |
 | A described search says the search model does not match | The PC's index was rebuilt with another model. Run `mediaidx textmodel` and then `mediaidx publish` on the PC. |
 | `publish` says *not allowed* | The account the PC uses for the NAS (Tommi) needs read/write on `docker/kuva-arkisto`, and only there: File Station → right-click the folder → **Properties** → **Permission**. |
