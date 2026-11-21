@@ -17,6 +17,10 @@ dependencies = [
     "transformers>=4.45",       # SigLIP tokenizer
     "sentencepiece>=0.2",
     "sqlite-vec>=0.1.9",
+    # The text half on its own, for a viewing copy without room for the
+    # whole model (spec 7.6): exported with onnx, read with tokenizers.
+    "onnx>=1.16",
+    "tokenizers>=0.20",
     # Faces. The CUDA extras are not optional in practice: without them
     # onnxruntime finds no CUDA libraries of its own, silently falls back to
     # the CPU, and the pass runs seven times slower with no error to show for

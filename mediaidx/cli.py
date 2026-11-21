@@ -807,6 +807,52 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_textmodel(args) -> int:
+    """Export the search model's text half for a machine without the room for
+    all of it, and say how closely it agrees (spec 7.6)."""
+    import numpy as np
+
+    from . import embed, textmodel
+
+    cfg = config_mod.load(args.config)
+    out = Path(args.out) if args.out else (
+        cfg.text_model or cfg.database.parent / "textmodel")
+    name = cfg.scan.get("embed_model", embed.DEFAULT_MODEL)
+    tag = cfg.scan.get("embed_pretrained", embed.DEFAULT_PRETRAINED)
+    print(f"building the text half of {name}/{tag} into {out}")
+    try:
+        meta, want, got = textmodel.build(out, model_name=name, pretrained=tag)
+    except RuntimeError as e:
+        print(f"  not built: {e}", file=sys.stderr)
+        return 1
+    print(f"  agrees with the full model to {meta['agreement']:.6f} or better "
+          f"over {len(textmodel.PROBES)} queries")
+
+    # The same queries ranked over the photographs with both, and cut where the
+    # search page would cut them: the comparison the form was chosen by.
+    if cfg.database.exists():
+        con = sqlite3.connect(cfg.database.resolve().as_uri() + "?mode=ro", uri=True)
+        rows = con.execute("SELECT asset_id, embedding FROM image_vectors").fetchall()
+        con.close()
+        if rows:
+            ids = np.array([r[0] for r in rows])
+            mat = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16)
+            mat = mat.reshape(len(rows), -1).astype(np.float32)
+
+            def answers(v):
+                sims = mat @ v
+                top = np.argsort(-sims)[:600]
+                return set(ids[top[:embed.cut(sims[top])]])
+
+            same = total = 0
+            for a, b in zip(want, got):
+                x, y = answers(a), answers(b)
+                same += len(x & y)
+                total += max(len(x), len(y))
+            print(f"  over {len(rows):,} photographs: {same:,} of {total:,} answers "
+                  f"the same ({100 * same / total:.1f}%)")
+    print(f"  done. Point [paths] text_model at {out} to search with it.")
+    return 0
 # --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
@@ -1037,6 +1083,12 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--read-only", action="store_true",
                     help="a viewing copy: the same screens, nothing that changes anything")
     sv.set_defaults(func=cmd_serve)
+
+    tm = sub.add_parser("textmodel", help="export the search model's text half "
+                        "for a machine without room for all of it")
+    tm.add_argument("--out", help="where to build it (default: [paths] "
+                    "text_model, or textmodel beside the database)")
+    tm.set_defaults(func=cmd_textmodel)
 
     d = sub.add_parser("doctor", help="check the environment")
     d.set_defaults(func=cmd_doctor)

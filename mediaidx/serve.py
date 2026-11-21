@@ -10,6 +10,7 @@ one vector. Browsing touches only photos.db and the thumbnail cache.
 
 from __future__ import annotations
 
+import gc
 import html
 import io
 import ipaddress
@@ -20,12 +21,14 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import (parse_qs, parse_qsl, quote_plus, urlencode,
                           urlparse)
 
+import numpy as np
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, RedirectResponse, Response,
@@ -41,6 +44,7 @@ from . import paths as pathutil
 from . import places as places_mod
 from . import query
 from . import queue as queue_mod
+from . import textmodel
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -566,6 +570,12 @@ def open_with_default_app(path: str) -> None:
     else:
         subprocess.Popen(["xdg-open", path])
 
+class WrongModel(Exception):
+    """The text model here is not the one the photographs were indexed with."""
+
+    def __init__(self, have: str, want: str):
+        super().__init__(f"text model {have} does not match the index's {want}")
+        self.have, self.want = have, want
 def create_app(cfg) -> FastAPI:
     app = FastAPI(title="Kuva-arkisto")
     cache_dir = Path(cfg.thumbnails)
@@ -608,13 +618,66 @@ def create_app(cfg) -> FastAPI:
         where there is one (spec 8.3), and long-path safe on Windows."""
         return pathutil.long_path(pathutil.local(path, cfg.mounts))
 
+    # Loaded on the first described search and, for the exported text model,
+    # let go again after a quiet spell (spec 7.6): on a 4 GB NAS a gigabyte
+    # held for a search somebody made last week is a gigabyte the NAS itself
+    # goes without. `[ui] text_model_idle_minutes`, 0 to keep it.
+    lock = threading.Lock()
+    idle = float(cfg.ui.get("text_model_idle_minutes", 10)) * 60
+    state["gen"] = 0
+
+    def _rest(gen: int) -> None:
+        with lock:
+            if state["gen"] != gen:          # used again since this was set
+                return
+            state["encoder"] = None
+        gc.collect()
+
     def encoder():
-        if state["encoder"] is None:
-            state["encoder"] = embed.Encoder(
-                model_name=cfg.scan.get("embed_model", embed.DEFAULT_MODEL),
-                pretrained=cfg.scan.get("embed_pretrained", embed.DEFAULT_PRETRAINED),
-            )
-        return state["encoder"]
+        """What turns a description into a vector: the exported text half
+        where `[paths] text_model` names one, the whole model otherwise."""
+        with lock:
+            if state["encoder"] is None:
+                if cfg.text_model:
+                    state["encoder"] = textmodel.TextEncoder(
+                        cfg.text_model, threads=cfg.ui.get("text_threads"))
+                else:
+                    state["encoder"] = embed.Encoder(
+                        model_name=cfg.scan.get("embed_model", embed.DEFAULT_MODEL),
+                        pretrained=cfg.scan.get("embed_pretrained",
+                                                embed.DEFAULT_PRETRAINED),
+                    )
+            if cfg.text_model and idle > 0:
+                state["gen"] += 1
+                t = threading.Timer(idle, _rest, args=(state["gen"],))
+                t.daemon = True
+                t.start()
+            return state["encoder"]
+
+    def text_vector(con, text: str) -> np.ndarray:
+        """A description as a vector, from a model that matches the index.
+
+        An exported text model is a file that outlives the model it was taken
+        from. Ranking the photographs against a vector from some other model
+        would still return photographs -- the wrong ones, ranked with
+        confidence -- so a mismatch stops the search instead.
+        """
+        enc = encoder()
+        if cfg.text_model:
+            row = con.execute("SELECT model FROM image_vectors LIMIT 1").fetchone()
+            if row is not None and row[0] != enc.tag:
+                raise WrongModel(enc.tag, row[0])
+        return enc.encode_text([text])[0]
+
+    @app.exception_handler(WrongModel)
+    async def wrong_model(request: Request, exc: WrongModel):
+        return HTMLResponse(layout(
+            "Search model — Kuva-arkisto",
+            '<div class="empty"><p>Described search is unavailable here: the '
+            f'search model <b>{html.escape(exc.have)}</b> is not the one these '
+            f'photographs were indexed with, <b>{html.escape(exc.want)}</b>.</p>'
+            '<p>Build it again where the archive is kept: '
+            '<code>mediaidx textmodel</code></p></div>'), status_code=503)
 
     # Said in the box itself, the box being the whole interface (§7.1).
     PLACEHOLDER = "Search people, places, years, or describe a scene"
@@ -1375,7 +1438,7 @@ def create_app(cfg) -> FastAPI:
                     body=head + strips + '<div class="empty">'
                          '<p>Nothing matches all of that.</p></div>'))
 
-        vec = encoder().encode_text([r.text])[0]
+        vec = text_vector(con, r.text)
         hits = embed.search(con, vec, limit=MAX_RANKED,
                             vec_ok=state["vec_ok"], candidate_ids=cand)
         answers = embed.cut([s for _, s in hits])
@@ -1856,7 +1919,7 @@ def create_app(cfg) -> FastAPI:
                 f"SELECT a.id FROM assets a WHERE {where}", args)]
             if not cand:
                 return []
-        vec = encoder().encode_text([r.text])[0]
+        vec = text_vector(con, r.text)
         hits = embed.search(con, vec, limit=MAX_RANKED,
                             vec_ok=state["vec_ok"], candidate_ids=cand)
         keep = _in_order(con, hits if more else hits[:embed.cut([s for _, s in hits])],

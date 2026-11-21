@@ -1372,6 +1372,38 @@ Generated on first access into a local cache directory — never the NAS — at
 the network; a full-size original is fetched only when a person explicitly asks for one (§8.2).
 Cache is disposable and rebuildable.
 
+
+### 7.6 Described search without the image model
+
+A described search needs only the text half of the search model: the image half turned photographs
+into the vectors already stored, which happens where the archive is kept. On a machine without room
+for both — a 4 GB NAS serving a viewing copy (§8.3) — `mediaidx textmodel` exports the text half
+alone, and `[paths] text_model` points the search at it.
+
+**Measured 2026-11-15**, twenty Finnish and English queries ranked against the real 39,854 vectors
+and cut as the search page cuts them, against the full model:
+
+| Form | Memory | Per query (PC CPU) | Same answers |
+|---|---|---|---|
+| Whole model | 4.3 GB, 7.8 GB while loading | 0.10 s | — |
+| Text half, 32-bit | 1.9 GB | 0.23 s | all |
+| **Text half, weights stored at 16 bits** | **1.0 GB** | 0.37 s | **all** |
+| Text half, weights stored at 8 bits | 0.7 GB | 0.25 s | 93 % |
+| Text half, 8-bit arithmetic | 0.55 GB | 0.08 s | 66 %; Finnish falls apart |
+
+The 16-bit form is the one kept: the weights are stored at half precision and widened again as the
+model runs, so the arithmetic is the full model's and only what is held is smaller. That a search
+gives the same photographs on every machine that serves the archive is worth the 0.3 GB the 8-bit
+store would save. `mediaidx textmodel` checks every build against the full model before keeping it,
+and reports how many answers over the index are the same.
+
+Running it needs onnxruntime, `tokenizers` and numpy — no torch. The text is read exactly as the full
+model reads it, and the tokens are checked to be identical. The model is loaded on the first
+described search and let go after ten quiet minutes (`[ui] text_model_idle_minutes`), so a viewing
+copy holds about a gigabyte only while somebody is searching. A text model built from another model
+than the one the photographs were indexed with stops the search and says so, rather than ranking the
+wrong photographs with confidence.
+
 ---
 
 ## 8. Interfaces
@@ -1432,6 +1464,8 @@ mediaidx review                   Open the review queue in the browser
     --no-open                     Print the address instead of opening a browser
 mediaidx serve                    Start the local web UI  (default http://localhost:8710)
     --read-only                   A viewing copy: the same screens, nothing that changes anything
+mediaidx textmodel               Export the search model's text half for a smaller machine (§7.6)
+    --out DIR                     Where to build it
 
 mediaidx search <phrase>          Search from the terminal
     --limit N                     How many results
@@ -1647,6 +1681,10 @@ names_export_extra = [
 
 # No roots are configured. Folders are indexed by passing them to `add`,
 # and recorded from that; `mediaidx roots` lists what has accumulated.
+
+# The search model's text half alone, from `mediaidx textmodel` (§7.6), on a
+# machine without room for the whole model.
+# text_model = '/data/textmodel'
 
 # Only on a machine that serves a viewing copy (§8.3) and reaches the archive
 # differently from the computer that indexed it: where each stored prefix is

@@ -116,6 +116,9 @@ class Config:
     # reaches the archive differently from the computer that indexed it
     # (spec 8.3). Empty on that computer.
     mounts: dict = field(default_factory=dict)
+    # The search model's text half, exported by `mediaidx textmodel`, for a
+    # machine without room for all of it (spec 7.6). None: the whole model.
+    text_model: Path | None = None
     scan: dict = field(default_factory=dict)
     models: dict = field(default_factory=dict)
     faces: dict = field(default_factory=dict)
@@ -197,6 +200,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         names_export=Path(p["names_export"]) if p.get("names_export") else None,
         names_export_extra=[Path(x) for x in p.get("names_export_extra", [])],
         mounts={str(k): str(v) for k, v in (p.get("mounts") or {}).items()},
+        text_model=Path(p["text_model"]) if p.get("text_model") else None,
         ui=merged.get("ui", {}),
         scan=merged["scan"],
         models=merged["models"],
