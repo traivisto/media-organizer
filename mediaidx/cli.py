@@ -901,7 +901,7 @@ def cmd_publish(args) -> int:
 # --------------------------------------------------------------------------
 
 def cmd_update(args) -> int:
-    """New photographs in the archive, end to end (README, Routine use)."""
+    """New photographs, or new names, end to end (README, Everyday use)."""
     from . import update as up
 
     def emit(**event):
@@ -943,10 +943,24 @@ def cmd_update(args) -> int:
          if up.counts(con).faces else 0),
         ("derive", lambda: cmd_derive(ns(**common, no_places=False))),
     ]
+    if cfg.names_export:
+        # Naming in the UI followed by one update should leave nothing undone,
+        # names.json and its copies included.
+        copies = [cfg.names_export, *cfg.names_export_extra]
+
+        def export_stage():
+            if up.export_current(con, copies):
+                print("names.json and its copies are current -- nothing to write")
+                return 0
+            return cmd_export(ns(**common, what="people", file=None))
+        stages.append(("export", export_stage))
     if publish_to:
         stages.append(("publish", lambda: cmd_publish(ns(**common, to=None,
                                                          dry_run=False))))
 
+    # Which stages this run has depends on the config (export, publish), so a
+    # reader is told the list up front rather than assuming one.
+    emit(plan=[name for name, _ in stages])
     for i, (name, run) in enumerate(stages, 1):
         print(f"\n== {i}/{len(stages)}  {name}", flush=True)
         emit(stage=name, index=i, total=len(stages))
@@ -1217,7 +1231,7 @@ def build_parser() -> argparse.ArgumentParser:
     pb.set_defaults(func=cmd_publish)
 
     up = sub.add_parser("update", help="new photographs, end to end: scan, embed, "
-                        "faces, cluster, derive, publish")
+                        "faces, cluster, derive, export, publish")
     up.add_argument("--no-publish", action="store_true",
                     help="leave the NAS copy as it is")
     up.add_argument("--events", action="store_true",

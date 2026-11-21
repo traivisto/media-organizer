@@ -107,6 +107,7 @@ def test_an_update_with_nothing_new_runs_every_stage_and_says_so(tmp_path):
 
     stages = [e["stage"] for e in events if "stage" in e]
     assert stages == ["scan", "embed", "faces", "cluster", "derive"]
+    assert [e["plan"] for e in events if "plan" in e] == [stages]
     assert events[-1]["done"] is True and events[-1]["ok"] is True
     assert events[-1]["photographs"] == 0
     assert events[-1]["published"] is False
@@ -116,6 +117,44 @@ def test_an_update_with_nothing_new_runs_every_stage_and_says_so(tmp_path):
     roots = {r[0] for r in con.execute("SELECT path FROM folders WHERE is_root = 1")}
     assert str(pictures / "2027") in roots
     assert str(pictures / "Unsorted") not in roots
+
+
+def _with_export(tmp_path, cfg):
+    names = tmp_path / "repo" / "names.json"
+    extra = tmp_path / "nas" / "names.json"
+    with open(cfg, "a", encoding="utf-8") as f:
+        f.write(f'names_export = "{names.as_posix()}"\n'
+                f'names_export_extra = ["{extra.as_posix()}"]\n')
+    return names, extra
+
+
+def test_names_json_is_written_when_out_of_date_and_left_alone_when_not(tmp_path):
+    _, dbp, cfg = _library(tmp_path)
+    names, extra = _with_export(tmp_path, cfg)
+
+    r, out, events = _run(cfg, "--no-publish", "--events")
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert [e["stage"] for e in events if "stage" in e][-1] == "export"
+    assert names.exists() and extra.exists()
+    first = names.read_bytes()
+
+    # Nothing decided by hand since: neither copy is rewritten, so the one in
+    # the repository does not change on every update for a new time stamp.
+    r, out, _ = _run(cfg, "--no-publish")
+    assert r.returncode == 0
+    assert "nothing to write" in out
+    assert names.read_bytes() == first
+
+    # A name given in the UI makes it due again, and a copy gone missing too.
+    con = db.connect(dbp, create=False)
+    con.execute("INSERT INTO persons (name, source, created_at) VALUES ('Emmi', 'manual', 0)")
+    con.commit()
+    con.close()
+    extra.unlink()
+    r, out, _ = _run(cfg, "--no-publish")
+    assert r.returncode == 0
+    assert "Emmi" in json.loads(names.read_text(encoding="utf-8"))["persons"]
+    assert extra.exists()
 
 
 def test_without_events_no_machine_lines_are_written(tmp_path):

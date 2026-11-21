@@ -11,7 +11,7 @@ Full design: [spec.md](spec.md).
 |---|---|---|
 | Look at and search photographs | Any browser: phone, tablet, PC | <https://tradiskst.synology.me:8443> (away from home with Tailscale on) |
 | Bring in new photographs | The PC | Media Organizer, a look in Explorer, then **Update photo archive** |
-| Name faces, fix mistakes, name events | The PC only | `mediaidx serve`, then `mediaidx update` and `mediaidx export` |
+| Name faces, fix mistakes, name events | The PC only | `mediaidx serve`, then **Update photo archive** (or `mediaidx update`) |
 
 The commands are spelled `mediaidx`; if the alias is not on your path, see
 [Use](#use) for the full path to the executable.
@@ -69,21 +69,23 @@ The commands are spelled `mediaidx`; if the alias is not on your path, see
    under *People*, correct a wrong name on a photograph's page, name events,
    answer the *Review* questions, reject a wrongly guessed place under *Places*.
    Each change is saved as you make it.
-2. Afterwards:
+2. Afterwards, **Update photo archive** in Media Organizer, or:
 
    ```
    mediaidx update
-   mediaidx export
    ```
 
-   `update` lets the new names spread — every unnamed face that looks like a
-   named one takes the name; corrections made by hand have produced about 75
-   further named faces each — and publishes to the NAS. `export` writes
-   `names.json`, the one thing here that cannot be rebuilt from the archive:
-   every name, correction, event name, rejected place, and the folders passed to
-   `add`. Commit it. It also writes a copy to every path in `names_export_extra`
-   (on this machine, the NAS backup folder); if one cannot be written it says so
-   and exits non-zero rather than letting a sleeping disk look like a backup.
+   That lets the new names spread — every unnamed face that looks like a named
+   one takes the name; corrections made by hand have produced about 75 further
+   named faces each — then writes `names.json` and publishes to the NAS.
+3. Commit `names.json` when it has changed.
+
+`names.json` is the one thing here that cannot be rebuilt from the archive:
+every name, correction, event name, rejected place, and the folders passed to
+`add`. `update` writes it (through `mediaidx export`) only when something in it
+changed, and a copy to every path in `names_export_extra` — on this machine,
+the NAS backup folder. If a copy cannot be written, the update stops there and
+says so, rather than letting a sleeping disk look like a backup.
 
 The dated snapshots under `~\.mediaidx\backups\` are a different thing: written
 automatically before anything that names thousands of faces at once, local, and
@@ -118,6 +120,7 @@ mediaidx embed           search vectors and thumbnails for the new photographs
 mediaidx faces           detect and vectorise their faces (wants the GPU)
 mediaidx faces cluster   attach the new faces to people already named
 mediaidx derive          places, events and the review queue
+mediaidx export          names.json and its copies (update skips it if unchanged)
 mediaidx publish         bring the NAS viewer up to date
 ```
 
@@ -352,7 +355,7 @@ mediaidx review                       work through the questions, largest first
 mediaidx meta                         re-read metadata whose stage version is behind
 mediaidx search "a phrase"            free-text search from the terminal
 mediaidx serve                        the local UI, http://localhost:8710
-mediaidx update                       new photographs end to end, then publish
+mediaidx update                       new photographs or names end to end, then publish
 mediaidx update --no-publish          the same, leaving the NAS alone
 mediaidx publish                      bring the NAS viewer up to date
 mediaidx export                       write names.json, and its copies

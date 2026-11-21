@@ -1,9 +1,10 @@
 """`mediaidx update`: the routine sequence after new photographs arrive, as one step.
 
-scan, embed, faces, faces cluster, derive, and publish when there is somewhere
-to publish to -- the same commands, in the order the README gives them. This
-module holds the two things the commands themselves do not: finding a new year
-folder that nobody has passed to `add` yet, and counting what a run changed.
+scan, embed, faces, faces cluster, derive, export when names.json is out of
+date, and publish when there is somewhere to publish to -- the same commands, in
+the order the README gives them. This module holds what the commands themselves
+do not: finding a new year folder that nobody has passed to `add` yet, telling
+whether names.json needs writing, and counting what a run changed.
 
 A caller that is not a person (Media Organizer) reads lines that begin with
 EVENT_PREFIX; everything else is the ordinary human output of each stage.
@@ -55,6 +56,31 @@ def new_year_folders(roots: list[str], *, listdir=os.listdir,
             if isdir(pathutil.long_path(path)):
                 found.append(path)
     return found
+
+
+def _unstamped(data: dict) -> dict:
+    return {k: v for k, v in data.items() if k != "exported_at"}
+
+
+def export_current(con, paths) -> bool:
+    """Whether every copy of names.json already says what the database says.
+
+    `export` stamps the time into the file, so writing it on every update would
+    change names.json in the repository each time with nothing in it changed.
+    The comparison leaves the stamp out; a copy that is missing, unreadable or
+    different means the export is due.
+    """
+    from . import export as export_mod
+    now = _unstamped(json.loads(json.dumps(export_mod.dump(con), ensure_ascii=False)))
+    for p in paths:
+        try:
+            with open(p, encoding="utf-8") as f:
+                old = json.load(f)
+        except (OSError, ValueError):
+            return False
+        if _unstamped(old) != now:
+            return False
+    return True
 
 
 @dataclass

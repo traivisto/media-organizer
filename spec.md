@@ -1470,7 +1470,7 @@ mediaidx publish                 Bring the viewing copy on the NAS up to date (�
     --to DIR                      The project folder, if not [paths] publish_to
     --dry-run                     Say what would be sent, send nothing
 mediaidx update                  New photographs end to end: scan, embed, faces, faces cluster,
-                                  derive, publish (§8.6)
+                                  derive, export, publish (§8.6)
     --no-publish                  Leave the NAS copy as it is
     --events                      Also one json line per stage, for a program to read
 
@@ -1738,7 +1738,10 @@ Explorer and deletes what is not wanted. Only then does `mediaidx update` index 
 photograph deleted at that point never enters the index at all.
 
 - **`mediaidx update` is the README's routine sequence as one command**: `scan`, `embed`, `faces`,
-  `faces cluster`, `derive`, then `publish` when `[paths] publish_to` is set. Each stage is the
+  `faces cluster`, `derive`, `export` when `names_export` is set, then `publish` when
+  `[paths] publish_to` is set. So one update also finishes an evening of naming. `export` is
+  skipped when `names.json` and every copy already hold what the database holds (compared without
+  the `exported_at` stamp), so the file in the repository changes only when a decision did. Each stage is the
   existing command, run unchanged and in that order; the first that fails stops the run, and since
   every stage is incremental, running it again carries on. It ends with what changed: new
   photographs, files now missing, new faces and newly named faces, counted from the database
@@ -1750,7 +1753,8 @@ photograph deleted at that point never enters the index at all.
   `Unsorted`, `Scans` and the person folders stay out as they were chosen to. A parent that cannot
   be listed stops the run: a NAS asleep must not look like a year with nothing new.
 - **`--events`** adds lines beginning `@@mediaidx ` followed by one JSON object: `{added_roots}`
-  first, `{stage, index, total}` as each stage starts, and finally `{done, ok, ...}` with the
+  first, `{plan}` (the stage names this run will go through), `{stage, index, total}` as each
+  stage starts, and finally `{done, ok, ...}` with the
   counts and `published`, or `{done, ok: false, failed, error}`. Everything else is the ordinary
   human output. This is what Media Organizer reads.
 - **Media Organizer** has an *Update photo archive* screen, reached from its start screen and
