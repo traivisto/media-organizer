@@ -23,6 +23,7 @@ interrupted publish leaves the previous copy whole.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -156,6 +157,17 @@ def publish(cfg, target, *, dry_run: bool = False, workers: int = 8,
         wanted[f"app/mediaidx/{py.name}"] = py.read_bytes()
     wanted["docker-compose.yml"] = _unix((DEPLOY / "docker-compose.yml").read_bytes())
     wanted["README.md"] = _unix((DEPLOY / "README.md").read_bytes())
+    # The image is named after the application it holds. Container Manager's
+    # Build does not rebuild an image whose name already exists -- found when
+    # the phone layout was published and built, and the NAS went on serving
+    # the old one -- so a new application has to arrive under a new name.
+    # docker-compose.yml reads it from .env, which compose loads by itself.
+    app = hashlib.sha256()
+    for rel in sorted(r for r in wanted if r.startswith("app/")):
+        app.update(rel.encode() + b"\0" + wanted[rel])
+    version = app.hexdigest()[:12]
+    wanted[".env"] = ("# Written by `mediaidx publish`: the image this application "
+                     f"is built as.\nKUVA_APP_VERSION={version}\n").encode()
     wanted["data/config.toml"] = _unix((DEPLOY / "config.toml").read_bytes())
     changed = [rel for rel, body in wanted.items()
                if not (target / rel).is_file() or (target / rel).read_bytes() != body]
@@ -167,6 +179,7 @@ def publish(cfg, target, *, dry_run: bool = False, workers: int = 8,
     # never offered two compose files to choose between.
     if (target / MARK).exists():
         stale += [old for old in RETIRED if (target / old).is_file()]
+    done["app_version"] = version
     done["app_changed"] = sorted(r for r in changed + stale if r.startswith("app/"))
     done["files_changed"] = sorted(changed + stale)
 

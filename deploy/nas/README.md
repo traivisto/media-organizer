@@ -14,6 +14,7 @@ On the NAS, in the shared folder `docker`:
 ```
 kuva-arkisto/
   docker-compose.yml   the project Container Manager runs
+  .env                 the version of the application, which names its image
   README.md            this file
   app/                 the application the image is built from
   data/                config.toml, photos.db, thumbs/, textmodel/
@@ -83,7 +84,11 @@ corrections are on the NAS as soon as it finishes; nothing needs doing in Contai
 
 **When publish says the application changed**, the container is still running the image it was
 built from. In Container Manager → **Project** → `kuva-arkisto`: **Stop**, then **Build**. It
-rebuilds the image and starts again; it takes a minute or two, quicker than the first time.
+builds the new image and starts again; it takes a minute or two, quicker than the first time.
+Each image is named after the application in it (`kuva-arkisto:` and a version that publish
+writes into `.env`), because Build does not rebuild an image whose name already exists. Older
+ones can be deleted under **Image** now and then; they share all but their last layer, so they
+take little room.
 
 **To look at what it is doing:** Container Manager → **Container** → `kuva-arkisto` → **Log**. Memory
 is about 50 MB at rest and about 1 GB for ten minutes after a described search, while the search
@@ -103,5 +108,5 @@ model is held; the project's limit is 1.8 GB.
 ## Taking it away
 
 Container Manager → **Project** → `kuva-arkisto` → **Stop**, then **Delete**; in **Image**, delete
-`kuva-arkisto:viewer`; then delete the folder `docker/kuva-arkisto` in File Station. The archive on
+every `kuva-arkisto` image; then delete the folder `docker/kuva-arkisto` in File Station. The archive on
 the PC and the photographs on the NAS are untouched by all of it.

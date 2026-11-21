@@ -249,3 +249,42 @@ def test_a_compose_file_by_an_older_name_is_taken_away(kept):
     assert "compose.yaml" in done["files_changed"]
     assert not (target / "compose.yaml").exists()
     assert (target / "docker-compose.yml").is_file()
+
+
+def _version(target):
+    for line in (target / ".env").read_text(encoding="utf-8").splitlines():
+        if line.startswith("KUVA_APP_VERSION="):
+            return line.split("=", 1)[1]
+
+
+def test_the_image_is_named_after_the_application_in_it(kept):
+    """Container Manager's Build keeps an image whose name exists already."""
+    cfg, con, target = kept
+    first = publish.publish(cfg, target, log=_quiet)
+    v1 = _version(target)
+    assert v1 == first["app_version"] and len(v1) == 12
+
+    db.insert_asset(con, "e" * 64, {"format": "jpeg", "taken_at": 1})
+    con.commit()
+    publish.publish(cfg, target, log=_quiet)
+    assert _version(target) == v1, "new photographs are not a new application"
+
+    (target / "app" / "mediaidx" / "serve.py").write_text("old", encoding="utf-8")
+    publish.publish(cfg, target, log=_quiet)
+    assert _version(target) == v1, "the version is of what is sent, not what was there"
+
+
+def test_a_changed_application_gets_a_new_name(kept, monkeypatch, tmp_path):
+    cfg, _, target = kept
+    publish.publish(cfg, target, log=_quiet)
+    v1 = _version(target)
+    deploy = tmp_path / "deploy2"
+    deploy.mkdir()
+    for p in publish.DEPLOY.iterdir():
+        if p.is_file():
+            (deploy / p.name).write_bytes(p.read_bytes())
+    (deploy / "requirements.txt").write_bytes(b"numpy==9.9\n")
+    monkeypatch.setattr(publish, "DEPLOY", deploy)
+    done = publish.publish(cfg, target, log=_quiet)
+    assert _version(target) != v1
+    assert "app/deploy/nas/requirements.txt" in done["app_changed"]

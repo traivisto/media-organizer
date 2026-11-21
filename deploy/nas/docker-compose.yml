@@ -14,7 +14,10 @@ services:
     build:
       context: ./app
       dockerfile: deploy/nas/Dockerfile
-    image: kuva-arkisto:viewer
+    # Named after the application inside it, from the .env publish writes, so
+    # that Build makes a new image whenever the application has changed and
+    # not otherwise.
+    image: kuva-arkisto:${KUVA_APP_VERSION:-viewer}
     container_name: kuva-arkisto
     restart: unless-stopped
     ports:
