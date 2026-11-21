@@ -10,9 +10,11 @@ export const IpcChannels = {
   scanCancelled: 'scan:cancelled',
   scanProgress: 'scan:progress',
   scanNeedsResolution: 'scan:needsResolution',
+  scanNeedsTimeCorrection: 'scan:needsTimeCorrection',
   scanReadyForPreview: 'scan:readyForPreview',
 
   resolutionSubmit: 'resolution:submit',
+  timeCorrectionSubmit: 'timeCorrection:submit',
 
   previewGet: 'preview:get',
 
@@ -85,7 +87,7 @@ export interface IcloudSyncStatusEvent {
   logPath?: string
 }
 
-export type OrganizeMode = 'moveToFolders' | 'renameInPlace' | 'copyToFolders'
+export type OrganizeMode = 'moveToFolders' | 'renameInPlace' | 'copyToFolders' | 'fixTimeOrder'
 
 export interface ScanStartRequest {
   sourceDir: string
@@ -97,6 +99,33 @@ export interface ScanStartRequest {
   /** Inclusive ISO date bounds (yyyy-MM-dd), filtered on exifCapturedAt falling back to mtime. */
   dateRangeStart?: string
   dateRangeEnd?: string
+}
+
+/** One detected camera (by make/model) found in the scanned batch, with its file count
+ *  and capture-date range - shown on the time-correction screen so the user can decide
+ *  an offset per camera. Records with no make/model are grouped under make/model both
+ *  undefined ("Unknown camera"). */
+export interface CameraGroup {
+  make?: string
+  model?: string
+  count: number
+  minCapturedAt: string
+  maxCapturedAt: string
+}
+
+export interface ScanNeedsTimeCorrectionEvent {
+  groups: CameraGroup[]
+}
+
+export interface TimeCorrectionRule {
+  make?: string
+  model?: string
+  /** Signed offset in minutes added to exifCapturedAt, e.g. -120 for "2 hours earlier". */
+  offsetMinutes: number
+}
+
+export interface TimeCorrectionSubmitRequest {
+  rules: TimeCorrectionRule[]
 }
 
 export interface ScanProgressEvent {

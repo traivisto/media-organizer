@@ -6,7 +6,11 @@ import { ExifTool } from 'exiftool-vendored'
 import { writeMinimalJpeg } from '../testUtils/mediaFixtures'
 import { shutdownExiftoolPool } from '../metadata/exiftoolClient'
 import { IpcChannels } from '../../shared/types/IpcContracts'
-import type { ScanNeedsResolutionEvent, ScanReadyForPreviewEvent } from '../../shared/types/IpcContracts'
+import type {
+  ScanNeedsResolutionEvent,
+  ScanNeedsTimeCorrectionEvent,
+  ScanReadyForPreviewEvent
+} from '../../shared/types/IpcContracts'
 import type { ResolutionDecision } from '../../shared/types/ScanRecord'
 
 const sendToRendererMock = vi.fn()
@@ -16,6 +20,7 @@ vi.mock('../ipc/rendererBridge', () => ({
 
 const { startScan, cancelScan, getAllRecords } = await import('./scanOrchestrator')
 const { submitResolution } = await import('./resolutionGate')
+const { submitTimeCorrection } = await import('./timeCorrectionGate')
 
 function eventsOf<T>(channel: string): T[] {
   return sendToRendererMock.mock.calls.filter(([c]) => c === channel).map(([, payload]) => payload as T)
@@ -320,6 +325,73 @@ describe('scanOrchestrator renameInPlace mode', () => {
       const all = getAllRecords()
       expect(all).toHaveLength(1)
       expect(all[0].finalDestPath).toBe(join(subDir, all[0].finalFileName!))
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('scanOrchestrator fixTimeOrder mode', () => {
+  beforeEach(() => {
+    sendToRendererMock.mockClear()
+  })
+
+  it('groups a no-EXIF file (e.g. saved from WhatsApp) as "no camera info" instead of pausing for resolution, and moves files into a real destination distinct from the source', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-orch-fixtime-'))
+    const destDir = join(dir, '__dest__')
+    try {
+      const tagWriter = new ExifTool()
+      const withDate = join(dir, 'has-date.jpg')
+      await writeMinimalJpeg(withDate)
+      await tagWriter.write(
+        withDate,
+        { DateTimeOriginal: '2026:05:10 10:00:00', Make: 'Canon', Model: 'EOS 90D' },
+        { writeArgs: ['-overwrite_original'] }
+      )
+      await tagWriter.end()
+
+      const noExif = join(dir, 'no-exif.jpg')
+      await writeMinimalJpeg(noExif)
+
+      const scanPromise = startScan({
+        sourceDir: dir,
+        destDir,
+        includeSubfolders: false,
+        organizeMode: 'fixTimeOrder',
+        includePhotos: true,
+        includeVideos: true
+      })
+
+      await vi.waitFor(
+        () => {
+          expect(eventsOf(IpcChannels.scanNeedsTimeCorrection).length).toBeGreaterThan(0)
+        },
+        { timeout: 10000, interval: 50 }
+      )
+
+      expect(eventsOf(IpcChannels.scanNeedsResolution)).toHaveLength(0)
+
+      const groups = eventsOf<ScanNeedsTimeCorrectionEvent>(IpcChannels.scanNeedsTimeCorrection)[0].groups
+      expect(groups).toHaveLength(2)
+      const noCameraGroup = groups.find((g) => !g.make && !g.model)!
+      expect(noCameraGroup.count).toBe(1)
+
+      submitTimeCorrection([{ offsetMinutes: -60 }])
+      await scanPromise
+
+      expect(eventsOf(IpcChannels.scanNeedsResolution)).toHaveLength(0)
+      const readyEvents = eventsOf<ScanReadyForPreviewEvent>(IpcChannels.scanReadyForPreview)
+      expect(readyEvents[0].totalCount).toBe(2)
+
+      const all = getAllRecords()
+      const noExifRecord = all.find((r) => r.originalPath.endsWith('no-exif.jpg'))!
+      expect(noExifRecord.dateSource).toBe('timezoneCorrected')
+
+      // The reported bug: destination must be honored, not silently ignored in favor of
+      // leaving corrected files under the source folder.
+      for (const record of all) {
+        expect(record.finalDestPath).toContain(destDir)
+      }
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

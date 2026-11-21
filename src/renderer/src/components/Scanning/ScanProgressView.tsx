@@ -2,8 +2,14 @@ import { api, useIpcEvent } from '../../hooks/useIpc'
 import { useAppStore } from '../../state/appStore'
 
 export function ScanProgressView(): JSX.Element {
-  const { scanProgress, setScanProgress, setPhase, setPreviewSummary, setNeedsResolutionRecords } =
-    useAppStore()
+  const {
+    scanProgress,
+    setScanProgress,
+    setPhase,
+    setPreviewSummary,
+    setNeedsResolutionRecords,
+    setCameraGroups
+  } = useAppStore()
 
   useIpcEvent(api().onScanProgress, setScanProgress)
   useIpcEvent(api().onScanCancelled, () => {
@@ -12,6 +18,10 @@ export function ScanProgressView(): JSX.Element {
   useIpcEvent(api().onScanNeedsResolution, (e) => {
     setNeedsResolutionRecords(e.records)
     setPhase('resolution')
+  })
+  useIpcEvent(api().onScanNeedsTimeCorrection, (e) => {
+    setCameraGroups(e.groups)
+    setPhase('timeCorrection')
   })
   useIpcEvent(api().onScanReadyForPreview, (e) => {
     setPreviewSummary(e)

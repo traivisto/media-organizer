@@ -10,9 +10,11 @@ import type {
   PreviewGetResponse,
   ResolutionSubmitRequest,
   ScanNeedsResolutionEvent,
+  ScanNeedsTimeCorrectionEvent,
   ScanProgressEvent,
   ScanReadyForPreviewEvent,
-  ScanStartRequest
+  ScanStartRequest,
+  TimeCorrectionSubmitRequest
 } from '../shared/types/IpcContracts'
 
 function on<T>(channel: string, callback: (payload: T) => void): () => void {
@@ -32,11 +34,16 @@ const api = {
   onScanProgress: (cb: (e: ScanProgressEvent) => void) => on(IpcChannels.scanProgress, cb),
   onScanNeedsResolution: (cb: (e: ScanNeedsResolutionEvent) => void) =>
     on(IpcChannels.scanNeedsResolution, cb),
+  onScanNeedsTimeCorrection: (cb: (e: ScanNeedsTimeCorrectionEvent) => void) =>
+    on(IpcChannels.scanNeedsTimeCorrection, cb),
   onScanReadyForPreview: (cb: (e: ScanReadyForPreviewEvent) => void) =>
     on(IpcChannels.scanReadyForPreview, cb),
 
   resolutionSubmit: (req: ResolutionSubmitRequest): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.resolutionSubmit, req),
+
+  timeCorrectionSubmit: (req: TimeCorrectionSubmitRequest): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.timeCorrectionSubmit, req),
 
   previewGet: (req: PreviewGetRequest): Promise<PreviewGetResponse> =>
     ipcRenderer.invoke(IpcChannels.previewGet, req),

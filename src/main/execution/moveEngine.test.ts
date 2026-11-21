@@ -167,6 +167,75 @@ describe('executeMoves', () => {
     }
   })
 
+  it('twoPhase: swaps two files\' names in the same folder without a false -dupN collision', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
+    try {
+      const pathA = join(dir, 'a.jpg')
+      const pathB = join(dir, 'b.jpg')
+      await writeFile(pathA, 'content-a')
+      await writeFile(pathB, 'content-b')
+
+      // a.jpg's corrected name is b.jpg's current name and vice versa - a single-phase
+      // rename of "a" first would find "b.jpg" already occupied and misfire a -dup1.
+      const results = await executeMoves(
+        [
+          baseRecord({ id: 'a', originalPath: pathA, finalDestPath: pathB }),
+          baseRecord({ id: 'b', originalPath: pathB, finalDestPath: pathA })
+        ],
+        { twoPhase: true }
+      )
+
+      const byId = Object.fromEntries(results.map((r) => [r.id, r]))
+      expect(byId.a.status).toBe('moved')
+      expect(byId.a.finalDestPath).toBe(pathB)
+      expect(byId.b.status).toBe('moved')
+      expect(byId.b.finalDestPath).toBe(pathA)
+      expect(await readFile(pathA, 'utf-8')).toBe('content-b')
+      expect(await readFile(pathB, 'utf-8')).toBe('content-a')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('twoPhase: leaves a file untouched (no false -dupN) when finalDestPath equals originalPath', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
+    try {
+      const src = join(dir, 'already-correct.jpg')
+      await writeFile(src, 'unchanged content')
+
+      const results = await executeMoves([baseRecord({ originalPath: src, finalDestPath: src })], {
+        twoPhase: true
+      })
+
+      expect(results[0].status).toBe('moved')
+      expect(results[0].finalDestPath).toBe(src)
+      expect(await readFile(src, 'utf-8')).toBe('unchanged content')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('twoPhase: moves a file to a newly created month folder when its date correction crossed a boundary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
+    try {
+      const src = join(dir, '2026', '2026 04', 'photo.jpg')
+      await fs.mkdir(join(dir, '2026', '2026 04'), { recursive: true })
+      await writeFile(src, 'hello')
+      const dest = join(dir, '2026', '2026 05', 'photo.jpg')
+
+      const results = await executeMoves([baseRecord({ originalPath: src, finalDestPath: dest })], {
+        twoPhase: true
+      })
+
+      expect(results[0].status).toBe('moved')
+      expect(results[0].finalDestPath).toBe(dest)
+      expect(await readFile(dest, 'utf-8')).toBe('hello')
+      await expect(fs.access(src)).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('stops processing further files once cancelled', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'media-organizer-move-'))
     try {

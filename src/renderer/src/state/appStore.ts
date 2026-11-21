@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  CameraGroup,
   ExecuteDoneEvent,
   ExecuteProgressEvent,
   IcloudSyncStatusEvent,
@@ -15,6 +16,7 @@ export type Phase =
   | 'icloudSync'
   | 'scanning'
   | 'resolution'
+  | 'timeCorrection'
   | 'preview'
   | 'executing'
   | 'results'
@@ -36,6 +38,9 @@ interface AppState {
   executeProgress?: ExecuteProgressEvent
   executeResult?: ExecuteDoneEvent
   icloudSyncStatus?: IcloudSyncStatusEvent
+
+  // Cameras detected during a "fixTimeOrder" scan, for the time-correction screen
+  cameraGroups: CameraGroup[]
 
   // Lifted out of PickDirsView's local state so they survive the icloudSync phase
   // transition (PickDirsView unmounts while ICloudSyncView is showing) and are still
@@ -66,6 +71,7 @@ interface AppState {
   setDateRangeStart: (value: string) => void
   setDateRangeEnd: (value: string) => void
   setAppleId: (value: string) => void
+  setCameraGroups: (groups: CameraGroup[]) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -85,6 +91,7 @@ export const useAppStore = create<AppState>((set) => ({
   dateRangeStart: '',
   dateRangeEnd: '',
   appleId: '',
+  cameraGroups: [],
 
   setSourceDir: (dir) => set({ sourceDir: dir }),
   setDestDir: (dir) => set({ destDir: dir }),
@@ -111,5 +118,6 @@ export const useAppStore = create<AppState>((set) => ({
   setIncludeVideos: (includeVideos) => set({ includeVideos }),
   setDateRangeStart: (dateRangeStart) => set({ dateRangeStart }),
   setDateRangeEnd: (dateRangeEnd) => set({ dateRangeEnd }),
-  setAppleId: (appleId) => set({ appleId })
+  setAppleId: (appleId) => set({ appleId }),
+  setCameraGroups: (cameraGroups) => set({ cameraGroups })
 }))

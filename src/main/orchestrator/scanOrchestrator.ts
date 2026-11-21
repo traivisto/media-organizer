@@ -7,14 +7,17 @@ import { geocodeCoords } from '../geocoding/geocodeService'
 import { assignSequenceNumbers } from '../naming/sequencer'
 import { buildFileName } from '../naming/filenameBuilder'
 import { buildDestPath } from '../naming/pathBuilder'
+import { buildCameraGroups, applyTimeCorrection } from '../naming/timeCorrection'
 import { resetRunState, setRecords, setSkippedNonMedia, getRunState } from './runState'
 import { waitForResolution, cancelResolution } from './resolutionGate'
+import { waitForTimeCorrection, cancelTimeCorrection } from './timeCorrectionGate'
 import { sendToRenderer } from '../ipc/rendererBridge'
 import { IpcChannels } from '../../shared/types/IpcContracts'
 import type {
   ScanStartRequest,
   ScanProgressEvent,
   ScanNeedsResolutionEvent,
+  ScanNeedsTimeCorrectionEvent,
   ScanReadyForPreviewEvent
 } from '../../shared/types/IpcContracts'
 import type { ScanRecord } from '../../shared/types/ScanRecord'
@@ -24,6 +27,7 @@ let cancelled = false
 export function cancelScan(): void {
   cancelled = true
   cancelResolution()
+  cancelTimeCorrection()
 }
 
 /**
@@ -48,6 +52,7 @@ export async function startScan(req: ScanStartRequest): Promise<void> {
 }
 
 async function runScan(req: ScanStartRequest): Promise<void> {
+  const isFixTimeOrder = req.organizeMode === 'fixTimeOrder'
   const { files: walkedFiles, skippedNonMedia } = await walkDirectory(req.sourceDir, req.includeSubfolders, {
     includePhotos: req.includePhotos,
     includeVideos: req.includeVideos
@@ -113,7 +118,25 @@ async function runScan(req: ScanStartRequest): Promise<void> {
       record.effectiveCapturedAt = record.exifCapturedAt
       record.dateSource = 'exif'
       record.needsResolution = false
+    } else if (isFixTimeOrder) {
+      // Files with no EXIF at all (e.g. re-saved from WhatsApp, which strips metadata
+      // including make/model) still belong on the time-correction screen, grouped under
+      // "no camera info" with their file mtime as the base time - they shouldn't have to
+      // go through the missing-date modal again on every fix-time-order rescan.
+      record.effectiveCapturedAt = record.mtime
+      record.dateSource = 'mtimeFallback'
+      record.needsResolution = false
     }
+  }
+
+  if (isFixTimeOrder) {
+    const groups = buildCameraGroups(records)
+    const event: ScanNeedsTimeCorrectionEvent = { groups }
+    sendToRenderer(IpcChannels.scanNeedsTimeCorrection, event)
+
+    const rules = await waitForTimeCorrection()
+    if (cancelled) return
+    applyTimeCorrection(records, rules)
   }
 
   const needsResolution = records.filter((r) => r.needsResolution)

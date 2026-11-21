@@ -3,6 +3,7 @@ import { PickDirsView } from './components/DirectoryPicker/PickDirsView'
 import { ICloudSyncView } from './components/ICloud/ICloudSyncView'
 import { ScanProgressView } from './components/Scanning/ScanProgressView'
 import { MissingDateModal } from './components/Resolution/MissingDateModal'
+import { TimeCorrectionView } from './components/FixTimeOrder/TimeCorrectionView'
 import { PreviewSummaryBar } from './components/Preview/PreviewSummaryBar'
 import { PreviewTable } from './components/Preview/PreviewTable'
 import { ExecuteProgressView } from './components/Execution/ExecuteProgressView'
@@ -32,6 +33,8 @@ function App(): JSX.Element {
       )
     case 'resolution':
       return <MissingDateModal />
+    case 'timeCorrection':
+      return <TimeCorrectionView />
     case 'preview':
       return (
         <div>

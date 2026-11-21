@@ -15,7 +15,8 @@ export function ICloudSyncView(): JSX.Element {
     dateRangeEnd
   } = useAppStore()
 
-  const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
+  const needsDestDir =
+    organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders' || organizeMode === 'fixTimeOrder'
 
   async function startScanAfterSync(syncDir: string): Promise<void> {
     setPhase('scanning')

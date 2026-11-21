@@ -2,24 +2,20 @@
 
 Ideas noted for later - not scheduled, not designed in detail yet.
 
-## Per-camera timestamp offset correction
+## Per-camera timestamp offset correction - done (naming/sequencing only)
 
-Use case: combining photos taken with multiple cameras whose clocks weren't
-in sync - one might be 5 minutes slow, another 2 hours off because it was
-set to a different timezone. Right now the app trusts each file's EXIF
-timestamp as-is, so photos taken at the same real-world moment on different
-cameras can end up out of chronological order (and thus mis-sequenced /
-placed in the wrong month folder near a boundary).
+Implemented as "Fix time order in an already-organized folder" (link on the
+start screen). Use case: photos already organized turn out to be visibly
+out of order because one camera's clock was set to a different timezone.
+The flow rescans the already-organized folder in place, shows the detected
+cameras (make/model, file count, date range), and lets the user set a
+±HH:MM offset per camera before re-sequencing/renaming/moving the files.
+Only `effectiveCapturedAt` (naming/sequencing) is corrected - the original
+file's EXIF timestamp is never rewritten.
 
-Not designed yet - options to weigh later:
-- Let the user specify a per-camera (or per-batch) offset applied only to
-  naming/sequencing, without touching the original file's metadata.
-- Actually rewrite the EXIF timestamp via exiftool, so the corrected date
-  is reflected everywhere (including outside this app).
-- Some combination, or a per-file manual override in the preview screen.
-
-Revisit once there's a concrete batch of mixed-camera photos to design
-against.
+Not done: rewriting the real EXIF timestamp via exiftool, and per-camera
+date sub-ranges (a single offset applies to all of a camera's files across
+the whole folder). Revisit if a real case needs either.
 
 ## Visual polish
 

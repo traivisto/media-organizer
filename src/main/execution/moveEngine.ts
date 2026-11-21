@@ -57,12 +57,23 @@ export interface MoveEngineOptions {
   onProgress?: (processed: number, total: number, currentPath: string) => void
   onResult?: (result: MoveResult) => void
   isCancelled?: () => boolean
+  /** Re-sequencing an already-organized folder can require two files to swap places
+   *  (file A's new name is file B's current name and vice versa). Renaming straight to
+   *  finalDestPath one at a time would misdetect that swap as a real collision and
+   *  suffix it with -dupN. When true, every record is first renamed to a unique temp
+   *  name in its own original folder, then all temp names are renamed to their final
+   *  destination - so no rename ever collides with a file still awaiting its own move. */
+  twoPhase?: boolean
 }
 
 export async function executeMoves(
   records: ScanRecord[],
   options: MoveEngineOptions = {}
 ): Promise<MoveResult[]> {
+  if (options.twoPhase) {
+    return executeMovesTwoPhase(records, options)
+  }
+
   const mode = options.mode ?? 'move'
   const doneStatus = mode === 'copy' ? 'copied' : 'moved'
   const results: MoveResult[] = []
@@ -108,6 +119,108 @@ export async function executeMoves(
       } else {
         await moveWithExdevFallback(record.originalPath, destPath)
       }
+
+      const result: MoveResult = {
+        id: record.id,
+        originalPath: record.originalPath,
+        finalDestPath: destPath,
+        status: doneStatus
+      }
+      results.push(result)
+      options.onResult?.(result)
+    } catch (err) {
+      const result: MoveResult = {
+        id: record.id,
+        originalPath: record.originalPath,
+        finalDestPath: record.finalDestPath,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err)
+      }
+      results.push(result)
+      options.onResult?.(result)
+    }
+  }
+
+  return results
+}
+
+interface StagedMove {
+  record: ScanRecord
+  tempPath: string
+}
+
+async function executeMovesTwoPhase(
+  records: ScanRecord[],
+  options: MoveEngineOptions
+): Promise<MoveResult[]> {
+  const mode = options.mode ?? 'move'
+  const doneStatus = mode === 'copy' ? 'copied' : 'moved'
+  const results: MoveResult[] = []
+  const staged: StagedMove[] = []
+
+  // Phase 1: stage every real move under a unique temp name in its own original folder.
+  // Cancellation only stops further files from being staged here - anything already
+  // staged still gets driven to its final name in phase 2 below, so nothing is left
+  // behind under a temp name.
+  for (let i = 0; i < records.length; i++) {
+    if (options.isCancelled?.()) break
+
+    const record = records[i]
+    options.onProgress?.(i, records.length, record.originalPath)
+
+    if (!record.finalDestPath) {
+      const result: MoveResult = {
+        id: record.id,
+        originalPath: record.originalPath,
+        status: 'skipped',
+        error: 'No destination path computed for this file'
+      }
+      results.push(result)
+      options.onResult?.(result)
+      continue
+    }
+
+    if (record.finalDestPath === record.originalPath) {
+      const result: MoveResult = {
+        id: record.id,
+        originalPath: record.originalPath,
+        finalDestPath: record.finalDestPath,
+        status: doneStatus
+      }
+      results.push(result)
+      options.onResult?.(result)
+      continue
+    }
+
+    try {
+      const tempPath = join(dirname(record.originalPath), `.mo-tmp-${record.id}${extname(record.originalPath)}`)
+      if (mode === 'copy') {
+        await copyAndVerify(record.originalPath, tempPath)
+      } else {
+        await moveWithExdevFallback(record.originalPath, tempPath)
+      }
+      staged.push({ record, tempPath })
+    } catch (err) {
+      const result: MoveResult = {
+        id: record.id,
+        originalPath: record.originalPath,
+        finalDestPath: record.finalDestPath,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err)
+      }
+      results.push(result)
+      options.onResult?.(result)
+    }
+  }
+
+  // Phase 2: every staged temp file already sits under a name nothing else in this
+  // batch is still using, so renaming it into its final spot can never collide with a
+  // file still awaiting its own move.
+  for (const { record, tempPath } of staged) {
+    try {
+      await fs.mkdir(dirname(record.finalDestPath!), { recursive: true })
+      const destPath = await resolveCollision(record.finalDestPath!)
+      await fs.rename(tempPath, destPath)
 
       const result: MoveResult = {
         id: record.id,

@@ -16,6 +16,7 @@ export function registerExecuteChannels(): void {
 
     const results = await executeMoves(records, {
       mode: organizeMode === 'copyToFolders' ? 'copy' : 'move',
+      twoPhase: organizeMode === 'fixTimeOrder',
       isCancelled: () => cancelled,
       onProgress: (processed, total, currentPath) => {
         const progress: ExecuteProgressEvent = { processed, total, currentPath }

@@ -51,7 +51,8 @@ export function PickDirsView(): JSX.Element {
     if (dir) setDestDir(dir)
   }
 
-  const needsDestDir = organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders'
+  const needsDestDir =
+    organizeMode === 'moveToFolders' || organizeMode === 'copyToFolders' || organizeMode === 'fixTimeOrder'
   const hasMediaTypeSelected = includePhotos || includeVideos
   const hasValidSource = sourceType === 'local' ? !!sourceDir : !!appleId.trim()
   const canScan = hasValidSource && (!needsDestDir || !!destDir) && hasMediaTypeSelected
@@ -206,7 +207,7 @@ export function PickDirsView(): JSX.Element {
           />{' '}
           Rename only, keep files in their current folder
         </label>
-        <label style={{ display: 'block' }}>
+        <label style={{ display: 'block', marginBottom: 4 }}>
           <input
             type="radio"
             checked={organizeMode === 'copyToFolders'}
@@ -214,6 +215,23 @@ export function PickDirsView(): JSX.Element {
           />{' '}
           Rename and copy into Year/Month folders in a destination, keeping the originals in place
         </label>
+        <label style={{ display: 'block' }}>
+          <input
+            type="radio"
+            checked={organizeMode === 'fixTimeOrder'}
+            onChange={() => setOrganizeMode('fixTimeOrder')}
+          />{' '}
+          Fix camera time differences (e.g. wrong timezone), then rename and move into Year/Month
+          folders
+        </label>
+        {organizeMode === 'fixTimeOrder' && (
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+            After scanning, you&apos;ll see the cameras found in the source and can set a time
+            offset for each before files are renamed/moved - useful when photos from different
+            cameras (or camera vs. phone) end up out of order because one clock was set to the
+            wrong timezone.
+          </div>
+        )}
         {sourceType === 'icloud' && (
           <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>
             Since the source is from iCloud sync, these actions only affect the downloaded local
