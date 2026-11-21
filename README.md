@@ -36,6 +36,15 @@ Built with Electron + React + TypeScript.
   short-date/short-time format from the registry, so on-screen dates match
   what you see in File Explorer.
 
+- **Photo archive update** - after a batch is moved, the Done screen lists the
+  folders it went into (each with an *Open* button, to look through and prune
+  the photos in Explorer) and an *Update photo archive* button, also on the
+  start screen. It runs `mediaidx update --events` from the Media classifier
+  project (Kuva-arkisto): indexing, faces, places and events, then publishing
+  to the NAS viewer, with the stages shown as they run. The program is looked
+  for at `~\.mediaidx\venv\Scripts\mediaidx.exe`; set `mediaidxPath` in
+  `media-organizer-config.json` if it is elsewhere.
+
 ## Filename pattern
 
 ```

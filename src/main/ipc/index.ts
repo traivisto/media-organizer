@@ -5,6 +5,7 @@ import { registerTimeCorrectionChannels } from './timeCorrectionChannels'
 import { registerPreviewChannels } from './previewChannels'
 import { registerExecuteChannels } from './executeChannels'
 import { registerIcloudChannels } from './icloudChannels'
+import { registerArchiveChannels } from './archiveChannels'
 
 export function registerIpcHandlers(): void {
   registerDialogChannels()
@@ -14,4 +15,5 @@ export function registerIpcHandlers(): void {
   registerPreviewChannels()
   registerExecuteChannels()
   registerIcloudChannels()
+  registerArchiveChannels()
 }

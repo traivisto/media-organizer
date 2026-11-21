@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type {
+  ArchiveUpdateStatusEvent,
   CameraGroup,
   ExecuteDoneEvent,
   ExecuteProgressEvent,
@@ -20,6 +21,7 @@ export type Phase =
   | 'preview'
   | 'executing'
   | 'results'
+  | 'archiveUpdate'
 
 interface AppState {
   phase: Phase
@@ -38,6 +40,7 @@ interface AppState {
   executeProgress?: ExecuteProgressEvent
   executeResult?: ExecuteDoneEvent
   icloudSyncStatus?: IcloudSyncStatusEvent
+  archiveUpdateStatus?: ArchiveUpdateStatusEvent
 
   // Cameras detected during a "fixTimeOrder" scan, for the time-correction screen
   cameraGroups: CameraGroup[]
@@ -64,6 +67,7 @@ interface AppState {
   setExecuteProgress: (progress: ExecuteProgressEvent) => void
   setExecuteResult: (result: ExecuteDoneEvent) => void
   setIcloudSyncStatus: (status?: IcloudSyncStatusEvent) => void
+  setArchiveUpdateStatus: (status?: ArchiveUpdateStatusEvent) => void
   setSourceType: (type: SourceType) => void
   setIncludeSubfolders: (value: boolean) => void
   setIncludePhotos: (value: boolean) => void
@@ -112,6 +116,7 @@ export const useAppStore = create<AppState>((set) => ({
   setExecuteProgress: (progress) => set({ executeProgress: progress }),
   setExecuteResult: (result) => set({ executeResult: result }),
   setIcloudSyncStatus: (status) => set({ icloudSyncStatus: status }),
+  setArchiveUpdateStatus: (status) => set({ archiveUpdateStatus: status }),
   setSourceType: (sourceType) => set({ sourceType }),
   setIncludeSubfolders: (includeSubfolders) => set({ includeSubfolders }),
   setIncludePhotos: (includePhotos) => set({ includePhotos }),

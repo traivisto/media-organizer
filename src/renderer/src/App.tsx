@@ -8,6 +8,7 @@ import { PreviewSummaryBar } from './components/Preview/PreviewSummaryBar'
 import { PreviewTable } from './components/Preview/PreviewTable'
 import { ExecuteProgressView } from './components/Execution/ExecuteProgressView'
 import { ResultsSummary } from './components/Results/ResultsSummary'
+import { ArchiveUpdateView } from './components/ArchiveUpdate/ArchiveUpdateView'
 
 function App(): JSX.Element {
   const phase = useAppStore((s) => s.phase)
@@ -53,6 +54,12 @@ function App(): JSX.Element {
       return (
         <div className="narrow-page">
           <ResultsSummary />
+        </div>
+      )
+    case 'archiveUpdate':
+      return (
+        <div className="narrow-page">
+          <ArchiveUpdateView />
         </div>
       )
     default:

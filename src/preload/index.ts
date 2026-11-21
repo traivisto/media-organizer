@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IpcChannels } from '../shared/types/IpcContracts'
 import type {
   AppConfig,
+  ArchiveUpdateStatusEvent,
   ExecuteDoneEvent,
   ExecuteProgressEvent,
   IcloudSyncStartRequest,
@@ -59,7 +60,15 @@ const api = {
   onIcloudSyncStatus: (cb: (e: IcloudSyncStatusEvent) => void) => on(IpcChannels.icloudSyncStatus, cb),
 
   setPreviewColumnWidths: (widths: number[]): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.setPreviewColumnWidths, widths)
+    ipcRenderer.invoke(IpcChannels.setPreviewColumnWidths, widths),
+
+  archiveUpdateStart: (): Promise<void> => ipcRenderer.invoke(IpcChannels.archiveUpdateStart),
+  archiveUpdateCancel: (): Promise<void> => ipcRenderer.invoke(IpcChannels.archiveUpdateCancel),
+  onArchiveUpdateStatus: (cb: (e: ArchiveUpdateStatusEvent) => void) =>
+    on(IpcChannels.archiveUpdateStatus, cb),
+  /** Resolves to an error message, or undefined when the folder opened. */
+  openFolder: (dir: string): Promise<string | undefined> =>
+    ipcRenderer.invoke(IpcChannels.openFolder, dir)
 }
 
 export type Api = typeof api

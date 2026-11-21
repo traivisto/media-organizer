@@ -25,7 +25,8 @@ export function PickDirsView(): JSX.Element {
     setIncludeVideos,
     setDateRangeStart,
     setDateRangeEnd,
-    setAppleId
+    setAppleId,
+    setArchiveUpdateStatus
   } = useAppStore()
 
   useEffect(() => {
@@ -253,6 +254,24 @@ export function PickDirsView(): JSX.Element {
       <button disabled={!canScan} onClick={startScan}>
         Scan
       </button>
+
+      <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid rgba(128,128,128,0.3)' }}>
+        <div style={{ marginBottom: 8 }}>
+          <strong>Photo archive</strong>
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+          Once the new photos are in their folders and you have looked through them, index them
+          and publish them to the NAS viewer.
+        </div>
+        <button
+          onClick={() => {
+            setArchiveUpdateStatus(undefined)
+            setPhase('archiveUpdate')
+          }}
+        >
+          Update photo archive...
+        </button>
+      </div>
     </div>
   )
 }

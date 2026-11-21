@@ -25,8 +25,13 @@ export async function getConfig(): Promise<AppConfig> {
     windowsDatePattern: windowsFormat?.datePattern,
     windowsTimePattern: windowsFormat?.timePattern,
     lastWindowBounds: store.get('lastWindowBounds'),
-    lastPreviewColumnWidths: store.get('lastPreviewColumnWidths')
+    lastPreviewColumnWidths: store.get('lastPreviewColumnWidths'),
+    mediaidxPath: store.get('mediaidxPath')
   }
+}
+
+export function getMediaidxPath(): string | undefined {
+  return store.get('mediaidxPath')
 }
 
 export function getLastSourceDir(): string | undefined {

@@ -27,7 +27,12 @@ export const IpcChannels = {
   icloudSyncCancel: 'icloud:syncCancel',
   icloudSyncStatus: 'icloud:syncStatus',
 
-  setPreviewColumnWidths: 'config:setPreviewColumnWidths'
+  setPreviewColumnWidths: 'config:setPreviewColumnWidths',
+
+  archiveUpdateStart: 'archive:updateStart',
+  archiveUpdateCancel: 'archive:updateCancel',
+  archiveUpdateStatus: 'archive:updateStatus',
+  openFolder: 'shell:openFolder'
 } as const
 
 export type SourceType = 'local' | 'icloud'
@@ -54,6 +59,8 @@ export interface AppConfig {
   windowsTimePattern?: string
   lastWindowBounds?: WindowBounds
   lastPreviewColumnWidths?: number[]
+  /** Where the photo archive's `mediaidx.exe` is; unset means the default under ~\.mediaidx. */
+  mediaidxPath?: string
 }
 
 export interface IcloudSyncStartRequest {
@@ -166,6 +173,34 @@ export interface ExecuteProgressEvent {
   processed: number
   total: number
   currentPath?: string
+}
+
+/** The stages of `mediaidx update`, in the order it runs them. `publish` is left out when
+ *  the photo archive has nowhere configured to publish to. */
+export type ArchiveUpdateStage = 'scan' | 'embed' | 'faces' | 'cluster' | 'derive' | 'publish'
+
+export interface ArchiveUpdateSummary {
+  newPhotographs: number
+  /** Files the archive had indexed that are no longer there (e.g. deleted while reviewing). */
+  missingFiles: number
+  newFaces: number
+  newlyNamedFaces: number
+  published: boolean
+  /** New year folders (e.g. ...\Pictures\2027) the archive now watches. */
+  addedRoots: string[]
+}
+
+export interface ArchiveUpdateStatusEvent {
+  state: 'running' | 'done' | 'error' | 'cancelled'
+  stage?: ArchiveUpdateStage
+  stageIndex?: number
+  stageTotal?: number
+  /** The latest line of mediaidx's own output, for a sense of progress within a stage. */
+  detail?: string
+  addedRoots?: string[]
+  summary?: ArchiveUpdateSummary
+  error?: string
+  logPath?: string
 }
 
 export interface ExecuteDoneEvent {
