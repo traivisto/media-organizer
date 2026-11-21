@@ -658,6 +658,18 @@ def open_with_default_app(path: str) -> None:
     else:
         subprocess.Popen(["xdg-open", path])
 
+# Left out: a photograph every file of which a scan has marked missing. Not
+# merely one with no present file -- that would also take out a photograph
+# with no file row at all, which a scan never makes.
+PRESENT_ASSETS = """
+CREATE TEMP VIEW IF NOT EXISTS assets AS
+SELECT * FROM main.assets a
+ WHERE EXISTS (SELECT 1 FROM files x
+                WHERE x.asset_id = a.id AND x.missing_since IS NULL)
+    OR NOT EXISTS (SELECT 1 FROM files x
+                    WHERE x.asset_id = a.id AND x.missing_since IS NOT NULL)"""
+
+
 class WrongModel(Exception):
     """The text model here is not the one the photographs were indexed with."""
 
@@ -684,8 +696,25 @@ def create_app(cfg) -> FastAPI:
         else:
             con = db.connect(cfg.database, create=False)
         con.row_factory = sqlite3.Row
+        # A photograph none of whose files is there any more -- deleted while
+        # looking through a batch, say -- is left out of every screen. The rows
+        # stay (spec 10.3): a file that was only moved, or a share that was
+        # half mounted, brings it back with the next scan, names and all. Done
+        # once here as a temporary view, which unqualified `assets` resolves to
+        # before the table, so every query in this file sees the same archive;
+        # the few writes to the table name it `main.assets`.
+        con.execute(PRESENT_ASSETS)
         state["vec_ok"] = embed.vec_index_ready(con)
         return con
+
+    def drop_gone(con, hits):
+        """Ranked hits without the photographs that are no longer there. The
+        vector index holds every photograph ever embedded, and only a ranking
+        inside a candidate set (which comes through the view) leaves them out
+        by itself."""
+        gone = {r[0] for r in con.execute(
+            "SELECT id FROM main.assets EXCEPT SELECT id FROM assets")}
+        return [h for h in hits if h[0] not in gone] if gone else hits
 
     if ro:
         @app.middleware("http")
@@ -1535,8 +1564,8 @@ def create_app(cfg) -> FastAPI:
                          '<p>Nothing matches all of that.</p></div>'))
 
         vec = text_vector(con, r.text)
-        hits = embed.search(con, vec, limit=MAX_RANKED,
-                            vec_ok=state["vec_ok"], candidate_ids=cand)
+        hits = drop_gone(con, embed.search(con, vec, limit=MAX_RANKED,
+                                           vec_ok=state["vec_ok"], candidate_ids=cand))
         answers = embed.cut([s for _, s in hits])
         keep = _in_order(con, hits if more else hits[:answers], f["order"])
         window = keep[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
@@ -2018,8 +2047,8 @@ def create_app(cfg) -> FastAPI:
             if not cand:
                 return []
         vec = text_vector(con, r.text)
-        hits = embed.search(con, vec, limit=MAX_RANKED,
-                            vec_ok=state["vec_ok"], candidate_ids=cand)
+        hits = drop_gone(con, embed.search(con, vec, limit=MAX_RANKED,
+                                           vec_ok=state["vec_ok"], candidate_ids=cand))
         keep = _in_order(con, hits if more else hits[:embed.cut([s for _, s in hits])],
                          order)
         ids = [a for a, _ in keep]

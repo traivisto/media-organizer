@@ -246,7 +246,7 @@ def load_gazetteer(con, gaz_dir: str | Path, *, progress=None) -> GazetteerStats
 
     con.execute("BEGIN")
     try:
-        con.execute("UPDATE assets SET place_id=NULL, place_source=NULL "
+        con.execute("UPDATE main.assets SET place_id=NULL, place_source=NULL "
                     "WHERE place_id IS NOT NULL")
         con.execute("DELETE FROM geo_cache")
         con.execute("DELETE FROM folder_places")
@@ -416,7 +416,7 @@ def geocode(con, st: PlaceStats | None = None, *, progress=None) -> PlaceStats:
         else:
             updates.append((place, aid))
     con.executemany(
-        "UPDATE assets SET place_id = ?, place_source = 'gps' WHERE id = ?", updates)
+        "UPDATE main.assets SET place_id = ?, place_source = 'gps' WHERE id = ?", updates)
     st.gps_placed = len(updates)
     if progress:
         progress(st)
@@ -536,7 +536,7 @@ def match_folders(con, cfg, st: PlaceStats | None = None, *,
         if place is not None:
             updates[asset_id] = place
     con.executemany(
-        "UPDATE assets SET place_id = ?, place_source = 'folder' WHERE id = ?",
+        "UPDATE main.assets SET place_id = ?, place_source = 'folder' WHERE id = ?",
         [(p, a) for a, p in updates.items()])
     st.folder_placed = len(updates)
     return st
@@ -568,7 +568,7 @@ def rematch_folders(con, cfg) -> PlaceStats:
     label changes what a GPS receiver recorded, and re-running the geocoder
     would be ten seconds spent confirming it.
     """
-    con.execute("UPDATE assets SET place_id = NULL, place_source = NULL "
+    con.execute("UPDATE main.assets SET place_id = NULL, place_source = NULL "
                 "WHERE place_source = 'folder'")
     return match_folders(con, cfg)
 
@@ -578,7 +578,7 @@ def run(con, cfg, *, progress=None) -> PlaceStats:
     st = PlaceStats()
     con.execute("BEGIN")
     try:
-        con.execute("UPDATE assets SET place_id = NULL, place_source = NULL")
+        con.execute("UPDATE main.assets SET place_id = NULL, place_source = NULL")
         geocode(con, st, progress=progress)
         match_folders(con, cfg, st)
         # Inside the run, not in its callers: `mediaidx places` recomputes the

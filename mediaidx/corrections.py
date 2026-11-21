@@ -237,14 +237,14 @@ def _stamp(con, kind: str, content_hash: str, face_idx: int) -> None:
         got = date_for(con, content_hash)
         if got:
             con.execute(
-                """UPDATE assets SET taken_at = ?, taken_at_precision = ?,
+                """UPDATE main.assets SET taken_at = ?, taken_at_precision = ?,
                      taken_at_source = 'corrected', date_conflict = 0,
                      conflict_note = NULL
                    WHERE content_hash = ?""", (got[0], got[1], content_hash))
     elif kind == "place":
         path = place_for(con, content_hash)
         con.execute(
-            """UPDATE assets SET place_id = (SELECT id FROM places WHERE path = ?),
+            """UPDATE main.assets SET place_id = (SELECT id FROM places WHERE path = ?),
                  place_source = 'corrected' WHERE content_hash = ?""",
             (path, content_hash))
     elif kind == "person":
@@ -267,7 +267,7 @@ def apply_places(con) -> int:
     remember (4.7).
     """
     cur = con.execute(
-        """UPDATE assets SET
+        """UPDATE main.assets SET
              place_id = (SELECT p.id FROM places p JOIN corrections c
                            ON c.value = p.path
                           WHERE c.kind = 'place'

@@ -1922,8 +1922,15 @@ large enough that fixing the link before the first full run is worth an evening'
   is UTF-8 end to end; the FTS tokeniser is `unicode61`.
 - **Offline NAS.** If a root is unreachable, the run exits cleanly with a clear message rather
   than marking thousands of files missing.
-- **Missing files are never deleted from the index.** `missing_since` is set, and the UI shows
-  them as unavailable — protecting against a half-mounted share wiping useful history.
+- **Missing files are never deleted from the index.** `missing_since` is set — protecting against
+  a half-mounted share wiping useful history. A photograph **every** file of which is missing
+  (deleted while looking through a new batch, typically) is left out of every screen, on the PC
+  and in the viewing copy alike, and its own page answers *not found*. Nothing about it is
+  forgotten: the next scan that finds a file clears `missing_since`, and it is back with its names.
+  `serve` does this once per connection, with a temporary view named `assets` that unqualified
+  queries resolve to before the table; the few writes from the UI's code paths name the table
+  `main.assets`. Ranked search drops such photographs from the vector hits, since the vector index
+  still holds them.
 
 ### 10.4 Privacy
 
