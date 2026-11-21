@@ -40,8 +40,9 @@ Built with Electron + React + TypeScript.
   folders it went into (each with an *Open* button, to look through and prune
   the photos in Explorer) and an *Update photo archive* button, also on the
   start screen. It runs `mediaidx update --events` from the Media classifier
-  project (Kuva-arkisto): indexing, faces, places and events, then publishing
-  to the NAS viewer, with the stages shown as they run. The program is looked
+  project (Kuva-arkisto): indexing, faces, places and events, the names backup,
+  then publishing to the NAS viewer, with the stages shown as they run. Use it
+  after naming faces in Kuva-arkisto too. The program is looked
   for at `~\.mediaidx\venv\Scripts\mediaidx.exe`; set `mediaidxPath` in
   `media-organizer-config.json` if it is elsewhere.
 

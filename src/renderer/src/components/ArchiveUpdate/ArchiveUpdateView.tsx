@@ -2,14 +2,16 @@ import { api, useIpcEvent } from '../../hooks/useIpc'
 import { useAppStore } from '../../state/appStore'
 import type { ArchiveUpdateStage } from '../../../../shared/types/IpcContracts'
 
-const STAGES: { id: ArchiveUpdateStage; label: string }[] = [
-  { id: 'scan', label: 'Find new and removed photos' },
-  { id: 'embed', label: 'Search vectors and thumbnails' },
-  { id: 'faces', label: 'Detect faces' },
-  { id: 'cluster', label: 'Match faces to people' },
-  { id: 'derive', label: 'Places, events and questions' },
-  { id: 'publish', label: 'Publish to the NAS' }
-]
+const LABELS: Record<ArchiveUpdateStage, string> = {
+  scan: 'Find new and removed photos',
+  embed: 'Search vectors and thumbnails',
+  faces: 'Detect faces',
+  cluster: 'Match faces to people',
+  derive: 'Places, events and questions',
+  export: 'Back up names (names.json)',
+  publish: 'Publish to the NAS'
+}
+const ALL_STAGES = Object.keys(LABELS) as ArchiveUpdateStage[]
 
 export function ArchiveUpdateView(): JSX.Element {
   const { archiveUpdateStatus: status, setArchiveUpdateStatus, setPhase } = useAppStore()
@@ -17,9 +19,9 @@ export function ArchiveUpdateView(): JSX.Element {
   useIpcEvent(api().onArchiveUpdateStatus, setArchiveUpdateStatus)
 
   const running = status?.state === 'running'
-  const stageTotal = status?.stageTotal ?? STAGES.length
-  const shown = STAGES.slice(0, stageTotal)
-  const current = status?.stageIndex ?? 0
+  // The run says which stages it has (export and publish depend on its config).
+  const shown = status?.plan ?? ALL_STAGES
+  const current = status?.stage ? shown.indexOf(status.stage) + 1 : 0
 
   function start(): void {
     setArchiveUpdateStatus({ state: 'running' })
@@ -39,8 +41,8 @@ export function ArchiveUpdateView(): JSX.Element {
           <p>
             Adds the photos now in the archive folders to the photo archive: finds new and
             removed files, builds search vectors and thumbnails, detects faces and matches them to
-            people already named, works out places and events, and publishes the result to the
-            NAS viewer.
+            people already named, works out places and events, backs up the names, and publishes
+            the result to the NAS viewer. Run it after naming faces too.
           </p>
           <p style={{ fontSize: 12, opacity: 0.7 }}>
             Look through the new photos first and delete any you don&apos;t want - what is in
@@ -63,10 +65,10 @@ export function ArchiveUpdateView(): JSX.Element {
               const mark = doneStage ? '✓' : failedHere ? '✗' : active ? '…' : ''
               return (
                 <li
-                  key={s.id}
+                  key={s}
                   style={{ opacity: doneStage || active || failedHere ? 1 : 0.5, marginBottom: 2 }}
                 >
-                  {s.label} <strong>{mark}</strong>
+                  {LABELS[s]} <strong>{mark}</strong>
                 </li>
               )
             })}

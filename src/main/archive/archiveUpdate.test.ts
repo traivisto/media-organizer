@@ -79,6 +79,11 @@ describe('applyLine', () => {
     expect(s).toMatchObject({ state: 'error', error: 'faces did not finish' })
   })
 
+  it('takes the stage list the run announces', () => {
+    const s = applyLine(start, ev({ plan: ['scan', 'derive', 'export'] }))
+    expect(s.plan).toEqual(['scan', 'derive', 'export'])
+  })
+
   it('records new year folders announced before the stages', () => {
     const s = applyLine(start, ev({ added_roots: ['\\\\NAS\\Pictures\\2027'] }))
     expect(s.addedRoots).toEqual(['\\\\NAS\\Pictures\\2027'])

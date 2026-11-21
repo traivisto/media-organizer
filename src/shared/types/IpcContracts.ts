@@ -175,9 +175,17 @@ export interface ExecuteProgressEvent {
   currentPath?: string
 }
 
-/** The stages of `mediaidx update`, in the order it runs them. `publish` is left out when
- *  the photo archive has nowhere configured to publish to. */
-export type ArchiveUpdateStage = 'scan' | 'embed' | 'faces' | 'cluster' | 'derive' | 'publish'
+/** The stages of `mediaidx update`, in the order it runs them. `export` and `publish` are
+ *  left out when the photo archive has no names_export / publish_to configured; the run
+ *  announces its own list first (`plan`). */
+export type ArchiveUpdateStage =
+  | 'scan'
+  | 'embed'
+  | 'faces'
+  | 'cluster'
+  | 'derive'
+  | 'export'
+  | 'publish'
 
 export interface ArchiveUpdateSummary {
   newPhotographs: number
@@ -192,6 +200,8 @@ export interface ArchiveUpdateSummary {
 
 export interface ArchiveUpdateStatusEvent {
   state: 'running' | 'done' | 'error' | 'cancelled'
+  /** The stages this run goes through, as mediaidx announced them. */
+  plan?: ArchiveUpdateStage[]
   stage?: ArchiveUpdateStage
   stageIndex?: number
   stageTotal?: number

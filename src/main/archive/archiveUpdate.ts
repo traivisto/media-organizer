@@ -31,6 +31,7 @@ export function resolveMediaidx(configured?: string): string | undefined {
 }
 
 type MediaidxEvent = {
+  plan?: ArchiveUpdateStage[]
   stage?: ArchiveUpdateStage
   index?: number
   total?: number
@@ -89,6 +90,7 @@ export function applyLine(
   if (!event) return { ...status, detail: line.trim() }
 
   if (event.added_roots && !event.done) return { ...status, addedRoots: event.added_roots }
+  if (event.plan) return { ...status, plan: event.plan }
   if (event.stage) {
     return {
       ...status,
