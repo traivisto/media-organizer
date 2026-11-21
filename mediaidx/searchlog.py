@@ -90,8 +90,38 @@ def read(paths) -> tuple[list[dict], list[str]]:
     return out, missing
 
 
+REPEAT_WITHIN = 10 * 60      # seconds
+
+
+def collapse(entries: list[dict]) -> list[dict]:
+    """One search, however often its first page was shown.
+
+    Coming back from a photograph to the results, or reloading, asks for the
+    same first page again, and the server cannot tell that from a new search.
+    The same words and filters from the same address within ten minutes of
+    the last time are counted once. Done when reading, so the log itself keeps
+    every request.
+    """
+    out, last = [], {}
+    for e in entries:
+        key = (e.get("where"), e.get("ip"), e.get("q", "").casefold(),
+               json.dumps(e.get("filters") or {}, sort_keys=True))
+        try:
+            t = datetime.fromisoformat(e["t"]).timestamp()
+        except (KeyError, ValueError):
+            out.append(e)
+            continue
+        if key in last and t - last[key] <= REPEAT_WITHIN:
+            last[key] = t
+            continue
+        last[key] = t
+        out.append(e)
+    return out
+
+
 def summary(entries: list[dict], *, top: int = 15) -> dict:
     """What `mediaidx searches` prints, worked out apart from the printing."""
+    entries = collapse(entries)
     norm = lambda e: e.get("q", "").casefold() or "(filters only)"
     return {
         "count": len(entries),

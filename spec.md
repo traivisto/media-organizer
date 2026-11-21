@@ -1783,6 +1783,13 @@ into a folder made over SMB, every other mount being read-only).
   chips carry, and the description left over; filters; how many photographs it found; and whether
   that was a ranking.
 - **A log that cannot be written never stops a search.** It is said once, on stderr.
+- **Coming back is not searching again.** Returning from a photograph to its results, or
+  reloading, asks for the same first page, which the server cannot tell from a new search (seen on
+  the first evening: the same words twelve seconds apart). The log keeps every request; when it is
+  read, the same words and filters from the same address within ten minutes of the last time are
+  counted once.
+- **Verified on the NAS 2026-11-21:** the container writes `logs/`, and a phone at home is logged
+  under its own address (192.168.86.240), not the NAS's.
 - **`mediaidx searches`** reads the PC's log and the viewing copy's (`<publish_to>/logs`) and prints
   totals, the addresses, the most searched, those that found nothing, those in which nothing was
   read as a person, place, event or date — where a name the archive does not know, or one

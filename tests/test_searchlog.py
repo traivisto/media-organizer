@@ -77,8 +77,10 @@ def test_a_log_that_cannot_be_written_does_not_stop_the_search(library, tmp_path
 
 
 def test_the_summary_finds_what_went_badly():
+    # From different devices, so none of them is a return to the same results.
+    n = iter(range(10))
     e = lambda q, found, **kw: {"t": "2026-11-21T10:00:00", "where": "nas",
-                                "ip": "1.2.3.4", "q": q, "found": found,
+                                "ip": f"1.2.3.{next(n)}", "q": q, "found": found,
                                 "text": kw.get("text", ""), "ranked": kw.get("ranked", False),
                                 "people": kw.get("people", []), "places": [],
                                 "events": [], "dates": [], "mode": []}
@@ -89,6 +91,20 @@ def test_the_summary_finds_what_went_badly():
     assert s["common"][0] == ("emmi", 2)
     assert s["nothing"] == [("emmi 1998", 1)]
     assert s["unread"] == [("anskun", 1)]
+
+
+def test_coming_back_to_the_results_is_not_a_second_search():
+    """Seen on the NAS on the first evening: the same words twelve seconds
+    apart, from returning to the results from a photograph."""
+    e = lambda t, q, ip="1.2.3.4": {"t": f"2026-11-21T{t}", "where": "nas",
+                                    "ip": ip, "q": q, "found": 8, "filters": {}}
+    s = searchlog.summary([e("18:12:46", "totte tommi only"),
+                           e("18:12:58", "Totte Tommi only"),
+                           e("18:20:00", "totte tommi only"),     # still browsing it
+                           e("18:20:05", "totte tommi only", ip="5.6.7.8"),
+                           e("19:00:00", "totte tommi only")])    # an hour on: again
+    assert s["count"] == 3
+    assert s["common"] == [("totte tommi only", 3)]
 
 
 def test_searches_reads_the_pc_log_and_the_nas_one(tmp_path):

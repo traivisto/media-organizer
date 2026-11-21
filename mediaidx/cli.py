@@ -945,7 +945,7 @@ def cmd_searches(args) -> int:
     print("\nlatest")
     for e in s["recent"]:
         read = [*e.get("people", []), *e.get("places", []), *e.get("events", []),
-                *e.get("dates", [])]
+                *e.get("dates", []), *e.get("mode", [])]
         how = (" -> " + ", ".join(read) if read else "") + (
             f" + \"{e['text']}\"" if e.get("text") and read else "")
         found = "?" if e.get("found") is None else f"{e['found']:,}"
