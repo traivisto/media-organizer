@@ -281,6 +281,42 @@ def test_a_rebuild_keeps_the_names(cfg):
         "SELECT COUNT(*) FROM faces WHERE person_id = ?", (pid,)).fetchone()[0] == 12
 
 
+def test_a_rebuild_restores_a_correction_even_as_noise(cfg):
+    """A hand correction survives a rebuild that calls its face noise.
+
+    Regression for a bug found 2026-11-22 on the real library: the
+    restoration loop sat inside `for label in ...: if label < 0: continue`,
+    so a corrected face HDBSCAN now labelled noise was skipped before the
+    correction was ever applied -- 100 of 114 pre-existing corrections were
+    silently lost in one rebuild. A lone face with nothing nearby is always
+    noise (the module docstring above), which is exactly the case to prove
+    this against.
+    """
+    con = _con()
+    _seed(con, np.random.default_rng(17))
+    lone = _unit(np.random.default_rng(99).normal(size=faces.DIM))
+    _add_faces(con, [lone], start_asset=9000)
+    cluster.build(con, cfg)
+
+    h = f"{9000:064d}"
+    pid = cluster.person_id_for(con, "Lonely")
+    con.execute(
+        "UPDATE faces SET person_id = ? WHERE asset_id = "
+        "(SELECT id FROM assets WHERE content_hash = ?)", (pid, h))
+    corrections.record(con, "person", h, "Lonely", face_idx=0,
+                       face_bbox=(0.1, 0.1, 0.2, 0.2))
+
+    cluster.build(con, cfg, rebuild=True)
+
+    row = con.execute(
+        """SELECT f.person_id, f.cluster_id, p.name FROM faces f
+             JOIN assets a ON a.id = f.asset_id
+             LEFT JOIN persons p ON p.id = f.person_id
+            WHERE a.content_hash = ?""", (h,)).fetchone()
+    assert row["name"] == "Lonely"
+    assert row["cluster_id"] is None      # noise, same shape as assign()'s anchor matches
+
+
 def test_a_first_build_leaves_nothing_named(cfg):
     con = _con()
     _seed(con, np.random.default_rng(15))

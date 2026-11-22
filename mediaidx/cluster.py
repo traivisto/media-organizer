@@ -111,9 +111,18 @@ def build(con, cfg, *, rebuild: bool = False) -> ClusterStats:
             "SELECT id, person_id FROM faces WHERE person_id IS NOT NULL")}
 
     # A face somebody corrected by hand does not vote, and has its answer put
-    # back after the count (spec 4.7). It is by definition in the minority of
-    # the cluster it was wrongly placed in -- that is what made it wrong -- so
-    # letting it vote would only lose it, every single rebuild.
+    # back after the count (spec 4.7) -- unconditionally, not only when it
+    # lands in a real cluster. It is by definition in the minority of
+    # whatever it was wrongly placed in before -- that is what made it
+    # wrong -- and HDBSCAN calling it noise this time is no different: a
+    # measured 2026-11-22 rebuild restored only 14 of 114 pre-existing
+    # corrections, because the restoration used to sit inside `for label in
+    # ...: if label < 0: continue`, so a corrected face HDBSCAN now calls
+    # noise never reached it at all. The fix below runs over every `fixed`
+    # face once, after clustering, regardless of its label -- a corrected
+    # face that is noise ends up exactly like `assign`'s anchor-only
+    # matches (named, no cluster_id), which is the same "named without
+    # being evidence for anyone else" shape used there.
     from . import corrections as corrections_mod
     fixed = corrections_mod.corrected_face_ids(con)
     for fid in fixed:
@@ -156,12 +165,16 @@ def build(con, cfg, *, rebuild: bool = False) -> ClusterStats:
             con.executemany(
                 "UPDATE faces SET cluster_id = ?, person_id = ? WHERE id = ?",
                 [(cid, person_id, int(f)) for f in members])
-            for f in members:
-                if int(f) in fixed:
-                    con.execute("UPDATE faces SET person_id = ? WHERE id = ?",
-                                (fixed[int(f)], int(f)))
             st.clusters += 1
             st.clustered += len(members)
+
+        # Every hand correction, restored regardless of what label HDBSCAN
+        # gave its face -- including noise, which the per-cluster loop above
+        # never visits. See the comment where `fixed` is built.
+        con.executemany(
+            "UPDATE faces SET person_id = ? WHERE id = ?",
+            [(pid, fid) for fid, pid in fixed.items()])
+
         con.execute("COMMIT")
     except BaseException:
         con.execute("ROLLBACK")
