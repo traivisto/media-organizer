@@ -1909,6 +1909,19 @@ def create_app(cfg) -> FastAPI:
                 "a drive that is not answering.</p>", status_code=503)
         kind, _ = mimetypes.guess_type(path)
         name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+
+        # Almost no browser renders HEIC/HEIF inline -- no OS codec, no
+        # plugin, Chrome and Firefox never learned either -- so the one
+        # request this page makes to "see it" would otherwise just save the
+        # file instead of showing it. "Download it" still sends the
+        # original byte for byte; this is only for looking at it here.
+        if not download and kind in ("image/heic", "image/heif"):
+            im = images.load(on_disk(path))   # upright, RGB -- exif_transpose
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=92)
+            buf.seek(0)
+            return StreamingResponse(buf, media_type="image/jpeg")
+
         return FileResponse(
             on_disk(path), media_type=kind or "image/jpeg",
             filename=name if download else None)
