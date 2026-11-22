@@ -467,12 +467,15 @@ button.vbtn {{ background:transparent; border:0; font:inherit; filter:none; }}
   background:#3b82f6; }}
 .progress.run {{ animation:grow var(--slide, 5s) linear forwards; }}
 @keyframes grow {{ from {{ width:0; }} to {{ width:100%; }} }}
+/* z-index:2 keeps these above the photo itself (z-index:1) -- since the
+   picture now runs the full height of the stage, a tall one can reach
+   exactly where the caption sits, and without this it painted over it. */
 .caption {{ position:absolute; left:24px; right:260px; bottom:12px; color:#e9ecef;
   font-size:14px; text-shadow:0 1px 3px rgba(0,0,0,.9); white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; opacity:0; transition:opacity .4s;
-  pointer-events:none; }}
+  pointer-events:none; z-index:2; }}
 .nas {{ position:absolute; right:16px; bottom:9px; padding:5px 10px; border-radius:8px;
-  background:rgba(0,0,0,.65); color:#fbbf24; font-size:12.5px; }}
+  background:rgba(0,0,0,.65); color:#fbbf24; font-size:12.5px; z-index:2; }}
 body.playing header, body.playing .side {{ display:none; }}
 body.playing .viewer {{ min-height:100vh; }}
 body.playing .stage {{ position:sticky; top:0; height:100vh; overflow:hidden; }}
