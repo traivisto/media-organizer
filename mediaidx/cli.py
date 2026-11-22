@@ -683,7 +683,7 @@ def cmd_people(args) -> int:
     cfg, con = _open(args, create=False)
     rows = con.execute(
         """SELECT p.name, COUNT(DISTINCT c.id) AS clusters,
-                  COUNT(f.id) AS faces,
+                  COUNT(DISTINCT f.id) AS faces,
                   COUNT(DISTINCT f.asset_id) AS photos
            FROM persons p
            LEFT JOIN face_clusters c ON c.person_id = p.id
