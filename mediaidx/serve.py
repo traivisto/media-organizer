@@ -475,9 +475,18 @@ button.vbtn {{ background:transparent; border:0; font:inherit; filter:none; }}
   background:rgba(0,0,0,.65); color:#fbbf24; font-size:12.5px; }}
 body.playing header, body.playing .side {{ display:none; }}
 body.playing .viewer {{ min-height:100vh; }}
-body.playing .stage {{ position:sticky; top:0; height:100vh; }}
+body.playing .stage {{ position:sticky; top:0; height:100vh; overflow:hidden; }}
 body.playing .pic {{ padding-bottom:40px; }}
 body.playing .pic img {{ max-height:100%; }}
+/* Playing, the toolbar and caption float over the stage rather than pushing
+   the picture down, so the blur behind it is one sheet from edge to edge --
+   otherwise their reserved rows stayed the stage's plain colour, which read
+   as a bar above and below the photo instead of the fill it was meant to be. */
+.stage > img.stagebg {{ display:none; }}
+body.playing .stage > img.stagebg {{ display:block; position:absolute; inset:0;
+  width:100%; height:100%; object-fit:cover; filter:blur(60px) brightness(.5);
+  transform:scale(1.15); z-index:-1; }}
+body.playing .pic img.bg {{ display:none; }}
 body.playing .caption {{ opacity:.92; }}
 body.playing .vbar {{ transition:opacity .4s; }}
 body.playing.idle .vbar, body.playing.idle .arrow {{ opacity:0 !important;
@@ -2383,6 +2392,7 @@ def create_app(cfg) -> FastAPI:
     SLIDE_JS = """<script>(function(){
 var st=document.querySelector('.stage');if(!st||!st.dataset.back)return;
 var img=document.querySelector('.pic img:not(.bg)'),bg=document.querySelector('.pic img.bg'),
+sbg=document.querySelector('.stage > img.stagebg'),
 cap=document.getElementById('cap'),prog=document.getElementById('prog'),nas=document.getElementById('nas'),
 btn=document.getElementById('play'),speed=document.getElementById('speed'),
 sharp=document.getElementById('sharp'),pos=document.querySelector('.vbar .pos');
@@ -2417,7 +2427,8 @@ function fill(){
   queue=queue.concat(d.slides);warm(queue[0]);})
  .catch(function(){fetching=false;});}
 function show(s){
- cur=s;img.src=s.sharp||'/thumb/m/'+s.hash;if(bg)bg.src='/thumb/m/'+s.hash;cap.textContent=s.caption;
+ cur=s;img.src=s.sharp||'/thumb/m/'+s.hash;
+ if(bg)bg.src='/thumb/m/'+s.hash;if(sbg)sbg.src='/thumb/m/'+s.hash;cap.textContent=s.caption;
  if(s.at&&pos)pos.textContent=s.at.toLocaleString('en')+' of '+s.total.toLocaleString('en');
  history.replaceState(null,'',url(s)+'&play=1');
  fetchSharp(s);warm(queue[0]);fill();}
@@ -2691,6 +2702,7 @@ if(st.dataset.play==='1')play();
             f'<div class="paths">{paths}</div></details>')
         body = (
             f'<div class="viewer"><section class="stage"{stage}>'
+            f'<img class="stagebg" src="/thumb/m/{h}" alt="" aria-hidden="true">'
             '<div class="progress" id="prog"></div><div class="vbar">'
             f'<a class="vbtn" id="go-back" '
             f'href="{html.escape(_to_card(back, asset_id, at))}" '
