@@ -2528,6 +2528,17 @@ if(st.dataset.play==='1')play();
         warn = ('<div class="warn">Its dates disagree &mdash; see '
                 f'{"Details" if ro else "Edit &amp; details"}</div>'
                 if a["conflict_note"] and ("date", -1) not in fixed else "")
+        # Not shown on the face chip itself -- the point was never to draw
+        # the eye to a guess, just to leave it findable (age_pass.py: a
+        # rough estimate from the cached thumbnail, for ordering, not a fact).
+        age_rows = con.execute(
+            """SELECT p.name, fa.age FROM faces fa
+                 LEFT JOIN persons p ON p.id = fa.person_id
+                WHERE fa.asset_id = ? AND fa.age IS NOT NULL ORDER BY fa.idx""",
+            (asset_id,)).fetchall()
+        ages = ", ".join(f'{html.escape(r["name"] or "not named")} ~{r["age"]}'
+                         for r in age_rows)
+
         rows = "".join([
             _fact("taken", html.escape(when), note=date_note,
                   edit=(_undo_form(asset_id, "date", back)
@@ -2538,6 +2549,7 @@ if(st.dataset.play==='1')play();
             _event_row(con, asset_id),
             _fact("source", html.escape(a["source_hint"] or "")),
             _fact("conflict", html.escape(a["conflict_note"] or "")),
+            _fact("ages", ages, note="a rough guess from the face, not a fact"),
             _fact("hash", h[:24] + "&hellip;"),
         ])
 
