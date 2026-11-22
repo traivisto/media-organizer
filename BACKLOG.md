@@ -97,7 +97,7 @@ remembered - when an iCloud sync starts (the note under the Apple ID field
 on the start screen) and while ICloudSyncView is in `awaitingAuth`, a short
 "Where do I get the code?" with the steps above.
 
-## Merge with Kuva-arkisto into one
+## Merge with Kuva-arkisto into one (DONE 2026-11-22)
 
 Noted 2026-11-21: this app and Kuva-arkisto (the photo archive, `mediaidx`,
 in the `Media classifier` project beside this one) are one workflow - fetch
@@ -105,8 +105,9 @@ and organize here, look through in Explorer, then index and publish to the
 NAS viewer there. Today they are linked only by the *Update photo archive*
 screen, which runs `mediaidx update --events`.
 
-Not designed yet. Questions to settle first: one repository, or one
-application as well; and the languages - this is Electron/TypeScript,
-Kuva-arkisto is Python (and needs the GPU for faces), so a single
-application means either a Python backend behind this UI, or moving the
-fetch-and-organize steps into Kuva-arkisto and its web UI.
+**Resolved 2026-11-22: one repository, two applications.** Kuva-arkisto
+moved in as `archive/` via `git subtree add --prefix=archive`, keeping its
+full commit history. This repo's identity (name, GitHub remote, git
+identity) stays as the home. The Electron/TypeScript vs Python split stays
+exactly as it is -- this app still calls `mediaidx update` as a subprocess
+and reads its JSON-lines stdout, unchanged. No Python backend, no rewrite.
