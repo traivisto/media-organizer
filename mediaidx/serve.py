@@ -476,12 +476,18 @@ button.vbtn {{ background:transparent; border:0; font:inherit; filter:none; }}
 body.playing header, body.playing .side {{ display:none; }}
 body.playing .viewer {{ min-height:100vh; }}
 body.playing .stage {{ position:sticky; top:0; height:100vh; overflow:hidden; }}
-body.playing .pic {{ padding-bottom:40px; }}
+/* Playing, the toolbar floats over the picture instead of pushing it down,
+   so the photo itself runs from the top of the screen to the bottom -- not
+   only its blurred backdrop. A scrim behind the icons keeps them readable
+   over a bright photo; the caption at the bottom already had its own
+   text-shadow for the same reason. */
+body.playing .vbar {{ position:absolute; top:0; left:0; right:0; z-index:2;
+  background:linear-gradient(rgba(0,0,0,.5), rgba(0,0,0,0)); }}
+body.playing .pic {{ padding-bottom:0; }}
 body.playing .pic img {{ max-height:100%; }}
-/* Playing, the toolbar and caption float over the stage rather than pushing
-   the picture down, so the blur behind it is one sheet from edge to edge --
-   otherwise their reserved rows stayed the stage's plain colour, which read
-   as a bar above and below the photo instead of the fill it was meant to be. */
+/* A second, stage-wide blurred backdrop, so the corners the full-height
+   photo doesn't reach (it keeps its own aspect ratio) are never the stage's
+   plain colour either. */
 .stage > img.stagebg {{ display:none; }}
 body.playing .stage > img.stagebg {{ display:block; position:absolute; inset:0;
   width:100%; height:100%; object-fit:cover; filter:blur(60px) brightness(.5);
