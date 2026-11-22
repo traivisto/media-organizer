@@ -134,6 +134,13 @@ def test_a_birth_year_rules_out_what_came_before(two):
     assert _ids(rows) == [new] and old not in _ids(rows)
 
 
+def test_a_birth_year_before_1970_works(two):
+    lib, e, _, emmi, _ = two
+    fid = lib.photo([_at(e, 0.3)], year=1975)
+    findmore.set_born(lib.con, emmi, 1944)
+    assert _ids(findmore.candidates(lib.con, emmi)[0]) == [fid]
+
+
 def test_yes_makes_a_sure_face_that_ranks_the_next_page(two):
     lib, e, _, emmi, _ = two
     # Out of reach of the original sure faces, but close to a face that will

@@ -22,6 +22,8 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 
+EPOCH = datetime(1970, 1, 1)
+
 import numpy as np
 
 from . import cluster, corrections
@@ -89,7 +91,11 @@ def candidates(con, person_id: int, mode: str = "new", *, limit: int = PAGE,
     if mode == "new":
         holds = {meta[i]["asset_id"] for i in sure if i in meta}
         year = born(con, person_id)
-        floor = (int(datetime(year, 1, 1).timestamp()) if year else None)
+        # Not .timestamp(): on Windows it raises OSError for any date before
+        # 1970, and a grandparent's birth year is exactly that.  A few hours'
+        # zone difference is nothing against a whole-year floor.
+        floor = (int((datetime(year, 1, 1) - EPOCH).total_seconds())
+                 if year else None)
 
         def wanted(fid: int) -> bool:
             m = meta.get(fid)
