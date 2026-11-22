@@ -1,0 +1,49 @@
+# Kuva-arkisto's viewing copy as a Container Manager project (spec 8.3).
+#
+# Lives in /volume1/docker/kuva-arkisto beside two folders `mediaidx publish`
+# fills from the computer that keeps the archive (README.md says how to set
+# it up):
+#   app/   the application, from which the image is built
+#   data/  photos.db, thumbs/, textmodel/ and config.toml
+#
+# Everything it is given is read-only, and so is the container itself, with
+# one exception: logs/, where it writes the search log (spec 8.7).
+
+services:
+  kuva-arkisto:
+    build:
+      context: ./app
+      dockerfile: deploy/nas/Dockerfile
+    # Named after the application inside it, from the .env publish writes, so
+    # that Build makes a new image whenever the application has changed and
+    # not otherwise.
+    image: kuva-arkisto:${KUVA_APP_VERSION:-viewer}
+    container_name: kuva-arkisto
+    restart: unless-stopped
+    ports:
+      - "8710:8710"
+    volumes:
+      - ./data:/data:ro
+      - /volume1/Media/Pictures:/photos:ro
+      - ./logs:/logs
+    environment:
+      - TZ=Europe/Helsinki
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Root inside, with little root can do: every right is dropped except
+    # reading past file permissions, which the NAS's own ACLs on the Pictures
+    # share would otherwise decide for it, and writing past them, for logs/ --
+    # a folder made over SMB that root would not otherwise be let into. Every
+    # other mount and the container itself are read-only, so logs/ is the only
+    # place that second right reaches.
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    # The text model holds about a gigabyte while somebody is searching (spec
+    # 7.6). The limit keeps a fault from taking memory the NAS itself needs.
+    mem_limit: 1800m

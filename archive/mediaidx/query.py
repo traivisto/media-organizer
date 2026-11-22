@@ -1,0 +1,636 @@
+"""Turning a typed phrase into search criteria (spec §7.1).
+
+The search box takes one string and the user is told nothing about how it works.
+This module is where that string becomes a set of chips -- a person, a place, an
+event, a date range -- plus whatever is left over, which is the description the
+vector search actually ranks by.
+
+Three rules do most of the work:
+
+* **Longest span first.** "New York" is looked up before "New", and "Kesa 2019"
+  before "2019", so the most specific reading of a phrase wins and the words it
+  used are not available to anything else.
+* **A person is never outweighed.** A name the user gave is an assertion; a
+  gazetteer hit is a guess, and no number of photographs makes the guess the
+  better reading. 22 of this library's 79 people share a name with the
+  gazetteer, several of them holding very few pictures.
+* **Between an event and a place, the heavier reading wins**, those two being
+  the same kind of evidence -- both are what a folder label became. Where they
+  are level the event stays on top, since a tie is the signature of a place
+  derived from that very label and holding the same photographs: `Kia`, `Loon`
+  and `Vaja` are all on record as folder labels wrongly resolved to towns
+  (§6.3), and each ties exactly.
+
+See `_resolve_span` for the measurements all of that rests on.
+
+Nothing here reads a photograph or runs a model. Resolution is table lookup, so
+it costs a few hundred microseconds and gives the same answer every time; that
+is the whole reason the box does not send the query to a language model first.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from . import cluster
+from . import places as places_mod
+
+# How many words a single chip may span. Place names run to three ("Isle of
+# Wight"); a range of dates to five ("june 2016 to february 2018").
+MAX_SPAN = 5
+
+# The bound on a year in a *query*, which is not the bound on a date in a file
+# (§5.1). A query for 1980 is a question about an archive that starts in 1998,
+# and answering "no photographs" is better than treating it as a description.
+MIN_YEAR = 1900
+MAX_YEAR = 2100
+
+PREFIXES = ("person", "place", "event", "date", "text")
+
+# Words that join criteria together and describe nothing on their own. They are
+# dropped from the remainder *only* when something else resolved, so "Tommi and
+# Emmi" asks an exact question about two people rather than ranking the library
+# against the word "and", while "a day at the beach" is left exactly as typed --
+# there the small words are the description's own grammar and the encoder wants
+# them. Finnish carries most of this in case endings rather than in words, so
+# the Finnish half of the list is short by nature.
+_JOINERS = {"and", "or", "with", "the", "a", "an", "of", "in", "at", "on",
+            "from", "to", "for", "ja", "tai", "seka", "kanssa"}
+
+# Who else may be in it (§7.4). "only" asks for the people named and nobody
+# else, and means nothing without somebody named -- `only child` stays a
+# description. "without" binds to the name after it and to nothing else, so
+# `without shoes` is left exactly as typed.
+ONLY_WORDS = {"only", "just", "vain", "pelkastaan", "ainoastaan"}
+NOT_WORDS = {"without", "not", "except", "ilman", "ei", "paitsi"}
+# Asking for no people at all, which needs no name. Matched after norm(), so
+# `ei ihmisiä` is written here without its umlauts.
+NOBODY_WORDS = {"nobody", "no one", "no people", "ei ihmisia", "ilman ihmisia",
+                "ei ketaan"}
+
+_PUNCT = " \t\r\n,.;:!?()[]{}<>\"'’“”"
+
+
+def norm(s: str) -> str:
+    """The match key, shared with the gazetteer (places.norm_name).
+
+    Diacritics are stripped, which conflates a and a-umlaut. Finnish makes them
+    different letters, but a query typed without umlauts has to work, and the
+    span has to match end to end anyway.
+    """
+    s = unicodedata.normalize("NFKD", s.strip().casefold())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.split())
+
+
+# --------------------------------------------------------------------------
+# Dates
+# --------------------------------------------------------------------------
+
+# Written without diacritics because they are matched against norm() output.
+_MONTHS_FI = ["tammikuu", "helmikuu", "maaliskuu", "huhtikuu", "toukokuu",
+              "kesakuu", "heinakuu", "elokuu", "syyskuu", "lokakuu",
+              "marraskuu", "joulukuu"]
+_MONTHS_EN = ["january", "february", "march", "april", "may", "june", "july",
+              "august", "september", "october", "november", "december"]
+
+# Finnish inflects the month onto the noun -- "kesakuussa", "heinakuun" -- so
+# these are matched as stems rather than as whole words. The English three
+# letter abbreviations are listed separately because "mar" is not a prefix
+# anybody would want matching "march" by accident in a description.
+_MONTH_ABBR_EN = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+                  "sep", "oct", "nov", "dec"]
+
+# First and last month, inclusive. Winter runs into the following year, which
+# the offset in the third position records.
+_SEASONS = {
+    "kevat": (3, 5, 0), "spring": (3, 5, 0),
+    "kesa": (6, 8, 0), "summer": (6, 8, 0),
+    "syksy": (9, 11, 0), "autumn": (9, 11, 0), "fall": (9, 11, 0),
+    "talvi": (12, 2, 1), "winter": (12, 2, 1),
+}
+
+
+def _month_of(word: str) -> int | None:
+    """1-12 for a month word, allowing Finnish inflection. Longest first."""
+    for table in (_MONTHS_FI, _MONTHS_EN):
+        for i, name in enumerate(table):
+            if word.startswith(name):
+                return i + 1
+    for i, abbr in enumerate(_MONTH_ABBR_EN):
+        if word == abbr:
+            return i + 1
+    return None
+
+
+def _season_of(word: str) -> tuple[int, int, int] | None:
+    """Months for a season word. Tried after months: kesakuu is not kesa."""
+    for stem, months in _SEASONS.items():
+        if word.startswith(stem):
+            return months
+    return None
+
+
+def _span_epoch(y1: int, m1: int, y2: int, m2: int) -> tuple[int, int]:
+    """Inclusive month range as [start, end) in epoch seconds, local time."""
+    start = datetime(y1, m1, 1)
+    end = (datetime(y2 + 1, 1, 1) if m2 == 12
+           else datetime(y2, m2 + 1, 1))
+    return int(start.timestamp()), int(end.timestamp())
+
+
+def _year_ok(y: int) -> bool:
+    return MIN_YEAR <= y <= MAX_YEAR
+
+
+def parse_date(span: str) -> tuple[int, int, str] | None:
+    """(start, end, label) for a date expression, or None.
+
+    Understands a bare year, ISO year-month and year-month-day, month/year in
+    either order with either separator, a year range, a month or season
+    named in Finnish or English beside a year, and a range between any two.
+    """
+    s = norm(span)
+    if not s:
+        return None
+
+    # 2019-2021, before 2019-06: a four digit second half is a year, not a month
+    m = re.fullmatch(r"(\d{4})\s*[-–]\s*(\d{4})", s)
+    if m:
+        y1, y2 = int(m[1]), int(m[2])
+        if _year_ok(y1) and _year_ok(y2) and y1 <= y2:
+            a, b = _span_epoch(y1, 1, y2, 12)
+            return a, b, f"{y1}–{y2}"
+
+    # A range between any two of the forms below: `june 2016 to february
+    # 2018`, `kesäkuu 2016 – helmikuu 2018`, `2016-06..2018-02`. It runs from
+    # the start of the first to the end of the second, so a range of months
+    # takes the whole of both. A bare hyphen does not separate -- `2016-06` is
+    # one date by itself -- except between two years, above.
+    for sep in (" to ", " till ", " until ", " - ", " – ", " — ", "–", "—", ".."):
+        if s.count(sep) != 1:
+            continue
+        a, b = (parse_date(side) for side in s.split(sep))
+        if a and b and a[0] < b[1]:
+            return a[0], b[1], f"{a[2]} – {b[2]}"
+
+    m = re.fullmatch(r"(\d{4})", s)
+    if m and _year_ok(int(m[1])):
+        y = int(m[1])
+        a, b = _span_epoch(y, 1, y, 12)
+        return a, b, str(y)
+
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})", s)
+    if m and _year_ok(int(m[1])) and 1 <= int(m[2]) <= 12:
+        y, mo = int(m[1]), int(m[2])
+        a, b = _span_epoch(y, mo, y, mo)
+        return a, b, f"{y}-{mo:02d}"
+
+    m = re.fullmatch(r"(\d{1,2})[/.](\d{4})", s)
+    if m and _year_ok(int(m[2])) and 1 <= int(m[1]) <= 12:
+        mo, y = int(m[1]), int(m[2])
+        a, b = _span_epoch(y, mo, y, mo)
+        return a, b, f"{y}-{mo:02d}"
+
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
+    if m and _year_ok(int(m[1])) and 1 <= int(m[2]) <= 12:
+        y, mo, d = int(m[1]), int(m[2]), int(m[3])
+        try:
+            start = datetime(y, mo, d)
+        except ValueError:
+            return None
+        return (int(start.timestamp()),
+                int(start.timestamp()) + 86400,
+                f"{y}-{mo:02d}-{d:02d}")
+
+    # A word beside a year, in either order: "kesa 2019", "2019 heinakuu"
+    parts = s.split()
+    if len(parts) == 2:
+        for word, other in ((parts[0], parts[1]), (parts[1], parts[0])):
+            if not re.fullmatch(r"\d{4}", other) or not _year_ok(int(other)):
+                continue
+            y = int(other)
+            mo = _month_of(word)
+            if mo:
+                a, b = _span_epoch(y, mo, y, mo)
+                return a, b, f"{word} {y}"
+            season = _season_of(word)
+            if season:
+                m1, m2, carry = season
+                a, b = _span_epoch(y, m1, y + carry, m2)
+                return a, b, f"{word} {y}"
+    return None
+
+
+# --------------------------------------------------------------------------
+# Terms
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Term:
+    """One chip: what it is, what it says, and the words it consumed."""
+    kind: str                       # person | place | event | date | mode
+    label: str
+    span: str                       # as typed, so the chip can be removed again
+    ref_id: int | None = None       # persons.id, places.id, events.id
+    start: int | None = None        # date only, epoch seconds
+    end: int | None = None
+    held: int | None = None         # place only: photographs beneath it
+    also: tuple = field(default=(), compare=False)   # other readings of the span
+    negated: bool = False           # person only: asked *not* to be in it
+
+    @property
+    def sure(self) -> bool:
+        """Whether this reading is applied, or only offered (§7.1)."""
+        if self.kind != "place" or self.held is None:
+            return True
+        return self.held >= PLACE_SURE_ASSETS
+
+
+@dataclass
+class Resolved:
+    terms: list
+    text: str                       # the remainder, for the encoder
+    raw: str = ""
+    offers: list = field(default_factory=list)   # readings not taken; see Term.sure
+
+    @property
+    def people(self):
+        """Everyone asked to be in it."""
+        return [t for t in self.terms if t.kind == "person" and not t.negated]
+
+    @property
+    def excluded(self):
+        """Everyone asked not to be: `without Emmi`."""
+        return [t for t in self.terms if t.kind == "person" and t.negated]
+
+    @property
+    def mode(self) -> str | None:
+        """`only`, `nobody`, or None for the ordinary reading, where the people
+        named are in it and anybody else may be too. Asking for nobody outranks
+        asking for only them, being the narrower of the two."""
+        said = {t.label for t in self.terms if t.kind == "mode"}
+        return "nobody" if "nobody" in said else "only" if "only" in said else None
+
+    @property
+    def places(self):
+        return [t for t in self.terms if t.kind == "place"]
+
+    @property
+    def events(self):
+        return [t for t in self.terms if t.kind == "event"]
+
+    @property
+    def dates(self):
+        return [t for t in self.terms if t.kind == "date"]
+
+    def without(self, *terms) -> str:
+        """The query with chips' words removed -- what an x links to.
+
+        Removing a chip is a plain link back to the same search, so the whole
+        interface works with no JavaScript at all. Several at once is how a
+        date picked from the list replaces the one that was typed.
+        """
+        toks = _tokens(self.raw)
+        for term in terms:
+            toks = _swap(toks, term, [])
+        return " ".join(toks)
+
+    def replace(self, term, text: str) -> str:
+        """The query with one chip's words said another way: how a person's
+        chip turns into `without` them, and back."""
+        return " ".join(_swap(_tokens(self.raw), term, _tokens(text)))
+
+
+def _swap(toks: list, term, new: list) -> list:
+    """The first run of tokens spelling `term`, replaced by `new`."""
+    want = norm(term.span).split()
+    for i in range(len(toks) - len(want) + 1):
+        if [norm(t) for t in toks[i:i + len(want)]] == want:
+            return toks[:i] + new + toks[i + len(want):]
+    return toks
+
+def _tokens(q: str) -> list:
+    return [t for t in (w.strip(_PUNCT) for w in q.split()) if t]
+
+
+def _named_events(con) -> dict:
+    """Named events by match key, gathered across every event of that name.
+
+    Names repeat: measured 2026-09-09, **50 of this library's 168 named events
+    share a name with another** -- three holidays called Alicante, two called
+    West Coast, fifteen called TBD. A name is therefore a group, not a row, and
+    both the filter and the weight against a place read the whole of it.
+    """
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='events'").fetchone():
+        return {}
+    out: dict = {}
+    for r in con.execute(
+            "SELECT id, name, start_at, asset_count FROM events "
+            "WHERE name IS NOT NULL AND name != ''"):
+        e = out.setdefault(norm(r["name"]),
+                           {"name": r["name"], "ids": [], "held": 0})
+        e["ids"].append(r["id"])
+        e["held"] += r["asset_count"]
+    return out
+
+
+# A name-word shorter than this is not a way of referring to anybody. Without
+# it "Reetta P" would put `p` in the index and make a stray letter a person.
+MIN_NAME_WORD = 3
+
+
+def _people_index(con) -> tuple[dict, dict]:
+    """Named people by whole name, and by any name-word that means only them.
+
+    Nobody types "Anne Raivisto" to look for Anne. Requiring the whole name is
+    what sends `totte anne` off to the encoder as a description, so a single
+    word of a name resolves too -- but only where it belongs to exactly one
+    person, because a chip that silently picks between two people is worse than
+    no chip at all. Measured on this library, 2026-09-09: of 79 people, one
+    name-word is shared (`reetta`, between Reetta and Reetta P), and that one
+    is a whole name as well, so the exact match settles it first.
+
+    Read from `persons` rather than through `cluster.named_people`, which joins
+    faces to count them: whether a name is *understood* is a different question
+    from how many photographs it will find.
+    """
+    rows = list(con.execute("""
+        SELECT p.id, p.name,
+               (SELECT COUNT(DISTINCT f.asset_id) FROM faces f
+                 WHERE f.person_id = p.id) AS held
+          FROM persons p"""))
+    by_name: dict = {}
+    for r in rows:
+        by_name.setdefault(norm(r["name"]), r)
+
+    holders: dict = {}
+    for r in rows:
+        for w in set(norm(r["name"]).replace("-", " ").split()):
+            if len(w) >= MIN_NAME_WORD:
+                holders.setdefault(w, []).append(r)
+    by_word = {w: rs[0] for w, rs in holders.items()
+               if len(rs) == 1 and w not in by_name}
+    return by_name, by_word
+
+
+# How many photographs a place must hold, itself or beneath it, before its name
+# is read as a place rather than as a word.
+#
+# The gazetteer has 285,144 entries and a great many of them are ordinary words:
+# `Sunset`, `Beach` and `On` are all real towns carrying their own primary
+# names, so "kids on a beach at sunset" collides with it three times over.
+# Nothing about the *name* distinguishes those from `Alicante` -- only this
+# library does, and the separation it gives is wide. Measured 2026-09-09:
+# Alicante 142 photographs, Helsinki 164, Tenerife 162; `Beach` and `On` nil.
+#
+# One case sits in between and cannot be settled by any rule over the name.
+# `Sunset` resolves to Shandon, California, where this archive genuinely holds
+# five photographs -- so the reading is not wrong, merely unlikely, and a person
+# typing "sunset" almost always means the light. Rather than choose silently,
+# anything in the middle band is *offered* beside the results instead of being
+# applied, and the words stay in the description until the offer is accepted.
+PLACE_MIN_ASSETS = 5        # below this, not even worth mentioning
+PLACE_SURE_ASSETS = 25      # at or above this, applied as a chip without asking
+
+
+# Administrative names that wrap a settlement without naming anything else: the
+# State of Berlin *is* Berlin. The gazetteer files a city-state's districts as
+# siblings of a locality bearing the city's name, so this archive's 870 Berlin
+# photographs sit under Mitte (297), Tiergarten (240), Kreuzberg (64) and thirty
+# more, while the locality called Berlin holds 40. Nothing named Berlin is an
+# ancestor of Tiergarten, and "Ansku in Berlin" therefore missed her in Berlin.
+#
+# Only *leading* wrappers are listed, and deliberately. A suffix names something
+# larger than the place it is named after -- "Helsinki sub-region" reaches Espoo
+# and Vantaa, "Berat County" is not the town of Berat, "Provincia de Alicante"
+# takes in Torrevieja -- and folding those in would answer a question about a
+# city with a question about a region.
+_ADMIN_WRAPPERS = ("state of {}", "city of {}", "free state of {}",
+                   "free hanseatic city of {}", "federal city of {}",
+                   "capital city of {}")
+
+
+def _wrapping_admin(con, key: str) -> list:
+    """Admin areas that are this place under an administrative name."""
+    wanted = [w.format(key) for w in _ADMIN_WRAPPERS]
+    marks = ",".join("?" * len(wanted))
+    return list(con.execute(
+        f"""SELECT p.id, p.path, p.rank_pop, 1 AS own FROM places p
+             WHERE p.kind IN ('admin1', 'admin2')
+               AND lower(p.name) IN ({marks})""", wanted))
+
+
+def _place_term(con, span: str, counts) -> Term | None:
+    """The place answering to this span that this library knows best.
+
+    Candidates are ranked by how many photographs sit beneath them, not by the
+    gazetteer's own significance. Ranking the other way round and then keeping
+    the first candidate with any photographs at all is actively worse than not
+    filtering: for "sunset" it walks past the well-known Sunsets and lands on
+    the one obscure town this archive happens to hold a single picture of.
+    """
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='places'").fetchone():
+        return None
+    key = norm(span)
+    rows = list(con.execute(
+        """SELECT p.id, p.path, p.rank_pop, n.own FROM place_names n
+             JOIN places p ON p.id = n.place_id
+            WHERE n.norm = ? ORDER BY p.rank_pop DESC LIMIT 12""",
+        (key,)))
+    rows += _wrapping_admin(con, key)
+    if not rows:
+        return None
+
+    if counts is None:                      # no library to weigh it against
+        best, held = rows[0], None
+    else:
+        scored = [(counts.get(r["id"], 0), r["own"], r["rank_pop"], r)
+                  for r in rows]
+        scored = [s for s in scored if s[0] >= PLACE_MIN_ASSETS]
+        if not scored:
+            return None
+        top = max(scored, key=lambda s: (s[0], s[1], s[2]))
+        best, held = top[3], top[0]
+
+    where = " · ".join(reversed(best["path"].split("/")))
+    term = Term(kind="place", label=where, span=span, ref_id=best["id"],
+                held=held)
+    return term
+
+
+def _resolve_span(con, span, people, first_names, events, counts, force=None):
+    """Every reading of one span, best first.
+
+    Best is the one with the most photographs behind it, and where two readings
+    are level the order below decides -- what the user named, before what the
+    gazetteer found. Weight of evidence beats precedence because precedence
+    alone reads `Hartola` as an occasion of three photographs rather than as the
+    municipality of 1,286, and then says nothing when the answer comes back
+    empty.
+
+    Measured on this library, 2026-09-09, over every label that reads two ways:
+
+        label         event   place
+        West Coast    1,200     624   event, and the place is New Zealand
+        USA             256       8   event
+        Alicante        392     142   event
+        Hartola           3   1,286   place
+        Tenerife          0     162   place
+        Kia / Loon /
+        Vaja        5/76/27  5/76/27   level -- precedence keeps the event
+
+    The last three are the wrong folder matches (§6.3), and they tie *exactly*
+    because the place was derived from the same folder label as the event and
+    holds the very same photographs. A tie is therefore not a coincidence to be
+    broken arbitrarily: it is the signature of that failure, and precedence is
+    what keeps the honest reading on top when it happens.
+
+    **Only an event and a place are weighed against each other**, because only
+    those two are the same kind of evidence: both are what a folder label was
+    turned into. A person is not comparable and always comes first. Measured the
+    same day, **22 of this library's 79 people carry names the gazetteer also
+    knows** -- Marko, Helena, Reno, Anton, Paul, Scott, Kia, Luka and more --
+    and several hold few photographs: Marko 4, Helena 12, Reno 15. This archive
+    has driven the American west, so Reno, Nevada could easily hold more pictures
+    than Reno the person, and counting would then answer a question about a
+    friend with a question about a city. A name the user gave is an assertion;
+    a gazetteer hit is a guess, and no number makes the guess the better one.
+
+    Dates take no part either. A range is not a named thing with photographs
+    behind it, and counting one would read an event called "Kesa 2019" as every
+    photograph taken that summer.
+    """
+    found = []
+    key = norm(span)
+
+    if force in (None, "person"):
+        # The whole name first, so `reetta` is Reetta rather than Reetta P.
+        r = people.get(key) or first_names.get(key)
+        if r is not None:
+            found.append(Term("person", r["name"], span, ref_id=r["id"],
+                              held=r["held"]))
+    # These two are weighed against each other; the person above is not.
+    weighed = []
+    if force in (None, "event") and key in events:
+        e = events[key]
+        # One trip or five, the name means all of them. Keeping whichever row
+        # the table happened to yield first made `Alicante` a search of one
+        # holiday out of three, and said nothing about the other two.
+        weighed.append(Term("event", e["name"], span,
+                            ref_id=e["ids"][0] if len(e["ids"]) == 1 else None,
+                            held=e["held"]))
+    if force in (None, "place"):
+        t = _place_term(con, span, counts)
+        if t:
+            weighed.append(t)
+    # Stable, so a tie leaves the event on top -- which is the signature of a
+    # place derived from the same folder label, holding the same photographs.
+    weighed.sort(key=lambda t: -(t.held or 0))
+    found.extend(weighed)
+
+    if force in (None, "date"):
+        d = parse_date(span)
+        if d:
+            found.append(Term("date", d[2], span, start=d[0], end=d[1]))
+    return found
+
+
+def resolve(con, q: str, *, place_counts=None) -> Resolved:
+    """Read a typed phrase as criteria plus a description.
+
+    `place_counts` maps place id to the number of photographs in its subtree;
+    passing it keeps places this library has never been to out of the chips.
+    """
+    raw = (q or "").strip()
+    toks = _tokens(raw)
+    if not toks:
+        return Resolved(terms=[], text="", raw=raw)
+
+    people, first_names = _people_index(con)
+    events = _named_events(con)
+
+    taken = [False] * len(toks)
+    forced = [None] * len(toks)
+    quoted = [False] * len(toks)
+    placed, offers = [], []           # (term, index of its first word)
+
+    # Explicit prefixes bind one token and are never re-read as anything else,
+    # which is the whole point of typing one (§7.1).
+    for i, t in enumerate(toks):
+        head, sep, rest = t.partition(":")
+        if sep and head.casefold() in PREFIXES and rest:
+            toks[i] = rest
+            if head.casefold() == "text":
+                quoted[i] = True
+            else:
+                forced[i] = head.casefold()
+
+    for n in range(min(MAX_SPAN, len(toks)), 0, -1):
+        for i in range(0, len(toks) - n + 1):
+            window = range(i, i + n)
+            if any(taken[j] or quoted[j] for j in window):
+                continue
+            force = {forced[j] for j in window if forced[j]}
+            if len(force) > 1:            # two different prefixes in one span
+                continue
+            span = " ".join(toks[i:i + n])
+            found = _resolve_span(con, span, people, first_names, events,
+                                  place_counts,
+                                  force=next(iter(force), None))
+            if not found:
+                continue
+            best = found[0]
+            if len(found) > 1:
+                best = Term(best.kind, best.label, best.span, best.ref_id,
+                            best.start, best.end, best.held, tuple(found[1:]))
+            # An unsure reading is shown beside the results rather than acted
+            # on, and its words stay in the description meanwhile (§7.1). An
+            # explicit prefix is never second-guessed: the user has said which
+            # reading they want.
+            if not best.sure and not force:
+                offers.append(best)
+                continue
+            placed.append((best, i))
+            for j in window:
+                taken[j] = True
+
+    # `without Emmi`: the word joins the person's chip, so removing the chip
+    # takes both words and the description is not left holding "without".
+    for k, (t, i) in enumerate(placed):
+        b = i - 1
+        if (t.kind == "person" and b >= 0 and not taken[b] and not quoted[b]
+                and not forced[b] and norm(toks[b]) in NOT_WORDS):
+            placed[k] = (dataclasses.replace(t, span=f"{toks[b]} {t.span}",
+                                             negated=True), b)
+            taken[b] = True
+
+    # Who else: read last, because "only" is about the people already found.
+    named = any(t.kind == "person" and not t.negated for t, _ in placed)
+    for n in (2, 1):
+        for i in range(0, len(toks) - n + 1):
+            window = range(i, i + n)
+            if any(taken[j] or quoted[j] or forced[j] for j in window):
+                continue
+            span = " ".join(toks[i:i + n])
+            key = norm(span)
+            mode = ("nobody" if key in NOBODY_WORDS else
+                    "only" if named and key in ONLY_WORDS else None)
+            if mode:
+                placed.append((Term("mode", mode, span), i))
+                for j in window:
+                    taken[j] = True
+
+    rest = [t for j, t in enumerate(toks) if not taken[j]]
+    if placed:
+        rest = [t for t in rest if norm(t) not in _JOINERS]
+    # Chips come out in the order they were typed, not the order they resolved.
+    placed.sort(key=lambda p: p[1])
+    return Resolved(terms=[t for t, _ in placed], text=" ".join(rest),
+                    raw=raw, offers=offers)

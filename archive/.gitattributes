@@ -1,0 +1,11 @@
+# Normalise to LF in the repository; Git checks out CRLF on Windows as usual.
+* text=auto
+
+*.py    text diff=python
+*.md    text
+*.toml  text
+*.json  text
+
+# Read by Linux inside the container: a Dockerfile line continuation followed
+# by a carriage return is not a continuation, whatever Windows checks out.
+deploy/nas/** text eol=lf

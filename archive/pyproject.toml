@@ -1,0 +1,67 @@
+[project]
+name = "mediaidx"
+version = "0.1.0"
+description = "Local, private index over a home photo archive"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "blake3>=1.0",
+    "pyexiftool>=0.5.6",
+    "pillow>=11",
+    "pillow-heif>=1.0",
+    "platformdirs>=4",
+    "numpy>=2",
+    # Search vectors. torch must come from the CUDA index, not PyPI:
+    #   uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+    "torch>=2.5",
+    "open_clip_torch>=2.30",
+    "transformers>=4.45",       # SigLIP tokenizer
+    "sentencepiece>=0.2",
+    "sqlite-vec>=0.1.9",
+    # The text half on its own, for a viewing copy without room for the
+    # whole model (spec 7.6): exported with onnx, read with tokenizers.
+    "onnx>=1.16",
+    "tokenizers>=0.20",
+    # Faces. The CUDA extras are not optional in practice: without them
+    # onnxruntime finds no CUDA libraries of its own, silently falls back to
+    # the CPU, and the pass runs seven times slower with no error to show for
+    # it. They must not be confused with torch's CUDA 12 runtime -- these
+    # wheels are CUDA 13, which is what onnxruntime-gpu 1.29 is built against.
+    "onnxruntime-gpu[cuda,cudnn]>=1.29",
+    "insightface>=1.0",
+    "scikit-learn>=1.5",        # HDBSCAN for face clustering
+    # Local UI
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",  # form posts: naming and merging clusters
+    # Camera date-stamp localisation on scans EXIF and the filename cannot
+    # date (spec ...). AGPL-3.0 -- only the pretrained weights and plain
+    # inference are used here, never its own OCR pipeline. Reading the crop
+    # is a local Ollama model, not this library.
+    "ultralytics>=8.4",
+    "huggingface_hub>=0.25",
+    "requests>=2.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.uv]
+# insightface depends on `onnxruntime`, the CPU build. It installs into the
+# same import name and over the same files as `onnxruntime-gpu`, so whichever
+# lands last wins, and the loser leaves no trace of having been replaced --
+# the GPU simply stops being used. Drop the CPU requirement; onnxruntime-gpu
+# satisfies every import insightface makes.
+override-dependencies = ["onnxruntime; sys_platform == 'no-such-platform'"]
+
+[project.scripts]
+mediaidx = "mediaidx.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mediaidx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

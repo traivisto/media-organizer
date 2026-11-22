@@ -1,0 +1,22 @@
+# The viewing copy's configuration, as the container sees it (spec 8.3, 9).
+# Published into data/ beside the database; paths are inside the container.
+
+[paths]
+database   = "/data/photos.db"
+thumbnails = "/data/thumbs"
+logs       = "/tmp/logs"
+text_model = "/data/textmodel"
+# The one thing the viewing copy writes: what was searched for, read on the PC
+# by `mediaidx searches` (spec 8.7). docker-compose.yml mounts logs/ here.
+search_log = "/logs/searches.jsonl"
+
+# Where the index's stored paths are inside the container: docker-compose.yml mounts
+# the NAS's own Pictures folder at /photos.
+[paths.mounts]
+'\\TRaDiskStation\Media\Pictures' = '/photos'
+
+[ui]
+read_only = true
+# The DS725+ has two cores with two threads each; leave the rest to the NAS.
+text_threads = 2
+text_model_idle_minutes = 10

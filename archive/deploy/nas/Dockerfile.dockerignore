@@ -1,0 +1,6 @@
+# Only the application goes into the image: no tests, no handmade names, no
+# design sketches, no caches.
+*
+!mediaidx/
+!deploy/nas/requirements.txt
+**/__pycache__

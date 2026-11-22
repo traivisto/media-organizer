@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Virtual environments. The real one lives outside OneDrive
+# (%LOCALAPPDATA%\mediaidx\venv); these catch anything created here by accident.
+.venv/
+venv/
+
+# Runtime data must never be committed, and never lives here anyway (spec §10.5).
+# Listed defensively in case a config is ever pointed at the project folder.
+*.db
+*.db-wal
+*.db-shm
+thumbs/
+logs/
+
+# Windows and OneDrive artifacts
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Note: names.json is deliberately NOT ignored. It is the only irreplaceable
+# data the system produces (spec P6), so it belongs in version control.
