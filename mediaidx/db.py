@@ -303,6 +303,19 @@ CREATE TABLE IF NOT EXISTS corrections (
   UNIQUE (kind, content_hash, face_idx)
 );
 
+-- "This face is not that person", answered while looking for more of someone.
+-- A correction says who a face is and there can be only one; a face can be
+-- ruled out for any number of people, so it needs its own table. Keyed and
+-- re-anchored exactly like a `person` correction, and the person by name.
+CREATE TABLE IF NOT EXISTS face_rejections (
+  content_hash TEXT NOT NULL,
+  face_idx     INTEGER NOT NULL,
+  face_bbox    TEXT,
+  person       TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (content_hash, face_idx, person)
+);
+
 CREATE INDEX IF NOT EXISTS idx_corrections_hash ON corrections(content_hash);
 CREATE INDEX IF NOT EXISTS idx_faces_asset   ON faces(asset_id);
 CREATE INDEX IF NOT EXISTS idx_faces_cluster ON faces(cluster_id);
@@ -388,6 +401,10 @@ ADDED_COLUMNS = {
         # a rough estimate for sorting one person's photographs, not a fact.
         ("age", "INTEGER"),
         ("gender", "INTEGER"),   # insightface convention: 0 female, 1 male
+    ],
+    "persons": [
+        # Typed by a person; rules out every photograph taken before it.
+        ("birth_year", "INTEGER"),
     ],
 }
 

@@ -174,6 +174,7 @@ def build(con, cfg, *, rebuild: bool = False) -> ClusterStats:
         con.executemany(
             "UPDATE faces SET person_id = ? WHERE id = ?",
             [(pid, fid) for fid, pid in fixed.items()])
+        corrections_mod.apply_rejections(con)
 
         con.execute("COMMIT")
     except BaseException:
@@ -284,6 +285,7 @@ def assign(con, cfg) -> int:
         con.executemany(
             "UPDATE faces SET person_id = ? WHERE id = ?",
             [(p, f) for p, f in to_person if f not in fixed])
+        corrections_mod.apply_rejections(con)
         for cid in {c for c, _ in to_cluster}:
             refresh(con, cid)
         con.execute("COMMIT")
@@ -301,6 +303,12 @@ def _anchors(con) -> tuple:
     become the evidence for the next one is how a name drifts off the person it
     began with.
     """
+    _, mat, who = anchor_set(con)
+    return mat, who
+
+
+def anchor_set(con) -> tuple:
+    """(face_ids, matrix, person_id per row) -- `_anchors` with the ids."""
     ids, mat = load(
         con,
         """WHERE person_id IS NOT NULL AND (cluster_id IS NOT NULL
@@ -309,10 +317,11 @@ def _anchors(con) -> tuple:
                          JOIN faces  f ON f.asset_id = a.id AND f.idx = c.face_idx
                         WHERE c.kind = 'person'))""")
     if len(ids) == 0:
-        return np.empty((0, faces_mod.DIM), np.float32), np.empty(0, np.int64)
+        return (ids, np.empty((0, faces_mod.DIM), np.float32),
+                np.empty(0, np.int64))
     order = {int(r[0]): int(r[1]) for r in con.execute(
         "SELECT id, person_id FROM faces WHERE person_id IS NOT NULL")}
-    return mat, np.fromiter((order[int(i)] for i in ids), np.int64, len(ids))
+    return ids, mat, np.fromiter((order[int(i)] for i in ids), np.int64, len(ids))
 
 
 def refresh(con, cluster_id: int) -> None:
@@ -348,6 +357,8 @@ def set_person(con, cluster_id: int, name: str) -> int:
         "WHERE id = ?", (pid, int(time.time()), cluster_id))
     con.execute("UPDATE faces SET person_id = ? WHERE cluster_id = ?",
                 (pid, cluster_id))
+    from . import corrections as corrections_mod
+    corrections_mod.apply_rejections(con)
     con.commit()
     return pid
 
@@ -390,6 +401,8 @@ def merge(con, into: int, other: int) -> int:
     con.execute("DELETE FROM face_clusters WHERE id = ?", (other,))
     con.execute("UPDATE face_clusters SET person_id = ?, status = ? WHERE id = ?",
                 (pid, "named" if pid else "unnamed", into))
+    from . import corrections as corrections_mod
+    corrections_mod.apply_rejections(con)
     refresh(con, into)
     con.commit()
     return n

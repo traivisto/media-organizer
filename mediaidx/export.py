@@ -52,6 +52,11 @@ def dump(con) -> dict:
         # spelling somebody settled on is not lost with the last photograph.
         "persons": [r["name"] for r in con.execute(
             "SELECT name FROM persons ORDER BY name")],
+        # Beside `persons` rather than in it, so a version-2 reader that knows
+        # nothing of birth years still reads the list of names it expects.
+        "born": {r["name"]: r["birth_year"] for r in con.execute(
+            "SELECT name, birth_year FROM persons "
+            "WHERE birth_year IS NOT NULL ORDER BY name")},
         "faces": faces,
         "events": [
             {"hash": r["content_hash"], "name": r["name"],
@@ -73,6 +78,11 @@ def dump(con) -> dict:
              ("kind", "content_hash", "face_idx", "face_bbox", "value", "note")}
             for r in con.execute(
                 "SELECT * FROM corrections ORDER BY kind, content_hash")],
+        "rejections": [
+            {k: r[k] for k in ("content_hash", "face_idx", "face_bbox", "person")}
+            for r in con.execute(
+                "SELECT * FROM face_rejections "
+                "ORDER BY person, content_hash, face_idx")],
         "not_odd": [r["content_hash"] for r in con.execute(
             """SELECT a.content_hash FROM odd_dismissed d
                  JOIN assets a ON a.id = d.asset_id ORDER BY a.content_hash""")],
@@ -120,13 +130,15 @@ class Restored:
     def __init__(self):
         self.persons = self.faces = self.events = self.cuts = 0
         self.places = self.corrections = self.not_odd = self.folders = 0
+        self.rejections = 0
         self.missing_assets = self.missing_faces = 0
 
     def __str__(self) -> str:
         return (f"{self.persons:,} people, {self.faces:,} faces, "
                 f"{self.events:,} event names, {self.cuts:,} cuts, "
                 f"{self.places:,} place rejections, "
-                f"{self.corrections:,} corrections, {self.not_odd:,} kept, "
+                f"{self.corrections:,} corrections, "
+                f"{self.rejections:,} faces ruled out, {self.not_odd:,} kept, "
                 f"{self.folders:,} folders")
 
 
@@ -169,8 +181,11 @@ def load(con, data: dict) -> Restored:
             "INSERT OR IGNORE INTO persons (name, source, created_at) "
             "VALUES (?, 'manual', ?)", (name, now))
         st.persons += cur.rowcount
+    for name, year in data.get("born", {}).items():
+        con.execute("UPDATE persons SET birth_year = ? WHERE name = ?",
+                    (year, name))
 
-    ids = {r["content_hash"]: r["id"] for r in
+    ids ={r["content_hash"]: r["id"] for r in
            con.execute("SELECT id, content_hash FROM assets")}
 
     for f in data.get("faces", []):
@@ -225,6 +240,17 @@ def load(con, data: dict) -> Restored:
             face_idx=c.get("face_idx", corrections_mod.NO_FACE),
             face_bbox=bbox, note=c.get("note"), now=now)
         st.corrections += 1
+
+    for r in data.get("rejections", []):
+        con.execute(
+            "INSERT OR IGNORE INTO face_rejections "
+            "(content_hash, face_idx, face_bbox, person, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (r["content_hash"], r["face_idx"], r.get("face_bbox"),
+             r["person"], now))
+        st.rejections += 1
+    if st.rejections:
+        corrections_mod.apply_rejections(con)
 
     for h in data.get("not_odd", []):
         aid = ids.get(h)

@@ -39,6 +39,7 @@ from . import corrections
 from . import config as config_mod
 from . import db, embed, images
 from . import events as events_mod
+from . import findmore
 from . import odd as odd_mod
 from . import paths as pathutil
 from . import places as places_mod
@@ -3238,13 +3239,173 @@ if(st.dataset.play==='1')play();
                FROM assets a JOIN faces f ON f.asset_id = a.id
                WHERE f.person_id = ? ORDER BY {_date_order("DESC")} LIMIT ?""",
             (person_id, limit)).fetchall()
+        more = ("" if ro else
+                f' &middot; <a href="/person/{person_id}/more" '
+                f'style="color:var(--accent)">find more of '
+                f'{html.escape(p["name"])}</a>')
         body = (f'<div class="meta"><a href="/people" style="color:var(--accent)">'
                 f'&larr; people</a> &middot; <b>{html.escape(p["name"])}</b> '
-                f'&middot; {len(rows):,} photographs</div>'
+                f'&middot; {len(rows):,} photographs{more}</div>'
                 f'<div class="grid">'
                 f'{cards_by_month(rows, f"/person/{person_id}")}'
                 '</div>')
         return page(f'{p["name"]} — Kuva-arkisto', body)
+
+    MORE_CSS = (
+        "<style>.ans{display:flex;gap:4px;flex-wrap:wrap;padding:0 7px 8px}"
+        ".ans input{position:absolute;opacity:0;pointer-events:none}"
+        ".ans label{padding:3px 8px;border:1px solid var(--rule);"
+        "border-radius:999px;font-size:11.5px;cursor:pointer;color:var(--ink-2)}"
+        ".ans input:checked+label{background:var(--accent);color:#fff;"
+        "border-color:var(--accent)}"
+        ".faces figure:has(input[value=yes]:checked){outline:3px solid #3a9a5b}"
+        ".faces figure:has(input[value=no]:checked){outline:3px solid #c2554a;"
+        "opacity:.55}"
+        ".faces figure:has(input[value^='is:']:checked){outline:3px solid #c99a2e}"
+        "</style>")
+
+    # Fills every face left unanswered on the page with one answer, for a page
+    # that is nearly all one thing -- the common case near the top.
+    MORE_JS = (
+        "<script>function rest(v){document.querySelectorAll('.ans').forEach("
+        "function(a){if(a.querySelector('input:checked'))return;"
+        "var i=a.querySelector('input[value='+v+']');if(i)i.checked=true;});}"
+        "</script>")
+
+    @app.get("/person/{person_id}/more", response_class=HTMLResponse)
+    def person_more(person_id: int, mode: str = Query(default="new"),
+                    skip: int = Query(default=0), msg: str = Query(default="")):
+        """Looking for more of one person, a page of faces at a time."""
+        if ro:
+            return page("Find more — Kuva-arkisto",
+                        '<div class="empty"><p>This is a viewing copy.</p>'
+                        '<p>Faces are named on the computer that keeps the '
+                        'archive.</p></div>')
+        con = connect()
+        p = con.execute("SELECT * FROM persons WHERE id = ?",
+                        (person_id,)).fetchone()
+        if p is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        mode = mode if mode in findmore.MODES else "new"
+        skip = max(0, skip)
+        rows, total = findmore.candidates(
+            con, person_id, mode, limit=skip + findmore.PAGE)
+        rows = rows[skip:]
+        name = html.escape(p["name"])
+        here = f"/person/{person_id}/more?mode={mode}"
+
+        year = p["birth_year"]
+        born = (f'<form method="post" action="/person/{person_id}/born">'
+                f'<input type="number" name="year" min="1850" max="2100" '
+                f'style="width:120px;padding:8px" placeholder="born (year)" '
+                f'value="{year or ""}">'
+                '<button class="ghost" type="submit">Save</button></form>')
+        on = ' style="border-color:var(--accent);color:var(--accent)"'
+        tabs = "".join(
+            f'<a class="chip" href="/person/{person_id}/more?mode={m}"'
+            f'{on if m == mode else ""}>{label}</a>'
+            for m, label in (("new", "New faces"), ("guesses", "Check guesses")))
+        why = ("Faces not under this name, nearest to the sure faces of "
+               f"{name} first. Born {year} rules out everything before it."
+               if mode == "new" and year else
+               f"Faces not under this name, nearest to the sure faces of "
+               f"{name} first. A birth year would rule out everything before it."
+               if mode == "new" else
+               f"Faces named {name} by distance alone, that nobody has looked "
+               "at. Weakest first: nearer somebody else than "
+               f"{name} at the top.")
+        note = (f' &middot; <b>{html.escape(msg)}</b>' if msg else "")
+        head = (f'<div class="meta"><a href="/person/{person_id}" '
+                f'style="color:var(--accent)">&larr; {name}</a> &middot; '
+                f'<b>Find more</b> &middot; {total:,} to look at'
+                f'{f" &middot; skipping {skip}" if skip else ""}{note}</div>'
+                f'<div class="panel">{tabs}{born}</div>'
+                f'<div class="meta">{why} Unanswered faces are left as they '
+                'are. Every yes becomes a sure face, so the next page is '
+                'ranked with it.</div>')
+        if not rows:
+            return page(f'Find more: {p["name"]} — Kuva-arkisto',
+                        MORE_CSS + head + '<div class="empty"><p>Nothing left '
+                        'to ask about here.</p></div>')
+
+        def tile(c) -> str:
+            when = (datetime.fromtimestamp(c.taken_at).strftime("%Y")
+                    if c.taken_at else "no date")
+            sub = f"{c.distance:.2f}" + (
+                f" · now {c.now}" if c.now and c.now != p["name"] else "")
+            v = f"v{c.face_id}"
+            opts = [("yes", f"&#10003; {name}"), ("no", "&#10007; not")]
+            for other in dict.fromkeys(x for x in (c.now, c.rival)
+                                       if x and x != p["name"]):
+                opts.append((f"is:{other}", html.escape(other)))
+            radios = "".join(
+                f'<input type="radio" name="{v}" id="{v}-{i}" '
+                f'value="{html.escape(val)}">'
+                f'<label for="{v}-{i}">{lab}</label>'
+                for i, (val, lab) in enumerate(opts))
+            return (f'<figure><a href="/photo/{c.asset_id}?back='
+                    f'{quote_plus(here)}">'
+                    f'<img loading="lazy" src="/face/{c.content_hash}/{c.idx}" '
+                    'alt=""></a>'
+                    f'<figcaption><b>{when}</b><span>{html.escape(sub)}</span>'
+                    f'</figcaption><div class="ans">{radios}</div></figure>')
+
+        buttons = (
+            '<div class="panel">'
+            '<button type="submit">Save this page</button>'
+            '<button class="ghost" type="button" onclick="rest(\'yes\')">'
+            f'All unanswered: {name}</button>'
+            '<button class="ghost" type="button" onclick="rest(\'no\')">'
+            'All unanswered: not</button></div>')
+        body = (MORE_CSS + head +
+                f'<form method="post" action="/person/{person_id}/more">'
+                f'<input type="hidden" name="mode" value="{mode}">'
+                f'<input type="hidden" name="skip" value="{skip}">'
+                f'<input type="hidden" name="shown" value="{len(rows)}">'
+                + buttons +
+                f'<div class="faces">{"".join(tile(c) for c in rows)}</div>'
+                + buttons + '</form>' + MORE_JS)
+        return page(f'Find more: {p["name"]} — Kuva-arkisto', body)
+
+    @app.post("/person/{person_id}/more")
+    async def person_more_save(person_id: int, request: Request):
+        form = await request.form()
+        mode = form.get("mode", "new")
+        mode = mode if mode in findmore.MODES else "new"
+        answers = {int(k[1:]): str(v) for k, v in form.items()
+                   if k.startswith("v") and k[1:].isdigit()}
+        con = connect()
+        if con.execute("SELECT 1 FROM persons WHERE id = ?",
+                       (person_id,)).fetchone() is None:
+            return HTMLResponse("<p>not found</p>", status_code=404)
+        con.execute("BEGIN")
+        try:
+            done = findmore.decide(con, person_id, answers)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        # The faces left unanswered stay at the top of the ranking; step past
+        # them, or the same page comes straight back.
+        try:
+            skip = int(form.get("skip", 0))
+            shown = int(form.get("shown", 0))
+        except ValueError:
+            skip = shown = 0
+        left = max(0, shown - len(answers))
+        msg = (f'saved: {done["yes"]} yes, {done["no"]} not, '
+               f'{done["is"]} somebody else')
+        return RedirectResponse(
+            f"/person/{person_id}/more?mode={mode}&skip={skip + left}"
+            f"&msg={quote_plus(msg)}", status_code=303)
+
+    @app.post("/person/{person_id}/born")
+    def person_born(person_id: int, year: str = Form(default="")):
+        con = connect()
+        y = year.strip()
+        findmore.set_born(con, person_id, int(y) if y.isdigit() else None)
+        con.commit()
+        return RedirectResponse(f"/person/{person_id}/more", status_code=303)
 
     # ----------------------------------------------------------------------
     # Events

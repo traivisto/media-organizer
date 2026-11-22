@@ -118,6 +118,48 @@ def corrected_face_ids(con) -> dict:
     return out
 
 
+def reject(con, content_hash: str, face_idx: int, person: str, *,
+           face_bbox=None, now: int | None = None) -> None:
+    """Record that this face is not `person`, and take it off them now."""
+    con.execute(
+        """INSERT INTO face_rejections
+             (content_hash, face_idx, face_bbox, person, created_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(content_hash, face_idx, person) DO UPDATE SET
+             face_bbox=excluded.face_bbox, created_at=excluded.created_at""",
+        (content_hash, face_idx,
+         json.dumps([round(float(v), 6) for v in face_bbox]) if face_bbox else None,
+         person, int(time.time()) if now is None else now))
+    apply_rejections(con)
+
+
+def rejected_pairs(con) -> set:
+    """`{(faces.id, person_id)}` for every face ruled out for somebody."""
+    return {(r[0], r[1]) for r in con.execute(
+        """SELECT f.id, p.id FROM face_rejections r
+             JOIN assets a  ON a.content_hash = r.content_hash
+             JOIN faces  f  ON f.asset_id = a.id AND f.idx = r.face_idx
+             JOIN persons p ON p.name = r.person""")}
+
+
+def apply_rejections(con) -> int:
+    """Take a name off every face somebody said it does not belong to.
+
+    Called wherever names are handed out in bulk -- a build, `assign`, naming
+    or merging a cluster -- since each of those would otherwise put the name
+    straight back by majority or by distance.
+    """
+    cur = con.execute(
+        """UPDATE faces SET person_id = NULL
+            WHERE person_id IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM face_rejections r
+                    JOIN assets a  ON a.content_hash = r.content_hash
+                    JOIN persons p ON p.name = r.person
+                   WHERE a.id = faces.asset_id AND r.face_idx = faces.idx
+                     AND p.id = faces.person_id)""")
+    return cur.rowcount
+
+
 def count(con) -> dict:
     """How many corrections of each kind, for `status`."""
     return {r["kind"]: r["n"] for r in con.execute(
@@ -159,6 +201,7 @@ def reanchor_faces(con, content_hash: str, new_boxes: list) -> tuple[int, int]:
 
     Returns (moved, orphaned).
     """
+    _reanchor_rejections(con, content_hash, new_boxes)
     rows = [r for r in con.execute(
         "SELECT face_idx, face_bbox FROM corrections "
         "WHERE kind = 'person' AND content_hash = ?", (content_hash,))]
@@ -189,6 +232,36 @@ def reanchor_faces(con, content_hash: str, new_boxes: list) -> tuple[int, int]:
                 (best, content_hash, r["face_idx"]))
             moved += 1
     return moved, orphaned
+
+
+def _reanchor_rejections(con, content_hash: str, new_boxes: list) -> None:
+    """The same move for `face_rejections`, rewritten whole.
+
+    Deleted and inserted again rather than updated in place: two faces that
+    swap indexes would otherwise collide on the primary key halfway through.
+    One whose face is gone keeps its old index and box, as a correction does.
+    """
+    rows = con.execute(
+        "SELECT * FROM face_rejections WHERE content_hash = ? "
+        "AND face_bbox IS NOT NULL", (content_hash,)).fetchall()
+    if not rows:
+        return
+    out = []
+    for r in rows:
+        old = json.loads(r["face_bbox"])
+        best, best_iou = r["face_idx"], MIN_IOU
+        for idx, box in new_boxes:
+            score = bbox_iou(old, box)
+            if score >= best_iou:
+                best, best_iou = idx, score
+        out.append((content_hash, best, r["face_bbox"], r["person"],
+                    r["created_at"]))
+    con.execute("DELETE FROM face_rejections WHERE content_hash = ? "
+                "AND face_bbox IS NOT NULL", (content_hash,))
+    con.executemany(
+        "INSERT OR IGNORE INTO face_rejections "
+        "(content_hash, face_idx, face_bbox, person, created_at) "
+        "VALUES (?,?,?,?,?)", out)
 
 
 # --------------------------------------------------------------------------
