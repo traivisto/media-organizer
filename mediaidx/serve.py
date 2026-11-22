@@ -367,9 +367,16 @@ figcaption b {{ color:var(--ink-2); font-weight:550; }}
 .vbtn:hover, .vbtn.on {{ background:rgba(255,255,255,.13); color:#fff; }}
 .vbar .pos {{ color:#9aa3ad; font-size:13.5px; margin-left:6px; }}
 .pic {{ flex:1; min-height:0; position:relative; display:flex; align-items:center;
-  justify-content:center; padding:0 84px 22px; }}
+  justify-content:center; padding:0 84px 22px; overflow:hidden; }}
 .pic img {{ display:block; max-width:100%; max-height:100%; object-fit:contain;
   border-radius:4px; }}
+/* A blurred, scaled copy of the same photo fills the stage behind it, so a
+   portrait photo on a wide screen shows colour at its sides instead of bare
+   black -- rather than guess, the foreground image still sets its own size. */
+.pic img.bg {{ position:absolute; inset:0; width:100%; height:100%; max-width:none;
+  max-height:none; object-fit:cover; filter:blur(60px) brightness(.5); transform:scale(1.15);
+  border-radius:0; z-index:0; }}
+.pic img:not(.bg) {{ position:relative; z-index:1; }}
 /* Visible without hunting for them, and brighter when pointed at. */
 .arrow {{ position:absolute; top:50%; transform:translateY(-50%); width:54px;
   height:54px; border-radius:50%; display:grid; place-items:center; color:#fff;
@@ -2375,8 +2382,8 @@ def create_app(cfg) -> FastAPI:
     # and asking again waits two minutes: the NAS is not always on.
     SLIDE_JS = """<script>(function(){
 var st=document.querySelector('.stage');if(!st||!st.dataset.back)return;
-var img=document.querySelector('.pic img'),cap=document.getElementById('cap'),
-prog=document.getElementById('prog'),nas=document.getElementById('nas'),
+var img=document.querySelector('.pic img:not(.bg)'),bg=document.querySelector('.pic img.bg'),
+cap=document.getElementById('cap'),prog=document.getElementById('prog'),nas=document.getElementById('nas'),
 btn=document.getElementById('play'),speed=document.getElementById('speed'),
 sharp=document.getElementById('sharp'),pos=document.querySelector('.vbar .pos');
 var back=st.dataset.back,home=+st.dataset.id,queue=[],shown=[],timer=null,
@@ -2410,7 +2417,7 @@ function fill(){
   queue=queue.concat(d.slides);warm(queue[0]);})
  .catch(function(){fetching=false;});}
 function show(s){
- cur=s;img.src=s.sharp||'/thumb/m/'+s.hash;cap.textContent=s.caption;
+ cur=s;img.src=s.sharp||'/thumb/m/'+s.hash;if(bg)bg.src='/thumb/m/'+s.hash;cap.textContent=s.caption;
  if(s.at&&pos)pos.textContent=s.at.toLocaleString('en')+' of '+s.total.toLocaleString('en');
  history.replaceState(null,'',url(s)+'&play=1');
  fetchSharp(s);warm(queue[0]);fill();}
@@ -2530,6 +2537,13 @@ if(st.dataset.play==='1')play();
                                            a["taken_at_precision"])
         typed = (f'{datetime.fromtimestamp(a["taken_at"]):%Y-%m-%d}'
                  if a["taken_at"] else "")
+        # A year- or month-precision date is not a claim about the day, so
+        # offering "everything from this day" would be a false promise --
+        # only "day" and "second" pin the photo to one calendar date.
+        look_around = (f'<a class="qlink" href="{_qs(typed, {})}">'
+                       f'{_icon("cal")}Everything from this day</a>'
+                       if a["taken_at"] and a["taken_at_precision"] in
+                       ("day", "second") else "")
 
         # Every fact says where it came from, under Edit & details. A date and
         # a place are guesses of very different quality, and one that arrived
@@ -2694,6 +2708,7 @@ if(st.dataset.play==='1')play();
                'title="Open the file in its application on this computer">'
                f'{_icon("open")}</button></form>')
             + '</div><div class="pic">'
+            f'<img class="bg" src="/thumb/m/{h}" alt="" aria-hidden="true">'
             f'{prev_a}<img src="/thumb/m/{h}" alt="">{next_a}'
             '</div><div class="caption" id="cap"></div>'
             '<div class="nas" id="nas" hidden>The NAS is not answering '
@@ -2702,6 +2717,7 @@ if(st.dataset.play==='1')play();
             '</section><aside class="side">'
             f'{note}<h1>{html.escape(heading)}</h1>'
             + (f'<div class="sub">{aside}</div>' if aside else "")
+            + look_around
             + warn
             + f'<div class="facts">{who}{where}{event}{camera}</div>'
             + _questions(con, asset_id) + details + '</aside></div>'
